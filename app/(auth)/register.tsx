@@ -1,4 +1,4 @@
-import { FormScrollView, FormInput, Button } from '@/components';
+import { FormScrollView, FormInput, Button, Logo } from '@/components';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
@@ -52,6 +52,7 @@ export default function RegisterScreen() {
         </View>
 
         <View style={styles.content}>
+          <Logo size={88} style={styles.logo} />
           <Text style={styles.title}>{t('auth.createAccount')}</Text>
           <Text style={styles.subtitle}>{t('auth.registerDescription')}</Text>
 
@@ -152,6 +153,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 8,
     paddingBottom: 32,
+  },
+  logo: {
+    alignSelf: 'center',
+    marginBottom: 16,
   },
   title: {
     fontSize: 28,

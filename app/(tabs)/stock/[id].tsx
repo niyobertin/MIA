@@ -9,14 +9,23 @@ import { MoneyText } from '@/components/MoneyText';
 import { StatusBadge } from '@/components/StatusBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
+import { Button } from '@/components/Button';
+import { ConfirmModal } from '@/components/ConfirmModal';
+import { AddProductSheet, AddProductData } from '@/components/AddProductSheet';
 import { getInitials } from '@/utils/formatters';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
 import { useUIStore } from '@/stores/uiStore';
+import { showToast } from '@/stores/toastStore';
+import { canManageInventory } from '@/utils/permissions';
+import { useAuthStore } from '@/stores/authStore';
 import {
   useProduct,
   useStockBalance,
   useStockMovements,
   useCategories,
+  useUpdateProduct,
+  useDeleteProduct,
+  useCreateCategory,
 } from '@/hooks/useData';
 
 const IN_TYPES = ['opening', 'purchase', 'return_in', 'adjustment_in'];
@@ -25,19 +34,26 @@ export default function ProductDetailScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { language } = useUIStore();
+  const { user } = useAuthStore();
   const { id } = useLocalSearchParams<{ id: string }>();
 
   const productQuery = useProduct(id ?? '');
   const balanceQuery = useStockBalance(id ?? null);
   const movementsQuery = useStockMovements(id ?? null, 50);
-  const { data: categories } = useCategories();
+  const { data: categories, refetch: refetchCategories } = useCategories();
+  const updateProduct = useUpdateProduct();
+  const deleteProduct = useDeleteProduct();
+  const createCategory = useCreateCategory();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [showEdit, setShowEdit] = React.useState(false);
+  const [showDelete, setShowDelete] = React.useState(false);
 
   const product = productQuery.data;
   const stock = balanceQuery.data ?? product?.current_stock ?? null;
   const movements = movementsQuery.data ?? [];
   const category = categories?.find((c) => c.id === product?.category_id);
   const loading = productQuery.isLoading;
+  const canEdit = canManageInventory(user?.role);
 
   const stockValue = stock !== null && product ? stock * product.average_cost : null;
   const isLow = stock !== null && product ? stock <= product.reorder_level && stock > 0 : false;
@@ -53,6 +69,43 @@ export default function ProductDetailScreen() {
     const found = STOCK_MOVEMENT_TYPES.find((m) => m.value === type);
     if (!found) return type;
     return language === 'rw' ? found.labelRw : found.label;
+  };
+
+  const handleUpdate = async (data: AddProductData) => {
+    if (!id) return;
+    try {
+      await updateProduct.mutateAsync({
+        id,
+        updates: {
+          name: data.name,
+          sku: data.sku || null,
+          barcode: data.barcode || null,
+          category_id: data.category_id || null,
+          unit: data.unit,
+          selling_price: data.selling_price,
+          average_cost: data.average_cost,
+          reorder_level: data.reorder_level,
+          track_inventory: data.track_inventory,
+        },
+      });
+      setShowEdit(false);
+      showToast(t('stock.productUpdated'), 'success');
+      await productQuery.refetch();
+    } catch {
+      showToast(t('stock.productFailed'), 'error');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!id) return;
+    try {
+      await deleteProduct.mutateAsync(id);
+      setShowDelete(false);
+      showToast(t('stock.productDeleted'), 'success');
+      router.back();
+    } catch {
+      showToast(t('stock.productFailed'), 'error');
+    }
   };
 
   return (
@@ -101,6 +154,17 @@ export default function ProductDetailScreen() {
                 />
               ) : null}
             </View>
+
+            {canEdit ? (
+              <View style={styles.actions}>
+                <Button variant="secondary" onPress={() => setShowEdit(true)} style={styles.actionBtn}>
+                  {t('common.edit')}
+                </Button>
+                <Button variant="danger" onPress={() => setShowDelete(true)} style={styles.actionBtn}>
+                  {t('common.delete')}
+                </Button>
+              </View>
+            ) : null}
 
             <View style={styles.priceCard}>
               <View style={styles.priceRow}>
@@ -165,6 +229,33 @@ export default function ProductDetailScreen() {
           </>
         )}
       </ScrollView>
+
+      <AddProductSheet
+        visible={showEdit}
+        onClose={() => setShowEdit(false)}
+        categories={categories ?? []}
+        mode="edit"
+        initialProduct={product}
+        saving={updateProduct.isPending}
+        onSubmit={handleUpdate}
+        onCreateCategory={async (name) => {
+          const created = await createCategory.mutateAsync({ name });
+          await refetchCategories();
+          showToast(t('stock.categoryAdded'), 'success');
+          return created;
+        }}
+      />
+
+      <ConfirmModal
+        visible={showDelete}
+        onClose={() => setShowDelete(false)}
+        onConfirm={() => void handleDelete()}
+        title={t('stock.deleteProduct')}
+        message={t('stock.deleteProductConfirm')}
+        confirmText={t('common.delete')}
+        variant="danger"
+        loading={deleteProduct.isPending}
+      />
     </View>
   );
 }
@@ -230,6 +321,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.muted,
     marginTop: 2,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  actionBtn: {
+    flex: 1,
   },
   priceCard: {
     backgroundColor: colors.card,

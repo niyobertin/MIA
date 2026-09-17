@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
-import { colors, spacing } from '@/theme/tokens';
+import { colors, spacing, radius } from '@/theme/tokens';
 import { ProductCard } from '@/components/ProductCard';
 import { SearchBar } from '@/components/SearchBar';
 import { FilterChip } from '@/components/FilterChip';
@@ -11,24 +11,41 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
+import { BottomSheet } from '@/components/SegmentedControl';
+import { Button } from '@/components/Button';
 import { showToast } from '@/stores/toastStore';
 import { canManageInventory } from '@/utils/permissions';
-import { useProducts, useCategories, useCreateProduct } from '@/hooks/useData';
+import {
+  useProducts,
+  useCategories,
+  useCreateProduct,
+  useCreateCategory,
+  useImportProducts,
+} from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { AddProductSheet } from '@/components/AddProductSheet';
+import {
+  pickAndParseProductFile,
+  shareProductImportTemplate,
+  ProductImportParseResult,
+} from '@/services/products/importProducts';
 
 export default function StockScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { data: products, isLoading, refetch, isRefetching } = useProducts({ active: true });
-  const { data: categories } = useCategories();
+  const { data: categories, refetch: refetchCategories } = useCategories();
   const createProductMutation = useCreateProduct();
+  const createCategory = useCreateCategory();
+  const importProducts = useImportProducts();
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [liveQuery, setLiveQuery] = React.useState('');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
   const [showAddProduct, setShowAddProduct] = React.useState(false);
+  const [importPreview, setImportPreview] = React.useState<ProductImportParseResult | null>(null);
+  const [picking, setPicking] = React.useState(false);
 
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSearchChange = (text: string) => {
@@ -84,8 +101,54 @@ export default function StockScreen() {
       setShowAddProduct(false);
       showToast(t('stock.productAdded'), 'success');
       refetch();
-    } catch (error) {
+    } catch {
       showToast(t('stock.productFailed'), 'error');
+    }
+  };
+
+  const handlePickImport = async () => {
+    setPicking(true);
+    try {
+      const parsed = await pickAndParseProductFile();
+      if (!parsed) return;
+      if (parsed.rows.length === 0) {
+        showToast(parsed.errors[0] ?? t('stock.importFailed'), 'error');
+        return;
+      }
+      setImportPreview(parsed);
+    } catch {
+      showToast(t('stock.importFailed'), 'error');
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importPreview?.rows.length) return;
+    try {
+      const result = await importProducts.mutateAsync(importPreview.rows);
+      setImportPreview(null);
+      await Promise.all([refetch(), refetchCategories()]);
+      showToast(
+        t('stock.importSuccess', {
+          created: result.created,
+          updated: result.updated,
+        }),
+        'success'
+      );
+      if (result.errors.length > 0) {
+        showToast(t('stock.importPartial', { count: result.errors.length }), 'warning');
+      }
+    } catch {
+      showToast(t('stock.importFailed'), 'error');
+    }
+  };
+
+  const handleShareTemplate = async () => {
+    try {
+      await shareProductImportTemplate();
+    } catch {
+      showToast(t('stock.templateFailed'), 'error');
     }
   };
 
@@ -144,7 +207,9 @@ export default function StockScreen() {
         <FlatList
           data={filteredProducts}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <ProductCard product={item} onPress={() => router.push(`/stock/${item.id}` as any)} />}
+          renderItem={({ item }) => (
+            <ProductCard product={item} onPress={() => router.push(`/stock/${item.id}` as any)} />
+          )}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={!!isRefetching} onRefresh={() => refetch()} />}
@@ -163,6 +228,20 @@ export default function StockScreen() {
               onPress: () => setShowAddProduct(true),
               variant: 'primary',
             },
+            {
+              label: t('stock.importExcel'),
+              description: t('stock.importExcelHint'),
+              icon: 'cloud-upload-outline',
+              onPress: () => void handlePickImport(),
+              variant: 'secondary',
+            },
+            {
+              label: t('stock.downloadTemplate'),
+              description: t('stock.downloadTemplateHint'),
+              icon: 'download-outline',
+              onPress: () => void handleShareTemplate(),
+              variant: 'secondary',
+            },
           ]}
         />
       ) : null}
@@ -173,7 +252,57 @@ export default function StockScreen() {
         categories={categories ?? []}
         onSubmit={handleCreate}
         saving={createProductMutation.isPending}
+        onCreateCategory={async (name) => {
+          const created = await createCategory.mutateAsync({ name });
+          await refetchCategories();
+          showToast(t('stock.categoryAdded'), 'success');
+          return created;
+        }}
       />
+
+      <BottomSheet
+        visible={!!importPreview}
+        onClose={() => setImportPreview(null)}
+        title={t('stock.importPreview')}
+      >
+        <ScrollView style={styles.previewScroll} keyboardShouldPersistTaps="handled">
+          <Text style={styles.previewMeta}>
+            {importPreview?.fileName} · {importPreview?.rows.length ?? 0} {t('stock.products').toLowerCase()}
+          </Text>
+          <Text style={styles.previewHint}>{t('stock.importPreviewHint')}</Text>
+          {(importPreview?.rows ?? []).slice(0, 8).map((row) => (
+            <View key={`${row.rowNumber}-${row.name}`} style={styles.previewRow}>
+              <Text style={styles.previewName} numberOfLines={1}>
+                {row.name}
+              </Text>
+              <Text style={styles.previewSub}>
+                {row.selling_price} · {row.unit || 'pcs'}
+                {row.opening_stock > 0 ? ` · stock ${row.opening_stock}` : ''}
+              </Text>
+            </View>
+          ))}
+          {(importPreview?.rows.length ?? 0) > 8 ? (
+            <Text style={styles.previewMore}>
+              +{(importPreview?.rows.length ?? 0) - 8} {t('common.more').toLowerCase()}
+            </Text>
+          ) : null}
+          {importPreview?.errors?.length ? (
+            <Text style={styles.previewErrors}>
+              {t('stock.importRowErrors', { count: importPreview.errors.length })}
+            </Text>
+          ) : null}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={importProducts.isPending || picking}
+            onPress={() => void handleConfirmImport()}
+          >
+            {t('stock.confirmImport')}
+          </Button>
+          <View style={{ height: spacing.xl }} />
+        </ScrollView>
+      </BottomSheet>
     </View>
   );
 }
@@ -206,6 +335,7 @@ const styles = StyleSheet.create({
   },
   chips: {
     paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
     paddingBottom: spacing.sm,
   },
   list: {
@@ -213,7 +343,47 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
   },
   skel: {
-    borderRadius: 12,
-    marginBottom: spacing.sm,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
+  },
+  previewScroll: {
+    maxHeight: 420,
+  },
+  previewMeta: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: spacing.xs,
+  },
+  previewHint: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: spacing.md,
+    lineHeight: 18,
+  },
+  previewRow: {
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+  },
+  previewName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  previewSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  previewMore: {
+    fontSize: 13,
+    color: colors.muted,
+    marginVertical: spacing.sm,
+  },
+  previewErrors: {
+    fontSize: 13,
+    color: colors.dangerText,
+    marginBottom: spacing.md,
   },
 });

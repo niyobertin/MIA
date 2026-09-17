@@ -12,6 +12,8 @@ import { colors } from '@/theme/tokens';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSyncStore } from '@/stores/syncStore';
+import { getSyncEngine } from '@/services/sync/syncEngine';
+import { refreshPendingCount } from '@/services/sync/queue';
 import { ToastHost } from './ToastHost';
 
 const queryClient = new QueryClient({
@@ -60,12 +62,34 @@ function ZustandProviders({ children }: { children: React.ReactNode }) {
   const uiStore = useUIStore();
   const syncStore = useSyncStore();
   const language = useUIStore((s) => s.language);
+  const businessId = useAuthStore((s) => s.business?.id);
 
   React.useEffect(() => {
     if (language && i18n.language !== language) {
       void i18n.changeLanguage(language);
     }
   }, [language]);
+
+  React.useEffect(() => {
+    if (!businessId) return;
+
+    const engine = getSyncEngine('local-device');
+    const unsub = engine.subscribe((status) => {
+      useSyncStore.getState().setStatus(status);
+      useSyncStore.getState().setPendingCount(status.pendingCount);
+      if (status.lastSyncAt) {
+        useSyncStore.getState().setLastSyncAt(status.lastSyncAt);
+      }
+    });
+
+    void refreshPendingCount(businessId);
+    void engine.startAutoSync(30000);
+
+    return () => {
+      unsub();
+      engine.stopAutoSync();
+    };
+  }, [businessId]);
 
   return (
     <AuthProvider store={authStore}>

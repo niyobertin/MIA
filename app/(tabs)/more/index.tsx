@@ -30,6 +30,7 @@ export default function MoreScreen() {
   const operations = [
     { title: t('navigation.reports'), icon: 'analytics', screen: '/reports' },
     { title: t('customers.customers'), icon: 'people', screen: '/customers' },
+    { title: t('suppliers.suppliers'), icon: 'business', screen: '/suppliers' },
     ...(canCloseDay(user?.role)
       ? [{ title: t('cash.cashDay'), icon: 'sunny', screen: '/closing' }]
       : []),

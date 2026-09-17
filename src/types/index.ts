@@ -283,7 +283,7 @@ export interface SyncRecord {
   record_id: string;
   business_id: string;
   operation: 'insert' | 'update' | 'delete';
-  payload: Record<string, unknown>;
+  payload: string | Record<string, unknown>;
   device_id: string;
   status: SyncStatus;
   error_message: string | null;

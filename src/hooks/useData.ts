@@ -10,6 +10,7 @@ import { expenseRepository } from '@/repositories/expenses/expenses';
 import { paymentRepository } from '@/repositories/payments/payments';
 import { dailyClosingRepository } from '@/repositories/reports/dailyClosing';
 import { financialService } from '@/services/financial';
+import { queueSync } from '@/services/sync/queue';
 import { Product, Category, Supplier, Customer, Purchase, Sale, Expense, Payment, PaymentMethod, DailyClosing, StockMovement } from '@/types';
 
 const getBusinessId = () => useAuthStore.getState().business?.id ?? '';
@@ -102,7 +103,7 @@ export function useExpenses(dateRange?: { start: string; end: string }) {
     queryKey: ['expenses', businessId, dateRange],
     queryFn: () => dateRange
       ? expenseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-      : expenseRepository.findAll(businessId),
+      : expenseRepository.findAll(businessId, { limit: 500, orderBy: 'expense_date', orderDirection: 'DESC' }),
     enabled: !!businessId,
   });
 }
@@ -434,7 +435,9 @@ export function useCreateProduct() {
   
   return useMutation({
     mutationFn: async (product: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => {
-      return productRepository.create({ ...product, business_id: businessId });
+      const created = await productRepository.create({ ...product, business_id: businessId });
+      await queueSync('products', created.id, 'insert', created as unknown as Record<string, unknown>, businessId);
+      return created;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', businessId] });
@@ -448,10 +451,323 @@ export function useUpdateProduct() {
   
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Product> }) => {
-      return productRepository.update(id, businessId, updates);
+      const updated = await productRepository.update(id, businessId, updates);
+      if (updated) {
+        await queueSync('products', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['product', businessId, variables.id] });
+    },
+  });
+}
+
+export function useDeleteProduct() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const updated = await productRepository.update(id, businessId, { active: false });
+      if (updated) {
+        await queueSync('products', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['product', businessId, id] });
+    },
+  });
+}
+
+export function useCreateCategory() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (data: { name: string; description?: string }) => {
+      const created = await categoryRepository.create({
+        business_id: businessId,
+        name: data.name.trim(),
+        description: data.description?.trim() || null,
+        active: true,
+      });
+      await queueSync('categories', created.id, 'insert', created as unknown as Record<string, unknown>, businessId);
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories', businessId] });
+    },
+  });
+}
+
+export function useCreateCustomer() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (data: {
+      name: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      credit_limit?: number;
+    }) => {
+      const created = await customerRepository.create({
+        business_id: businessId,
+        name: data.name.trim(),
+        phone: data.phone?.trim() || null,
+        email: data.email?.trim() || null,
+        address: data.address?.trim() || null,
+        credit_limit: data.credit_limit ?? 0,
+        active: true,
+      });
+      await queueSync('customers', created.id, 'insert', created as unknown as Record<string, unknown>, businessId);
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customers', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+    },
+  });
+}
+
+export function useUpdateCustomer() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      updates,
+    }: {
+      id: string;
+      updates: Partial<Pick<Customer, 'name' | 'phone' | 'email' | 'address' | 'credit_limit' | 'active'>>;
+    }) => {
+      const updated = await customerRepository.update(id, businessId, updates);
+      if (updated) {
+        await queueSync('customers', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customers', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+    },
+  });
+}
+
+export function useDeleteCustomer() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const updated = await customerRepository.update(id, businessId, { active: false });
+      if (updated) {
+        await queueSync('customers', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customers', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+    },
+  });
+}
+
+export function useCreateSupplier() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (data: { name: string; phone?: string; email?: string; address?: string }) => {
+      const created = await supplierRepository.create({
+        business_id: businessId,
+        name: data.name.trim(),
+        phone: data.phone?.trim() || null,
+        email: data.email?.trim() || null,
+        address: data.address?.trim() || null,
+        active: true,
+      });
+      await queueSync('suppliers', created.id, 'insert', created as unknown as Record<string, unknown>, businessId);
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers', businessId] });
+    },
+  });
+}
+
+export function useUpdateSupplier() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      updates,
+    }: {
+      id: string;
+      updates: Partial<Pick<Supplier, 'name' | 'phone' | 'email' | 'address' | 'active'>>;
+    }) => {
+      const updated = await supplierRepository.update(id, businessId, updates);
+      if (updated) {
+        await queueSync('suppliers', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers', businessId] });
+    },
+  });
+}
+
+export function useDeleteSupplier() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const updated = await supplierRepository.update(id, businessId, { active: false });
+      if (updated) {
+        await queueSync('suppliers', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+      }
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers', businessId] });
+    },
+  });
+}
+
+export function useImportProducts() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (rows: import('@/services/products/importProducts').ProductImportRow[]) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const categories = await categoryRepository.findActive(bid);
+      const categoryByName = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c]));
+
+      let created = 0;
+      let updated = 0;
+      let stocked = 0;
+      const errors: string[] = [];
+
+      for (const row of rows) {
+        try {
+          let categoryId: string | null = null;
+          if (row.category) {
+            const key = row.category.trim().toLowerCase();
+            let cat = categoryByName.get(key);
+            if (!cat) {
+              cat = await categoryRepository.create({
+                business_id: bid,
+                name: row.category.trim(),
+                description: null,
+                active: true,
+              });
+              categoryByName.set(key, cat);
+              await queueSync('categories', cat.id, 'insert', cat as unknown as Record<string, unknown>, bid);
+            }
+            categoryId = cat.id;
+          }
+
+          const existing =
+            (row.sku ? await productRepository.findBySku(row.sku, bid) : null) ??
+            (row.barcode ? await productRepository.findByBarcode(row.barcode, bid) : null);
+
+          let productId: string;
+          if (existing) {
+            const updatedProduct = await productRepository.update(existing.id, bid, {
+              name: row.name,
+              category_id: categoryId ?? existing.category_id,
+              unit: row.unit || existing.unit,
+              selling_price: row.selling_price,
+              average_cost: row.average_cost || existing.average_cost,
+              reorder_level: row.reorder_level,
+              track_inventory: row.track_inventory,
+              active: true,
+              sku: row.sku || existing.sku,
+              barcode: row.barcode || existing.barcode,
+            });
+            if (updatedProduct) {
+              await queueSync(
+                'products',
+                existing.id,
+                'update',
+                updatedProduct as unknown as Record<string, unknown>,
+                bid
+              );
+            }
+            productId = existing.id;
+            updated++;
+          } else {
+            const createdProduct = await productRepository.create({
+              business_id: bid,
+              category_id: categoryId,
+              name: row.name,
+              sku: row.sku || null,
+              barcode: row.barcode || null,
+              unit: row.unit || 'pcs',
+              selling_price: row.selling_price,
+              average_cost: row.average_cost,
+              reorder_level: row.reorder_level,
+              track_inventory: row.track_inventory,
+              active: true,
+            });
+            await queueSync(
+              'products',
+              createdProduct.id,
+              'insert',
+              createdProduct as unknown as Record<string, unknown>,
+              bid
+            );
+            productId = createdProduct.id;
+            created++;
+          }
+
+          if (row.opening_stock > 0) {
+            const movement = await stockMovementRepository.create({
+              id: generateUUID(),
+              business_id: bid,
+              product_id: productId,
+              type: 'opening',
+              quantity: row.opening_stock,
+              unit_cost: row.average_cost,
+              reference_type: null,
+              reference_id: null,
+              occurred_at: new Date().toISOString(),
+              created_by: userId,
+              device_id: deviceId,
+              sync_status: 'pending',
+            });
+            await queueSync(
+              'stock_movements',
+              movement.id,
+              'insert',
+              movement as unknown as Record<string, unknown>,
+              bid
+            );
+            stocked++;
+          }
+        } catch (error) {
+          errors.push(`Row ${row.rowNumber}: ${String(error)}`);
+        }
+      }
+
+      return { created, updated, stocked, errors };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['categories', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['lowStockProducts', businessId] });
     },
   });
 }
@@ -531,7 +847,7 @@ export function useCreateSale() {
       }
       
       if (data.paymentMethod !== 'credit') {
-        await paymentRepository.create({
+        const payment = await paymentRepository.create({
           id: generateUUID(),
           business_id: bid,
           type: 'sale_payment',
@@ -546,8 +862,10 @@ export function useCreateSale() {
           device_id: deviceId,
           sync_status: 'pending',
         });
+        await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, bid);
       }
-      
+
+      await queueSync('sales', sale.id, 'insert', sale as unknown as Record<string, unknown>, bid);
       return sale;
     },
     onSuccess: () => {
@@ -555,6 +873,7 @@ export function useCreateSale() {
       queryClient.invalidateQueries({ queryKey: ['products', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
     },
   });
 }
@@ -599,7 +918,6 @@ export function useCreatePurchase() {
         sync_status: 'pending',
       });
       
-      // Create purchase items and stock movements
       for (const item of totals.itemsWithTotal) {
         await purchaseItemRepository.create({
           id: generateUUID(),
@@ -611,7 +929,6 @@ export function useCreatePurchase() {
           total_cost: item.total_cost,
         });
         
-        // Stock in movement
         await stockMovementRepository.create({
           id: generateUUID(),
           business_id: businessId,
@@ -627,33 +944,38 @@ export function useCreatePurchase() {
           sync_status: 'pending',
         });
         
-        // Update average cost
         await financialService.updateProductAverageCost(item.product_id, businessId, item.quantity, item.unit_cost);
       }
-      
-      // Create payment
-      await paymentRepository.create({
-        id: generateUUID(),
-        business_id: businessId,
-        type: 'purchase_payment',
-        payment_method: data.paymentMethod,
-        amount: totals.totalAmount,
-        reference_type: 'purchase',
-        reference_id: purchaseId,
-        party_id: data.supplierId,
-        payment_date: today,
-        notes: data.notes ?? null,
-        created_by: getUserId(),
-        device_id: getDeviceId(),
-        sync_status: 'pending',
-      });
-      
+
+      await queueSync('purchases', purchase.id, 'insert', purchase as unknown as Record<string, unknown>, businessId);
+
+      if (data.paymentMethod !== 'credit') {
+        const payment = await paymentRepository.create({
+          id: generateUUID(),
+          business_id: businessId,
+          type: 'purchase_payment',
+          payment_method: data.paymentMethod,
+          amount: totals.totalAmount,
+          reference_type: 'purchase',
+          reference_id: purchaseId,
+          party_id: data.supplierId,
+          payment_date: today,
+          notes: data.notes ?? null,
+          created_by: getUserId(),
+          device_id: getDeviceId(),
+          sync_status: 'pending',
+        });
+        await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
+      }
+
       return purchase;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchases', businessId] });
       queryClient.invalidateQueries({ queryKey: ['products', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
     },
   });
 }
@@ -685,8 +1007,7 @@ export function useCreateExpense() {
         sync_status: 'pending',
       });
       
-      // Create payment
-      await paymentRepository.create({
+      const payment = await paymentRepository.create({
         id: generateUUID(),
         business_id: businessId,
         type: 'expense_payment',
@@ -701,12 +1022,102 @@ export function useCreateExpense() {
         device_id: getDeviceId(),
         sync_status: 'pending',
       });
-      
+
+      await queueSync('expenses', expense.id, 'insert', expense as unknown as Record<string, unknown>, businessId);
+      await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
       return expense;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function useUpdateExpense() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      updates,
+    }: {
+      id: string;
+      updates: {
+        category: Expense['category'];
+        amount: number;
+        paymentMethod: PaymentMethod;
+        description?: string;
+        expenseDate: string;
+        referenceNumber?: string;
+      };
+    }) => {
+      const updated = await expenseRepository.update(id, businessId, {
+        category: updates.category,
+        amount: updates.amount,
+        payment_method: updates.paymentMethod,
+        description: updates.description ?? null,
+        expense_date: updates.expenseDate,
+        reference_number: updates.referenceNumber ?? null,
+        sync_status: 'pending',
+      });
+
+      if (updated) {
+        await queueSync('expenses', id, 'update', updated as unknown as Record<string, unknown>, businessId);
+        const linked = await paymentRepository.findByReference('expense', id, businessId);
+        for (const payment of linked) {
+          const nextPayment = await paymentRepository.update(payment.id, businessId, {
+            amount: updates.amount,
+            payment_method: updates.paymentMethod,
+            payment_date: updates.expenseDate,
+            sync_status: 'pending',
+          });
+          if (nextPayment) {
+            await queueSync(
+              'payments',
+              payment.id,
+              'update',
+              nextPayment as unknown as Record<string, unknown>,
+              businessId
+            );
+          }
+        }
+      }
+
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function useDeleteExpense() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const linked = await paymentRepository.findByReference('expense', id, businessId);
+      for (const payment of linked) {
+        await paymentRepository.delete(payment.id, businessId);
+        await queueSync('payments', payment.id, 'delete', { id: payment.id }, businessId);
+      }
+      await expenseRepository.delete(id, businessId);
+      await queueSync('expenses', id, 'delete', { id }, businessId);
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
     },
   });
 }
@@ -742,11 +1153,13 @@ export function useCreatePayment() {
         sync_status: 'pending',
       });
 
+      await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
       return payment;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
     },
   });
 }

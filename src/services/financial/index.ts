@@ -13,6 +13,7 @@ import {
   calculateExpectedCash,
   calculateCashVariance,
   roundToMinorUnits,
+  calculateAverageTransactionValue,
 } from './calculations';
 import { productRepository, stockMovementRepository } from '@/repositories/products/products';
 import { purchaseRepository } from '@/repositories/purchases/purchases';
@@ -132,12 +133,12 @@ export class FinancialService {
       this.calculateCOGSForPeriod(businessId, startOfDay, endOfDay),
       expenseRepository.getTotalExpenses(businessId, startOfDay, endOfDay),
       saleRepository.getCashSales(businessId, startOfDay, endOfDay),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'customer_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'other_income', 'cash'),
       purchaseRepository.getCashPurchases(businessId, startOfDay, endOfDay),
       expenseRepository.getCashExpenses(businessId, startOfDay, endOfDay),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'supplier_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'withdrawal', 'cash'),
     ]);
 
     const grossProfit = calculateGrossProfit(totalSales, cogs);
@@ -150,12 +151,12 @@ export class FinancialService {
       expenses,
       netProfit,
       cashSales,
-      customerCashPayments: 0,
-      otherCashIncome: 0,
+      customerCashPayments,
+      otherCashIncome,
       cashPurchases,
       cashExpenses,
-      supplierCashPayments: 0,
-      withdrawals: 0,
+      supplierCashPayments,
+      withdrawals,
     };
   }
 
@@ -205,12 +206,12 @@ export class FinancialService {
       withdrawals,
     ] = await Promise.all([
       saleRepository.getCashSales(businessId, startOfDay, endOfDay),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'customer_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'other_income', 'cash'),
       purchaseRepository.getCashPurchases(businessId, startOfDay, endOfDay),
       expenseRepository.getCashExpenses(businessId, startOfDay, endOfDay),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
-      paymentRepository.getTotalByMethod(businessId, startOfDay, endOfDay, 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'supplier_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'withdrawal', 'cash'),
     ]);
 
     const expectedCash = calculateExpectedCash(

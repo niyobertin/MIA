@@ -1,38 +1,81 @@
 import { FormScrollView } from '@/components';
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useSyncStore } from '@/stores/syncStore';
+import { useAuthStore } from '@/stores/authStore';
 import { Button } from '@/components/Button';
 import { SyncIndicator } from '@/components/SyncIndicator';
+import { getSyncEngine } from '@/services/sync/syncEngine';
+import { refreshPendingCount } from '@/services/sync/queue';
+import { showToast } from '@/stores/toastStore';
 
 export default function SyncScreen() {
   const { t } = useTranslation();
-  const { status, pendingCount, lastSyncAt, setStatus, setLastSyncAt } = useSyncStore();
+  const { status, pendingCount, lastSyncAt, setStatus, setLastSyncAt, setPendingCount } = useSyncStore();
+  const businessId = useAuthStore((s) => s.business?.id);
   const [isSyncing, setIsSyncing] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!businessId) return;
+    void refreshPendingCount(businessId);
+  }, [businessId]);
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
-    setStatus({ status: 'syncing', pendingCount });
-    
-    // Simulate sync
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    setStatus({ status: 'synced', pendingCount: 0 });
-    setLastSyncAt(new Date());
-    setIsSyncing(false);
+    try {
+      const engine = getSyncEngine('local-device');
+      const result = await engine.syncAll();
+      const count = await refreshPendingCount(businessId);
+      setPendingCount(count);
+      setStatus({
+        status: result.failed > 0 ? 'failed' : 'synced',
+        pendingCount: count,
+        syncedCount: result.synced,
+        failedCount: result.failed,
+        lastSyncAt: new Date(),
+      });
+      setLastSyncAt(new Date());
+      if (result.success) {
+        showToast(t('settings.statusSynced'), 'success');
+      } else if (result.errors[0]) {
+        showToast(result.errors[0], 'error');
+      } else {
+        showToast(t('settings.statusFailed'), 'error');
+      }
+    } catch (error) {
+      showToast(String(error), 'error');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handleRetryFailed = async () => {
     setIsSyncing(true);
-    setStatus({ status: 'syncing', pendingCount });
-    
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    setStatus({ status: 'synced', pendingCount: 0 });
-    setLastSyncAt(new Date());
-    setIsSyncing(false);
+    try {
+      const engine = getSyncEngine('local-device');
+      const result = await engine.retryFailed();
+      const count = await refreshPendingCount(businessId);
+      setPendingCount(count);
+      setStatus({
+        status: result.failed > 0 ? 'failed' : 'synced',
+        pendingCount: count,
+        syncedCount: result.synced,
+        failedCount: result.failed,
+        lastSyncAt: new Date(),
+      });
+      setLastSyncAt(new Date());
+      if (result.success) {
+        showToast(t('settings.statusSynced'), 'success');
+      } else {
+        showToast(t('settings.statusFailed'), 'error');
+      }
+    } catch (error) {
+      showToast(String(error), 'error');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   return (
@@ -48,8 +91,14 @@ export default function SyncScreen() {
           <Text style={styles.statusTitle}>{t('settings.syncStatus')}</Text>
         </View>
         <View style={styles.statusDetails}>
-          <StatusRow label={t('settings.pendingTransactions')} value={pendingCount > 0 ? `${pendingCount} ${t('common.pending')}` : t('common.synced')} />
-          <StatusRow label={t('settings.lastSync')} value={lastSyncAt ? formatDateTime(lastSyncAt) : t('settings.never')} />
+          <StatusRow
+            label={t('settings.pendingTransactions')}
+            value={pendingCount > 0 ? `${pendingCount} ${t('common.pending')}` : t('common.synced')}
+          />
+          <StatusRow
+            label={t('settings.lastSync')}
+            value={lastSyncAt ? formatDateTime(lastSyncAt) : t('settings.never')}
+          />
           <StatusRow label={t('settings.currentStatus')} value={getStatusLabel(status.status, t)} />
         </View>
       </View>
@@ -57,37 +106,37 @@ export default function SyncScreen() {
       <View style={styles.actionsSection}>
         <Text style={styles.sectionTitle}>{t('settings.actions')}</Text>
         <View style={styles.actionButtons}>
-          <Button 
-            variant={isSyncing ? 'secondary' : 'primary'} 
-            fullWidth 
+          <Button
+            variant={isSyncing ? 'secondary' : 'primary'}
+            fullWidth
             loading={isSyncing}
-            onPress={handleSyncNow}
+            onPress={() => void handleSyncNow()}
             disabled={isSyncing}
           >
             {isSyncing ? t('common.syncing') : t('settings.syncNow')}
           </Button>
-          {pendingCount > 0 && (
-            <Button variant="outline" fullWidth onPress={handleRetryFailed} disabled={isSyncing}>
+          {pendingCount > 0 ? (
+            <Button variant="outline" fullWidth onPress={() => void handleRetryFailed()} disabled={isSyncing}>
               {t('common.retry')}
             </Button>
-          )}
+          ) : null}
         </View>
       </View>
 
       <View style={styles.infoSection}>
         <Text style={styles.infoTitle}>{t('settings.howItWorks')}</Text>
         <View style={styles.infoItems}>
-          <InfoItem 
+          <InfoItem
             icon="cloud-upload"
             title={t('settings.offlineFirst')}
             description={t('settings.offlineFirstDesc')}
           />
-          <InfoItem 
+          <InfoItem
             icon="shield-checkmark"
             title={t('settings.autoSync')}
             description={t('settings.autoSyncDesc')}
           />
-          <InfoItem 
+          <InfoItem
             icon="refresh-circle"
             title={t('settings.conflictResolution')}
             description={t('settings.conflictResolutionDesc')}
@@ -108,11 +157,10 @@ function StatusRow({ label, value }: { label: string; value: string }) {
 }
 
 function InfoItem({ icon, title, description }: { icon: string; title: string; description: string }) {
-  const { t } = useTranslation();
   return (
     <View style={styles.infoItem}>
       <View style={styles.infoIcon}>
-        <Ionicons name={icon} size={20} color="#0ea5e9" />
+        <Ionicons name={icon as any} size={20} color="#0ea5e9" />
       </View>
       <View style={styles.infoContent}>
         <Text style={styles.infoItemTitle}>{title}</Text>

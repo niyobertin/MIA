@@ -24,9 +24,10 @@ import { BottomSheet } from '@/components/SegmentedControl';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useSuppliers, useCreatePurchase } from '@/hooks/useData';
+import { useProducts, useSuppliers, useCreatePurchase, useCreateSupplier } from '@/hooks/useData';
 import { PAYMENT_METHODS } from '@/constants';
 import { Supplier } from '@/types';
+import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 
 interface PurchaseItem {
   productId: string;
@@ -41,8 +42,10 @@ export default function StockInScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { data: products, isLoading: productsLoading } = useProducts({ active: true });
-  const { data: suppliers } = useSuppliers();
+  const { data: suppliers, refetch: refetchSuppliers } = useSuppliers();
   const createPurchaseMutation = useCreatePurchase();
+  const createSupplier = useCreateSupplier();
+  const [showAddSupplier, setShowAddSupplier] = React.useState(false);
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [liveQuery, setLiveQuery] = React.useState('');
@@ -340,6 +343,16 @@ export default function StockInScreen() {
         onClose={() => setShowSuppliers(false)}
         title={t('purchases.selectSupplier')}
       >
+        <TouchableOpacity
+          style={styles.addPartyBtn}
+          onPress={() => {
+            setShowSuppliers(false);
+            setShowAddSupplier(true);
+          }}
+        >
+          <Ionicons name="business-outline" size={18} color={colors.primary} />
+          <Text style={styles.addPartyText}>{t('purchases.addSupplier')}</Text>
+        </TouchableOpacity>
         <FlatList
           data={suppliers ?? []}
           keyExtractor={(item) => item.id}
@@ -370,6 +383,30 @@ export default function StockInScreen() {
         />
         <View style={styles.sheetSpacer} />
       </BottomSheet>
+
+      <PartyFormSheet
+        visible={showAddSupplier}
+        onClose={() => setShowAddSupplier(false)}
+        kind="supplier"
+        showCreditLimit={false}
+        saving={createSupplier.isPending}
+        onSubmit={async (form: PartyFormData) => {
+          try {
+            const created = await createSupplier.mutateAsync({
+              name: form.name,
+              phone: form.phone,
+              email: form.email,
+              address: form.address,
+            });
+            setSelectedSupplier(created.id);
+            setShowAddSupplier(false);
+            await refetchSuppliers();
+            showToast(t('suppliers.supplierAdded'), 'success');
+          } catch {
+            showToast(t('suppliers.supplierFailed'), 'error');
+          }
+        }}
+      />
 
       <ConfirmModal
         visible={showConfirm}
@@ -578,6 +615,18 @@ const styles = StyleSheet.create({
   },
   supplierList: {
     maxHeight: 340,
+  },
+  addPartyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  addPartyText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.primary,
   },
   supplierOption: {
     flexDirection: 'row',

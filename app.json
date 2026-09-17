@@ -4,10 +4,10 @@
     "slug": "mia",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/mia.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/mia.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -20,7 +20,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/mia.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.mia.app",
@@ -32,13 +32,14 @@
       }
     },
     "web": {
-      "favicon": "./assets/icon.png"
+      "favicon": "./assets/mia.png"
     },
     "plugins": [
       "expo-router",
       "expo-sqlite",
       "expo-secure-store",
-      "expo-localization"
+      "expo-localization",
+      "expo-document-picker"
     ],
     "scheme": "mia",
     "extra": {

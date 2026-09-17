@@ -65,6 +65,24 @@ export class PaymentRepository extends BaseRepository<Payment> {
     return row?.total ?? 0;
   }
 
+  async getTotalByTypeAndMethod(
+    businessId: string,
+    startDate: string,
+    endDate: string,
+    type: PaymentType,
+    method: PaymentMethod = 'cash'
+  ): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND payment_date BETWEEN ? AND ?
+       AND type = ? AND payment_method = ?`,
+      [businessId, startDate, endDate, type, method]
+    );
+    return row?.total ?? 0;
+  }
+
   async getCashInflows(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
     const row = await db.getFirstAsync<{ total: number }>(

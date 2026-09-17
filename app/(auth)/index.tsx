@@ -3,8 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from '@/components/Button';
+import { Logo } from '@/components/Logo';
 import { useTranslation } from 'react-i18next';
-import { APP_NAME } from '@/constants';
 import { FormScrollView } from '@/components';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -15,7 +15,7 @@ export default function WelcomeScreen() {
     <SafeAreaView style={styles.container}>
       <FormScrollView>
         <View style={styles.logoContainer}>
-          <Text style={styles.title}>{APP_NAME}</Text>
+          <Logo size={148} style={styles.logo} />
           <Text style={styles.subtitle}>{t('auth.welcome')}</Text>
           <Text style={styles.tagline}>{t('auth.welcomeTagline')}</Text>
         </View>
@@ -58,18 +58,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 32,
   },
-  title: {
-    fontSize: 40,
-    fontWeight: '800',
-    color: '#111827',
-    letterSpacing: -0.5,
-    marginBottom: 8,
+  logo: {
+    marginBottom: 20,
   },
   subtitle: {
     fontSize: 18,
     color: '#6b7280',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 12,
   },
   tagline: {
     fontSize: 14,
@@ -79,15 +75,8 @@ const styles = StyleSheet.create({
   },
   actionsContainer: {
     paddingHorizontal: 24,
-    paddingBottom: 24,
+    paddingBottom: 32,
     gap: 16,
-  },
-  buttonIcon: {
-    marginRight: 10,
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
   divider: {
     flexDirection: 'row',
@@ -100,7 +89,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
   },
   dividerText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#9ca3af',
+  },
+  buttonIcon: {
+    marginRight: 8,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

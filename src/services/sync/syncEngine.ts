@@ -1,10 +1,10 @@
-import { SyncRecord, SyncStatus } from '@/types';
+import { SyncRecord } from '@/types';
 import { syncRepository } from '@/repositories/sync';
-import { getDatabase } from '@/db/database';
+import { useAuthStore } from '@/stores/authStore';
 import NetInfo from '@react-native-community/netinfo';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export class SyncEngine {
   private isSyncing = false;
@@ -19,22 +19,26 @@ export class SyncEngine {
   subscribe(listener: (status: SyncEngineStatus) => void): () => void {
     this.listeners.push(listener);
     return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
+      this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 
   private notify(status: SyncEngineStatus): void {
-    this.listeners.forEach(l => l(status));
+    this.listeners.forEach((l) => l(status));
+  }
+
+  private getBusinessId(): string | null {
+    return useAuthStore.getState().business?.id ?? null;
   }
 
   async startAutoSync(intervalMs = 30000): Promise<void> {
     if (this.syncInterval) return;
-    
+
     this.syncInterval = setInterval(() => {
-      this.syncIfOnline();
+      void this.syncIfOnline();
     }, intervalMs);
-    
-    this.syncIfOnline();
+
+    void this.syncIfOnline();
   }
 
   stopAutoSync(): void {
@@ -52,19 +56,36 @@ export class SyncEngine {
   }
 
   async syncAll(): Promise<SyncResult> {
-    if (this.isSyncing) return { success: false, synced: 0, failed: 0, errors: ['Already syncing'] };
-    
+    if (this.isSyncing) {
+      return { success: false, synced: 0, failed: 0, errors: ['Already syncing'] };
+    }
+
+    const businessId = this.getBusinessId();
+    if (!businessId) {
+      return { success: false, synced: 0, failed: 0, errors: ['No active business'] };
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      this.notify({ status: 'failed', pendingCount: await syncRepository.getPendingCount(businessId) });
+      return {
+        success: false,
+        synced: 0,
+        failed: 0,
+        errors: ['Cloud sync is not configured (missing Supabase URL/key)'],
+      };
+    }
+
     this.isSyncing = true;
     this.notify({ status: 'syncing', pendingCount: 0 });
-    
+
     try {
-      const pendingRecords = await syncRepository.findPending(''); // Will need businessId
+      const pendingRecords = await syncRepository.findPending(businessId);
       this.notify({ status: 'syncing', pendingCount: pendingRecords.length });
-      
+
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
-      
+
       for (const record of pendingRecords) {
         try {
           await this.syncRecord(record);
@@ -73,22 +94,24 @@ export class SyncEngine {
           failed++;
           errors.push(`Failed to sync ${record.table_name}:${record.record_id} - ${error}`);
         }
-        
-        this.notify({ 
-          status: 'syncing', 
-          pendingCount: pendingRecords.length - synced - failed,
+
+        this.notify({
+          status: 'syncing',
+          pendingCount: Math.max(0, pendingRecords.length - synced - failed),
           syncedCount: synced,
           failedCount: failed,
         });
       }
-      
-      this.notify({ 
-        status: 'synced', 
-        pendingCount: await syncRepository.getPendingCount(''),
+
+      const pendingCount = await syncRepository.getPendingCount(businessId);
+      this.notify({
+        status: failed > 0 ? 'failed' : 'synced',
+        pendingCount,
         syncedCount: synced,
         failedCount: failed,
+        lastSyncAt: new Date(),
       });
-      
+
       return { success: failed === 0, synced, failed, errors };
     } finally {
       this.isSyncing = false;
@@ -97,24 +120,44 @@ export class SyncEngine {
 
   private async syncRecord(record: SyncRecord): Promise<void> {
     await syncRepository.markSyncing(record.id, record.business_id);
-    
+
     try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/${record.table_name}`, {
-        method: record.operation === 'insert' ? 'POST' : record.operation === 'update' ? 'PATCH' : 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Prefer': 'return=minimal',
-        },
-        body: JSON.stringify(record.payload),
+      const payload =
+        typeof record.payload === 'string' ? JSON.parse(record.payload) : record.payload;
+
+      let url = `${SUPABASE_URL}/rest/v1/${record.table_name}`;
+      let method: string = 'POST';
+
+      if (record.operation === 'update') {
+        method = 'PATCH';
+        url += `?id=eq.${encodeURIComponent(record.record_id)}`;
+      } else if (record.operation === 'delete') {
+        method = 'DELETE';
+        url += `?id=eq.${encodeURIComponent(record.record_id)}`;
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal',
+      };
+
+      if (record.operation === 'insert') {
+        headers.Prefer = 'resolution=merge-duplicates,return=minimal';
+      }
+
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: record.operation === 'delete' ? undefined : JSON.stringify(payload),
       });
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
-      
+
       await syncRepository.markSynced(record.id, record.business_id);
     } catch (error) {
       await syncRepository.markFailed(record.id, record.business_id, String(error));
@@ -140,25 +183,32 @@ export class SyncEngine {
       error_message: null,
       retry_count: 0,
     };
-    
+
     await syncRepository.createSyncRecord(syncRecord);
   }
 
   async retryFailed(): Promise<SyncResult> {
-    if (this.isSyncing) return { success: false, synced: 0, failed: 0, errors: ['Already syncing'] };
-    
+    if (this.isSyncing) {
+      return { success: false, synced: 0, failed: 0, errors: ['Already syncing'] };
+    }
+
+    const businessId = this.getBusinessId();
+    if (!businessId) {
+      return { success: false, synced: 0, failed: 0, errors: ['No active business'] };
+    }
+
     this.isSyncing = true;
     this.notify({ status: 'syncing', pendingCount: 0 });
-    
+
     try {
-      const failedRecords = await syncRepository.findFailed('');
+      const failedRecords = await syncRepository.findFailed(businessId);
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
-      
+
       for (const record of failedRecords) {
         if (record.retry_count >= 5) continue;
-        
+
         try {
           await this.syncRecord(record);
           synced++;
@@ -167,11 +217,19 @@ export class SyncEngine {
           errors.push(`Retry failed for ${record.table_name}:${record.record_id} - ${error}`);
         }
       }
-      
+
+      const pendingCount = await syncRepository.getPendingCount(businessId);
+      this.notify({
+        status: failed > 0 ? 'failed' : 'synced',
+        pendingCount,
+        syncedCount: synced,
+        failedCount: failed,
+        lastSyncAt: new Date(),
+      });
+
       return { success: failed === 0, synced, failed, errors };
     } finally {
       this.isSyncing = false;
-      this.notify({ status: 'idle', pendingCount: await syncRepository.getPendingCount('') });
     }
   }
 

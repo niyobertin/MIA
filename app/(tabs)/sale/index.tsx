@@ -24,13 +24,14 @@ import { Skeleton } from '@/components/Skeleton';
 import { BottomSheet, SegmentedControl } from '@/components/SegmentedControl';
 import { StatusBadge } from '@/components/StatusBadge';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems } from '@/hooks/useData';
+import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
 import { debounce } from '@/utils/formatters';
 import { PAYMENT_METHODS } from '@/constants';
 import { Customer } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
+import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 
 type PayMethod = 'cash' | 'mobile_money' | 'bank' | 'credit';
 
@@ -38,8 +39,10 @@ export default function NewSaleScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { data: products, isLoading } = useProducts({ active: true });
-  const { data: customers } = useCustomers();
+  const { data: customers, refetch: refetchCustomers } = useCustomers();
   const createSaleMutation = useCreateSale();
+  const createCustomer = useCreateCustomer();
+  const [showAddCustomer, setShowAddCustomer] = React.useState(false);
 
   const {
     cart,
@@ -370,6 +373,16 @@ export default function NewSaleScreen() {
         onClose={() => setShowCustomerSheet(false)}
         title={t('sales.selectCustomer')}
       >
+        <TouchableOpacity
+          style={styles.addPartyBtn}
+          onPress={() => {
+            setShowCustomerSheet(false);
+            setShowAddCustomer(true);
+          }}
+        >
+          <Ionicons name="person-add-outline" size={18} color={colors.primary} />
+          <Text style={styles.addPartyText}>{t('customers.addCustomer')}</Text>
+        </TouchableOpacity>
         <FlatList
           data={customers ?? []}
           keyExtractor={(item) => item.id}
@@ -402,6 +415,30 @@ export default function NewSaleScreen() {
         />
         <View style={styles.sheetSpacer} />
       </BottomSheet>
+
+      <PartyFormSheet
+        visible={showAddCustomer}
+        onClose={() => setShowAddCustomer(false)}
+        kind="customer"
+        saving={createCustomer.isPending}
+        onSubmit={async (form: PartyFormData) => {
+          try {
+            const created = await createCustomer.mutateAsync({
+              name: form.name,
+              phone: form.phone,
+              email: form.email,
+              address: form.address,
+              credit_limit: form.credit_limit,
+            });
+            setCustomer(created.id);
+            setShowAddCustomer(false);
+            await refetchCustomers();
+            showToast(t('customers.customerAdded'), 'success');
+          } catch {
+            showToast(t('customers.customerFailed'), 'error');
+          }
+        }}
+      />
 
       <Modal visible={success !== null} transparent animationType="fade" onRequestClose={closeSuccess}>
         <View style={styles.successOverlay}>
@@ -998,6 +1035,18 @@ const styles = StyleSheet.create({
   },
   customerList: {
     maxHeight: 320,
+  },
+  addPartyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  addPartyText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.primary,
   },
   customerOption: {
     flexDirection: 'row',
