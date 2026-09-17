@@ -21,8 +21,8 @@ export class BusinessRepository {
   async findByCode(businessCode: string): Promise<Business | null> {
     const db = await this.getDb();
     const row = await db.getFirstAsync<Record<string, unknown>>(
-      `SELECT * FROM ${this.tableName} WHERE business_code = ?`,
-      [businessCode]
+      `SELECT * FROM ${this.tableName} WHERE upper(business_code) = upper(?)`,
+      [businessCode.trim()]
     );
     return row ? (row as unknown as Business) : null;
   }

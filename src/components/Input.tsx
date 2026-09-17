@@ -1,5 +1,14 @@
 import React from 'react';
-import { View, TextInput, Text, StyleSheet } from 'react-native';
+import {
+  View,
+  TextInput,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { FormScrollContext } from './FormScrollView';
 
 export interface InputProps extends Omit<React.ComponentProps<typeof TextInput>, 'onChangeText' | 'value' | 'disabled'> {
@@ -12,6 +21,8 @@ export interface InputProps extends Omit<React.ComponentProps<typeof TextInput>,
   rightIcon?: React.ReactNode;
   disabled?: boolean;
   required?: boolean;
+  /** When true (default for secure fields), shows an eye icon to reveal/hide the password. */
+  showPasswordToggle?: boolean;
 }
 
 export const Input = React.forwardRef<TextInput, InputProps>(({
@@ -25,6 +36,7 @@ export const Input = React.forwardRef<TextInput, InputProps>(({
   style,
   placeholder,
   secureTextEntry = false,
+  showPasswordToggle,
   keyboardType = 'default',
   autoCapitalize = 'sentences',
   disabled = false,
@@ -34,38 +46,65 @@ export const Input = React.forwardRef<TextInput, InputProps>(({
   onBlur,
   ...props
 }, ref) => {
+  const { t } = useTranslation();
   const inputRef = React.useRef<TextInput>(null);
   const focusInput = React.useContext(FormScrollContext);
+  const [passwordVisible, setPasswordVisible] = React.useState(false);
+
+  const isPasswordField = !!secureTextEntry;
+  const canToggle = isPasswordField && (showPasswordToggle ?? true);
+  const hideText = isPasswordField && !passwordVisible;
+
   React.useImperativeHandle(ref, () => inputRef.current!);
+
+  const trailing = canToggle ? (
+    <TouchableOpacity
+      onPress={() => setPasswordVisible((prev) => !prev)}
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={passwordVisible ? t('auth.hidePassword') : t('auth.showPassword')}
+      style={styles.eyeButton}
+    >
+      <Ionicons
+        name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+        size={22}
+        color="#6b7280"
+      />
+    </TouchableOpacity>
+  ) : (
+    rightIcon
+  );
 
   return (
     <View style={[styles.container, style]}>
-      {label && (
+      {label ? (
         <View style={styles.labelContainer}>
           <Text style={styles.label}>
             {label}
-            {required && <Text style={styles.required}>*</Text>}
+            {required ? <Text style={styles.required}>*</Text> : null}
           </Text>
         </View>
-      )}
-      <View style={[
-        styles.inputWrapper,
-        error && styles.inputWrapperError,
-        disabled && styles.inputWrapperDisabled,
-      ]}>
-        {leftIcon && <View style={styles.iconLeft}>{leftIcon}</View>}
+      ) : null}
+      <View
+        style={[
+          styles.inputWrapper,
+          error ? styles.inputWrapperError : null,
+          disabled ? styles.inputWrapperDisabled : null,
+        ]}
+      >
+        {leftIcon ? <View style={styles.iconLeft}>{leftIcon}</View> : null}
         <TextInput
           {...props}
           ref={inputRef}
           style={[
             styles.input,
-            secureTextEntry && styles.inputSecure,
-            disabled && styles.inputDisabled,
+            hideText ? styles.inputSecure : null,
+            disabled ? styles.inputDisabled : null,
           ]}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          secureTextEntry={secureTextEntry}
+          secureTextEntry={hideText}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           editable={editable && !disabled}
@@ -78,10 +117,10 @@ export const Input = React.forwardRef<TextInput, InputProps>(({
             onBlur?.(event);
           }}
         />
-        {rightIcon && <View style={styles.iconRight}>{rightIcon}</View>}
+        {trailing ? <View style={styles.iconRight}>{trailing}</View> : null}
       </View>
-      {error && <Text style={styles.errorText}>{error}</Text>}
-      {helperText && !error && <Text style={styles.helperText}>{helperText}</Text>}
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {helperText && !error ? <Text style={styles.helperText}>{helperText}</Text> : null}
     </View>
   );
 });
@@ -126,6 +165,9 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     paddingVertical: 4,
   },
+  eyeButton: {
+    padding: 4,
+  },
   input: {
     flex: 1,
     fontSize: 16,
@@ -133,7 +175,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   inputSecure: {
-    fontFamily: 'monospace',
+    fontFamily: Platform.select({ ios: 'Courier', android: 'monospace', default: 'monospace' }),
   },
   inputDisabled: {
     color: '#9ca3af',

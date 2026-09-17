@@ -1,31 +1,39 @@
-import { KeyboardAvoidingView, Platform } from 'react-native';
-import { FormScrollView } from '@/components';
-import { FormInput, FormPicker } from '@/components';
+import { FormScrollView, FormInput, FormPicker, Button } from '@/components';
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  Modal,
+  Switch,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Link } from 'expo-router';
-import { Button, Input } from '@/components';
+import { Picker } from '@react-native-picker/picker';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
-import { generateUUID } from '@/utils/uuid';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { userRepository } from '@/repositories/users/users';
 import { showToast } from '@/stores/toastStore';
+import { User, UserRole } from '@/types';
 
 const createUserSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
   phone: z.string().optional(),
-  role: z.enum(['OWNER', 'MANAGER', 'CASHIER', 'STAFF']),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  role: z.enum(['MANAGER', 'CASHIER', 'STAFF']),
 });
 
 type CreateUserForm = z.infer<typeof createUserSchema>;
 
-const ROLES = [
-  { value: 'OWNER', label: 'Owner' },
+const ROLES: { value: UserRole; label: string }[] = [
   { value: 'MANAGER', label: 'Manager' },
   { value: 'CASHIER', label: 'Cashier' },
   { value: 'STAFF', label: 'Staff' },
@@ -34,35 +42,27 @@ const ROLES = [
 export default function UserManagementScreen() {
   const { t } = useTranslation();
   const { business } = useAuthStore();
+  const queryClient = useQueryClient();
   const [showAddUser, setShowAddUser] = React.useState(false);
-  const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<CreateUserForm>({
-    resolver: zodResolver(createUserSchema),
-    defaultValues: { name: '', email: '', phone: '', role: 'STAFF' },
+
+  const { data: users = [], refetch } = useQuery({
+    queryKey: ['users', business?.id],
+    queryFn: () => userRepository.findAll(business!.id),
+    enabled: !!business?.id,
   });
 
-  const onSubmit = async (data: CreateUserForm) => {
-    if (!business) return;
-    try {
-      await userRepository.create({
-        id: generateUUID(),
-        business_id: business.id,
-        ...data,
-        active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      setShowAddUser(false);
-      showToast(t('users.userAdded'), 'success');
-    } catch (error) {
-      console.error('Failed to create user:', error);
-      showToast(t('users.userFailed'), 'error');
-    }
+  const handleCreated = async () => {
+    setShowAddUser(false);
+    await queryClient.invalidateQueries({ queryKey: ['users', business?.id] });
+    await refetch();
   };
 
   const handleToggleActive = async (userId: string, active: boolean) => {
+    if (!business) return;
     try {
-      await userRepository.setActive(userId, business!.id, !active);
+      await userRepository.setActive(userId, business.id, active);
       showToast(t('users.userUpdated'), 'success');
+      await refetch();
     } catch (error) {
       console.error('Failed to toggle user:', error);
       showToast(t('users.userFailed'), 'error');
@@ -70,20 +70,26 @@ export default function UserManagementScreen() {
   };
 
   const handleDeleteUser = async (userId: string) => {
+    if (!business) return;
     Alert.alert(
       t('users.deleteConfirm'),
       t('users.deleteConfirmMessage'),
       [
         { text: t('common.cancel'), style: 'cancel' },
-        { text: t('common.delete'), style: 'destructive', onPress: async () => {
-          try {
-            await userRepository.delete(userId, business!.id);
-            showToast(t('users.userDeleted'), 'success');
-          } catch (error) {
-            console.error('Failed to delete user:', error);
-            showToast(t('users.userFailed'), 'error');
-          }
-        }},
+        {
+          text: t('common.delete'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await userRepository.delete(userId, business.id);
+              showToast(t('users.userDeleted'), 'success');
+              await refetch();
+            } catch (error) {
+              console.error('Failed to delete user:', error);
+              showToast(t('users.userFailed'), 'error');
+            }
+          },
+        },
       ]
     );
   };
@@ -93,6 +99,11 @@ export default function UserManagementScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>{t('users.users')}</Text>
+          {business?.business_code ? (
+            <Text style={styles.businessCode}>
+              {t('auth.businessCode')}: {business.business_code}
+            </Text>
+          ) : null}
         </View>
         <TouchableOpacity style={styles.addButton} onPress={() => setShowAddUser(true)}>
           <Ionicons name="add" size={22} color="#fff" />
@@ -100,58 +111,115 @@ export default function UserManagementScreen() {
       </View>
 
       <View style={styles.usersList}>
-        {[
-          { id: '1', name: 'Demo Owner', email: 'demo@mia.app', role: 'OWNER', active: true },
-          { id: '2', name: 'John Manager', email: 'manager@mia.app', role: 'MANAGER', active: true },
-          { id: '3', name: 'Jane Cashier', email: 'cashier@mia.app', role: 'CASHIER', active: true },
-        ].map((user) => (
-          <View key={user.id} style={styles.userCard}>
-            <View style={styles.userAvatar}>
-              <Text style={styles.userAvatarText}>{getInitials(user.name)}</Text>
-            </View>
-            <View style={styles.userInfo}>
-              <Text style={styles.userName}>{user.name}</Text>
-              <Text style={styles.userEmail}>{user.email}</Text>
-            </View>
-            <View style={styles.userActions}>
-              <View style={[styles.roleBadge, { backgroundColor: getRoleColor(user.role) }]}>
-                <Text style={styles.roleBadgeText}>{t(`users.${user.role.toLowerCase()}`)}</Text>
-              </View>
-              <Switch
-                value={user.active}
-                onValueChange={(v) => handleToggleActive(user.id, v)}
-                trackColor={{ false: '#e5e7eb', true: '#0ea5e9' }}
-              />
-            </View>
-          </View>
+        {users.map((user) => (
+          <UserRow
+            key={user.id}
+            user={user}
+            onToggleActive={handleToggleActive}
+            onDelete={handleDeleteUser}
+          />
         ))}
+        {users.length === 0 ? (
+          <Text style={styles.emptyText}>{t('users.noUsers')}</Text>
+        ) : null}
       </View>
 
-      {showAddUser && (
-        <AddUserModal
-          visible={showAddUser}
-          onClose={() => setShowAddUser(false)}
-          onSubmit={onSubmit}
-          isSubmitting={isSubmitting}
-          errors={errors}
-        />
-      )}
+      <AddUserModal
+        visible={showAddUser}
+        onClose={() => setShowAddUser(false)}
+        onCreated={handleCreated}
+      />
     </FormScrollView>
   );
 }
 
-function AddUserModal({ visible, onClose, onSubmit, isSubmitting, errors }: any) {
+function UserRow({
+  user,
+  onToggleActive,
+  onDelete,
+}: {
+  user: User;
+  onToggleActive: (id: string, active: boolean) => void;
+  onDelete: (id: string) => void;
+}) {
   const { t } = useTranslation();
-  const { control, handleSubmit, formState: { errors: formErrors } } = useForm<CreateUserForm>({
+  const role = user.role ?? 'STAFF';
+
+  return (
+    <View style={styles.userCard}>
+      <View style={styles.userAvatar}>
+        <Text style={styles.userAvatarText}>{getInitials(user.name)}</Text>
+      </View>
+      <View style={styles.userInfo}>
+        <Text style={styles.userName}>{user.name}</Text>
+        <Text style={styles.userEmail}>{user.email}</Text>
+      </View>
+      <View style={styles.userActions}>
+        <View style={[styles.roleBadge, { backgroundColor: getRoleColor(role) }]}>
+          <Text style={styles.roleBadgeText}>{t(`users.${role.toLowerCase()}` as 'users.owner')}</Text>
+        </View>
+        <Switch
+          value={user.active}
+          onValueChange={(value) => onToggleActive(user.id, value)}
+          trackColor={{ false: '#e5e7eb', true: '#0ea5e9' }}
+        />
+        {role !== 'OWNER' ? (
+          <TouchableOpacity onPress={() => onDelete(user.id)} hitSlop={8}>
+            <Ionicons name="trash-outline" size={18} color="#ef4444" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function AddUserModal({
+  visible,
+  onClose,
+  onCreated,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const { business } = useAuthStore();
+  const { control, handleSubmit, reset, formState: { isSubmitting } } = useForm<CreateUserForm>({
     resolver: zodResolver(createUserSchema),
-    defaultValues: { name: '', email: '', phone: '', role: 'STAFF' },
+    defaultValues: { name: '', email: '', phone: '', password: '', role: 'STAFF' },
   });
+
+  React.useEffect(() => {
+    if (!visible) reset();
+  }, [visible, reset]);
+
+  const onSubmit = async (data: CreateUserForm) => {
+    if (!business) return;
+    try {
+      await userRepository.createBusinessUser({
+        name: data.name,
+        email: data.email,
+        phone: data.phone,
+        password: data.password,
+        role: data.role,
+        businessId: business.id,
+      });
+      showToast(t('users.userAdded'), 'success');
+      await onCreated();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('users.userFailed');
+      showToast(message, 'error');
+    }
+  };
 
   if (!visible) return null;
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{t('users.addUser')}</Text>
@@ -159,29 +227,45 @@ function AddUserModal({ visible, onClose, onSubmit, isSubmitting, errors }: any)
               <Ionicons name="close" size={24} color="#6b7280" />
             </TouchableOpacity>
           </View>
-          
+
           <FormScrollView contentContainerStyle={styles.modalContent} avoidKeyboard={false}>
-            <FormInput control={control} name="name"
-            label={t('auth.name')}
-            required
-          />
-            <FormInput control={control} name="email"
-            label={t('auth.email')}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            required
-          />
-            <FormInput control={control} name="phone"
-            label={t('auth.phone')}
-          />
-            <FormPicker control={control} name="role" label={t('users.role')}>{ROLES.map((r) => <Picker.Item key={r.value} label={t(`users.${r.value.toLowerCase()}`)} value={r.value} />)}</FormPicker>
+            <FormInput control={control} name="name" label={t('auth.name')} required />
+            <FormInput
+              control={control}
+              name="email"
+              label={t('auth.email')}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              required
+            />
+            <FormInput control={control} name="phone" label={t('auth.phone')} />
+            <FormInput
+              control={control}
+              name="password"
+              label={t('auth.password')}
+              secureTextEntry
+              required
+            />
+            <FormPicker control={control} name="role" label={t('users.role')}>
+              {ROLES.map((r) => (
+                <Picker.Item
+                  key={r.value}
+                  label={t(`users.${r.value.toLowerCase()}` as 'users.staff')}
+                  value={r.value}
+                />
+              ))}
+            </FormPicker>
           </FormScrollView>
-          
+
           <View style={styles.modalActions}>
             <Button variant="outline" onPress={onClose} disabled={isSubmitting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="primary" onPress={() => handleSubmit(onSubmit)()} loading={isSubmitting}>
+            <Button
+              variant="primary"
+              onPress={() => handleSubmit(onSubmit)()}
+              loading={isSubmitting}
+            >
               {t('common.save')}
             </Button>
           </View>
@@ -193,16 +277,26 @@ function AddUserModal({ visible, onClose, onSubmit, isSubmitting, errors }: any)
 
 function getRoleColor(role: string) {
   switch (role) {
-    case 'OWNER': return '#f59e0b';
-    case 'MANAGER': return '#0ea5e9';
-    case 'CASHIER': return '#22c55e';
-    case 'STAFF': return '#8b5cf6';
-    default: return '#6b7280';
+    case 'OWNER':
+      return '#f59e0b';
+    case 'MANAGER':
+      return '#0ea5e9';
+    case 'CASHIER':
+      return '#22c55e';
+    case 'STAFF':
+      return '#8b5cf6';
+    default:
+      return '#6b7280';
   }
 }
 
 function getInitials(name: string) {
-  return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  return name
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 const styles = StyleSheet.create({
@@ -230,6 +324,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#111827',
   },
+  businessCode: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
   addButton: {
     width: 40,
     height: 40,
@@ -240,6 +340,11 @@ const styles = StyleSheet.create({
   },
   usersList: {
     gap: 12,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#9ca3af',
+    marginTop: 24,
   },
   userCard: {
     flexDirection: 'row',
@@ -324,17 +429,6 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
   },
-  fieldGroup: {
-    position: 'relative',
-  },
-  picker: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    opacity: 0,
-  },
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -344,6 +438,3 @@ const styles = StyleSheet.create({
     borderTopColor: '#e5e7eb',
   },
 });
-
-import { Modal, Switch } from 'react-native';
-import { Picker } from '@react-native-picker/picker';

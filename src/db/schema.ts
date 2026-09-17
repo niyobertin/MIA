@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 2;
+export const DATABASE_VERSION = 3;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -21,14 +21,15 @@ CREATE TABLE IF NOT EXISTS businesses (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Users table
+-- Users table (identity + optional business membership)
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  business_id TEXT REFERENCES businesses(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
-  email TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
   phone TEXT,
-  role TEXT NOT NULL CHECK (role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF')),
+  password_hash TEXT NOT NULL,
+  role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF')),
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -259,6 +260,7 @@ CREATE TABLE IF NOT EXISTS sync_records (
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_categories_business_id ON categories(business_id);
 CREATE INDEX IF NOT EXISTS idx_products_business_id ON products(business_id);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);

@@ -1,11 +1,9 @@
-import { FormScrollView, Logo } from '@/components';
+import { FormScrollView, FormInput, Button } from '@/components';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FormInput } from '@/components';
 import React from 'react';
-import { View, Text, StyleSheet, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, Input } from '@/components';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -22,81 +20,80 @@ type LoginForm = z.infer<typeof loginSchema>;
 export default function LoginScreen() {
   const { t } = useTranslation();
   const { login } = useAuthStore();
-  const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginForm>({
+  const { control, handleSubmit, formState: { isSubmitting } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: '', password: '' },
   });
 
   const onSubmit = async (data: LoginForm) => {
-    try {
-      await login(data.email, data.password);
-    } catch (error) {
-      console.error('Login failed:', error);
-    }
+    await login(data.email.trim(), data.password);
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <FormScrollView contentContainerStyle={styles.scrollContent}>
-      <View style={styles.header}>
-        <Link href="/(auth)" asChild>
-          <TouchableOpacity style={styles.backButton}>
-            <Ionicons name="chevron-back" size={28} color="#374151" />
-          </TouchableOpacity>
-        </Link>
-      </View>
-      
-      <View style={styles.content}>
-        <Logo size={112} style={styles.formLogo} />
-        <Text style={styles.title}>{t('auth.signIn')}</Text>
-        <Text style={styles.subtitle}>{t('auth.noAccount')} </Text>
-        
-        <View style={styles.form}>
-          <FormInput control={control} name="email"
-            label={t('auth.email')}
-            placeholder={t('auth.email')}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-            required
-          />
-          <FormInput control={control} name="password"
-            label={t('auth.password')}
-            placeholder={t('auth.password')}
-            secureTextEntry
-            autoComplete="password"
-            required
-          />
-        </View>
-        
-        <View style={styles.forgotPassword}>
-          <Link href="/(auth)/forgot-password" asChild>
-            <Text style={styles.forgotPasswordText}>{t('auth.forgotPassword')}</Text>
+        <View style={styles.header}>
+          <Link href="/(auth)" asChild>
+            <TouchableOpacity style={styles.backButton}>
+              <Ionicons name="chevron-back" size={28} color="#374151" />
+            </TouchableOpacity>
           </Link>
         </View>
-        
-        <Button
-          variant="primary"
-          size="lg"
-          fullWidth
-          loading={isSubmitting}
-          onPress={() => handleSubmit(onSubmit)()}
-        >
-          {t('auth.signIn')}
-        </Button>
-        
-        <View style={styles.divider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>{t('auth.noAccount')}</Text>
-          <View style={styles.dividerLine} />
-        </View>
-        
-        <Link href="/(auth)/register" asChild>
-          <Button variant="outline" size="lg" fullWidth>
-            {t('auth.createAccount')}
+
+        <View style={styles.content}>
+          <Text style={styles.title}>{t('auth.signIn')}</Text>
+          <Text style={styles.subtitle}>{t('auth.noAccount')}</Text>
+
+          <View style={styles.form}>
+            <FormInput
+              control={control}
+              name="email"
+              label={t('auth.email')}
+              placeholder={t('auth.email')}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              required
+            />
+            <FormInput
+              control={control}
+              name="password"
+              label={t('auth.password')}
+              placeholder={t('auth.password')}
+              secureTextEntry
+              autoComplete="password"
+              required
+            />
+          </View>
+
+          <View style={styles.forgotPassword}>
+            <Link href="/(auth)/forgot-password" asChild>
+              <Text style={styles.forgotPasswordText}>{t('auth.forgotPassword')}</Text>
+            </Link>
+          </View>
+
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isSubmitting}
+            onPress={() => handleSubmit(onSubmit)()}
+          >
+            {t('auth.signIn')}
           </Button>
-        </Link>
-      </View>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>{t('auth.noAccount')}</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Link href="/(auth)/register" asChild>
+            <Button variant="outline" size="lg" fullWidth>
+              {t('auth.createAccount')}
+            </Button>
+          </Link>
+        </View>
       </FormScrollView>
     </SafeAreaView>
   );
@@ -117,15 +114,14 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 24,
+    paddingBottom: 48,
   },
   content: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingVertical: 24,
-    justifyContent: 'center',
+    paddingTop: 8,
+    paddingBottom: 32,
   },
-  formLogo: { alignSelf: 'center', marginBottom: 24 },
   title: {
     fontSize: 28,
     fontWeight: '700',
@@ -166,5 +162,3 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
   },
 });
-
-import { TouchableOpacity } from 'react-native';

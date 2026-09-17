@@ -101,6 +101,13 @@ export default function StockInScreen() {
     );
   };
 
+  const setQty = (productId: string, quantity: number) => {
+    const next = Math.max(1, Math.floor(quantity) || 1);
+    setItems((prev) =>
+      prev.map((i) => (i.productId === productId ? { ...i, quantity: next } : i))
+    );
+  };
+
   const saveCost = (productId: string) => {
     const value = parseInt(editCost.replace(/[^\d]/g, ''), 10);
     if (!isNaN(value)) {
@@ -238,7 +245,23 @@ export default function StockInScreen() {
                 >
                   <Ionicons name={item.quantity <= 1 ? 'trash-outline' : 'remove'} size={18} color={colors.primary} />
                 </TouchableOpacity>
-                <Text style={styles.stepQty}>{item.quantity}</Text>
+                <TextInput
+                  style={styles.qtyInput}
+                  value={String(item.quantity)}
+                  onChangeText={(text) => {
+                    const digits = text.replace(/[^\d]/g, '');
+                    if (digits === '') {
+                      setItems((prev) =>
+                        prev.map((i) => (i.productId === item.productId ? { ...i, quantity: 1 } : i))
+                      );
+                      return;
+                    }
+                    setQty(item.productId, parseInt(digits, 10));
+                  }}
+                  keyboardType="number-pad"
+                  selectTextOnFocus
+                  accessibilityLabel={t('sales.quantity')}
+                />
                 <TouchableOpacity
                   style={styles.stepButton}
                   onPress={() => bumpQty(item.productId, 1)}
@@ -499,6 +522,17 @@ const styles = StyleSheet.create({
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  qtyInput: {
+    minWidth: 40,
+    maxWidth: 64,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    fontVariant: ['tabular-nums'],
   },
   stepQty: {
     fontSize: 15,

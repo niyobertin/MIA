@@ -1,5 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
@@ -18,8 +27,11 @@ import {
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
+import { combineDateAndTime } from '@/utils/periodBounds';
+import { shareReportPdf } from '@/utils/reportExport';
+import { showToast } from '@/stores/toastStore';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 
 function isoDaysAgo(offset: number): string {
   const d = new Date();
@@ -27,8 +39,12 @@ function isoDaysAgo(offset: number): string {
   return d.toISOString().split('T')[0];
 }
 
-function rangeFor(period: Period): PeriodRange {
-  const today = isoDaysAgo(0);
+function todayIso(): string {
+  return isoDaysAgo(0);
+}
+
+function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
+  const today = todayIso();
   switch (period) {
     case 'yesterday':
       return { start: isoDaysAgo(1), end: isoDaysAgo(1) };
@@ -39,18 +55,45 @@ function rangeFor(period: Period): PeriodRange {
       const first = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
       return { start: first, end: today };
     }
+    case 'custom':
+      return custom ?? { start: today, end: today };
     default:
       return { start: today, end: today };
   }
 }
 
+function formatPeriodLabel(range: PeriodRange): string {
+  const start = range.start.replace('T', ' ').slice(0, 16);
+  const end = range.end.replace('T', ' ').slice(0, 16);
+  return `${start} → ${end}`;
+}
+
 export default function ReportsScreen() {
   const { t } = useTranslation();
-  const { user } = useAuthStore();
+  const { user, business } = useAuthStore();
   const [period, setPeriod] = React.useState<Period>('week');
   const [refreshing, setRefreshing] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
-  const range = React.useMemo(() => rangeFor(period), [period]);
+  const [startDate, setStartDate] = React.useState(todayIso());
+  const [endDate, setEndDate] = React.useState(todayIso());
+  const [startTime, setStartTime] = React.useState('00:00');
+  const [endTime, setEndTime] = React.useState('23:59');
+  const [customApplied, setCustomApplied] = React.useState<PeriodRange | null>(null);
+
+  const customRange = React.useMemo(
+    () => ({
+      start: combineDateAndTime(startDate, startTime, '00:00'),
+      end: combineDateAndTime(endDate, endTime, '23:59'),
+    }),
+    [startDate, endDate, startTime, endTime]
+  );
+
+  const range = React.useMemo(
+    () => rangeFor(period, period === 'custom' ? (customApplied ?? customRange) : null),
+    [period, customApplied, customRange]
+  );
+
   const statsQuery = usePeriodStats(range);
   const topQuery = useTopProducts(range, 5);
   const payQuery = usePaymentBreakdown(range);
@@ -78,11 +121,67 @@ export default function ReportsScreen() {
     setRefreshing(false);
   };
 
+  const applyCustomRange = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      showToast(t('reports.invalidDate'), 'error');
+      return;
+    }
+    if (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime)) {
+      showToast(t('reports.invalidTime'), 'error');
+      return;
+    }
+    if (customRange.start > customRange.end) {
+      showToast(t('reports.invalidRange'), 'error');
+      return;
+    }
+    setCustomApplied(customRange);
+    setPeriod('custom');
+  };
+
+  const exportReport = async () => {
+    if (!stats) return;
+    setExporting(true);
+    try {
+      const payRows = [
+        { label: t('sales.cash'), amount: pay?.cash ?? 0 },
+        { label: t('sales.mobileMoney'), amount: pay?.mobileMoney ?? 0 },
+        { label: t('sales.bank'), amount: pay?.bank ?? 0 },
+        { label: t('sales.credit'), amount: pay?.credit ?? 0 },
+      ];
+      await shareReportPdf({
+        businessName: business?.name ?? 'MIA',
+        businessCode: business?.business_code,
+        currency: business?.currency ?? 'RWF',
+        periodLabel: formatPeriodLabel(range),
+        generatedAt: new Date().toLocaleString(),
+        totalSales: stats.totalSales,
+        itemsSold: stats.itemsSold,
+        grossProfit: showProfit ? stats.grossProfit : null,
+        netProfit: showProfit ? stats.netProfit : null,
+        expenses: stats.expenses,
+        stockValue: stats.stockValue,
+        topProducts: top.map((p) => ({
+          productName: p.productName,
+          quantitySold: p.quantitySold,
+          totalSales: p.totalSales,
+        })),
+        payments: payRows,
+        includeProfit: showProfit,
+      });
+      showToast(t('reports.exportSuccess'), 'success');
+    } catch {
+      showToast(t('reports.exportFailed'), 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const periods: Array<{ value: Period; label: string }> = [
     { value: 'today', label: t('reports.today') },
     { value: 'yesterday', label: t('reports.yesterday') },
     { value: 'week', label: t('reports.thisWeek') },
     { value: 'month', label: t('reports.thisMonth') },
+    { value: 'custom', label: t('reports.customRange') },
   ];
 
   const payRows = [
@@ -97,13 +196,29 @@ export default function ReportsScreen() {
     <View style={styles.screen}>
       <ScreenHeader
         title={t('reports.reports')}
-        subtitle={`${range.start} → ${range.end}`}
+        subtitle={formatPeriodLabel(range)}
         showBack={false}
+        right={
+          <TouchableOpacity
+            onPress={exportReport}
+            disabled={!stats || exporting}
+            hitSlop={10}
+            style={styles.exportBtn}
+            accessibilityLabel={t('reports.exportReport')}
+          >
+            {exporting ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons name="share-outline" size={22} color={colors.primary} />
+            )}
+          </TouchableOpacity>
+        }
       />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <ScrollView
           horizontal
@@ -115,10 +230,73 @@ export default function ReportsScreen() {
               key={item.value}
               label={item.label}
               selected={period === item.value}
-              onPress={() => setPeriod(item.value)}
+              onPress={() => {
+                setPeriod(item.value);
+                if (item.value === 'custom' && !customApplied) {
+                  setCustomApplied(customRange);
+                }
+              }}
             />
           ))}
         </ScrollView>
+
+        {period === 'custom' ? (
+          <View style={styles.customCard}>
+            <Text style={styles.customTitle}>{t('reports.customRange')}</Text>
+            <Text style={styles.customHint}>{t('reports.dateTimeHint')}</Text>
+            <View style={styles.customRow}>
+              <View style={styles.customField}>
+                <Text style={styles.fieldLabel}>{t('reports.startDate')}</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={startDate}
+                  onChangeText={setStartDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={styles.customField}>
+                <Text style={styles.fieldLabel}>{t('reports.startTime')}</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={startTime}
+                  onChangeText={setStartTime}
+                  placeholder="HH:mm"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+            <View style={styles.customRow}>
+              <View style={styles.customField}>
+                <Text style={styles.fieldLabel}>{t('reports.endDate')}</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={endDate}
+                  onChangeText={setEndDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={styles.customField}>
+                <Text style={styles.fieldLabel}>{t('reports.endTime')}</Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={endTime}
+                  onChangeText={setEndTime}
+                  placeholder="HH:mm"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+            <TouchableOpacity style={styles.applyBtn} onPress={applyCustomRange} activeOpacity={0.85}>
+              <Text style={styles.applyText}>{t('reports.applyRange')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {loading ? (
           <>
@@ -135,35 +313,37 @@ export default function ReportsScreen() {
               </Text>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>{t('reports.salesTrend')}</Text>
-              {chartLoading ? (
-                <Skeleton height={120} />
-              ) : chartData.length === 0 || chartData.every((d) => d.total === 0) ? (
-                <Text style={styles.muted}>{t('reports.noSalesInPeriod')}</Text>
-              ) : (
-                <View style={styles.chart}>
-                  {chartData.map((d) => (
-                    <View key={d.date} style={styles.barCol}>
-                      <View style={styles.barTrack}>
-                        <View
-                          style={StyleSheet.flatten([
-                            styles.barFill,
-                            {
-                              height: `${Math.max(4, Math.round((d.total / maxDay) * 100))}%`,
-                              backgroundColor: d.isToday ? colors.primary : colors.primarySoft,
-                            },
-                          ])}
-                        />
+            {period !== 'custom' ? (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>{t('reports.salesTrend')}</Text>
+                {chartLoading ? (
+                  <Skeleton height={120} />
+                ) : chartData.length === 0 || chartData.every((d) => d.total === 0) ? (
+                  <Text style={styles.muted}>{t('reports.noSalesInPeriod')}</Text>
+                ) : (
+                  <View style={styles.chart}>
+                    {chartData.map((d) => (
+                      <View key={d.date} style={styles.barCol}>
+                        <View style={styles.barTrack}>
+                          <View
+                            style={StyleSheet.flatten([
+                              styles.barFill,
+                              {
+                                height: `${Math.max(4, Math.round((d.total / maxDay) * 100))}%`,
+                                backgroundColor: d.isToday ? colors.primary : colors.primarySoft,
+                              },
+                            ])}
+                          />
+                        </View>
+                        <Text style={StyleSheet.flatten([styles.barLabel, d.isToday ? styles.barLabelToday : null])}>
+                          {period === 'month' ? d.dayLabel : d.weekday}
+                        </Text>
                       </View>
-                      <Text style={StyleSheet.flatten([styles.barLabel, d.isToday ? styles.barLabelToday : null])}>
-                        {period === 'month' ? d.dayLabel : d.weekday}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ) : null}
 
             <View style={styles.grid}>
               {showProfit ? (
@@ -227,6 +407,24 @@ export default function ReportsScreen() {
                 })
               )}
             </View>
+
+            <TouchableOpacity
+              style={styles.exportCard}
+              onPress={exportReport}
+              disabled={!stats || exporting}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="document-text-outline" size={22} color={colors.primary} />
+              <View style={styles.exportInfo}>
+                <Text style={styles.exportTitle}>{t('reports.exportReport')}</Text>
+                <Text style={styles.exportSub}>{t('reports.exportHint')}</Text>
+              </View>
+              {exporting ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Ionicons name="share-outline" size={20} color={colors.primary} />
+              )}
+            </TouchableOpacity>
           </>
         )}
       </ScrollView>
@@ -243,9 +441,72 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: 110,
   },
+  exportBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+  },
   periods: {
     paddingBottom: spacing.md,
     gap: spacing.sm,
+  },
+  customCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+    ...shadows.card,
+  },
+  customTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  customHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: spacing.xs,
+  },
+  customRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  customField: {
+    flex: 1,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  fieldInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+    backgroundColor: colors.background,
+  },
+  applyBtn: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  applyText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
   },
   skel: {
     borderRadius: radius.lg,
@@ -393,5 +654,28 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.muted,
+  },
+  exportCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  exportInfo: {
+    flex: 1,
+  },
+  exportTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.primaryText,
+  },
+  exportSub: {
+    fontSize: 12,
+    color: colors.primaryText,
+    marginTop: 2,
+    opacity: 0.85,
   },
 });

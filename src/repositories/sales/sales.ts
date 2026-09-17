@@ -1,6 +1,6 @@
 import { BaseRepository } from '../base';
 import { Sale, SaleItem, PaymentStatus } from '@/types';
-import { getDatabase } from '../../db/database';
+import { buildPeriodWhere } from '@/utils/periodBounds';
 
 export class SaleRepository extends BaseRepository<Sale> {
   protected tableName = 'sales';
@@ -20,48 +20,52 @@ export class SaleRepository extends BaseRepository<Sale> {
 
   async findByDateRange(businessId: string, startDate: string, endDate: string): Promise<Sale[]> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('sale_date', 'created_at', startDate, endDate);
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
-       WHERE business_id = ? AND sale_date BETWEEN ? AND ?
-       ORDER BY sale_date DESC`,
-      [businessId, startDate, endDate]
+       WHERE business_id = ? AND ${period.clause}
+       ORDER BY created_at DESC`,
+      [businessId, ...period.params]
     );
     return rows.map(row => this.mapRow(row));
   }
 
   async getTotalSales(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('sale_date', 'created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(total_amount), 0) as total
        FROM ${this.tableName}
-       WHERE business_id = ? AND sale_date BETWEEN ? AND ?`,
-      [businessId, startDate, endDate]
+       WHERE business_id = ? AND ${period.clause}`,
+      [businessId, ...period.params]
     );
     return row?.total ?? 0;
   }
 
   async getCashSales(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(s.total_amount), 0) as total
        FROM ${this.tableName} s
        JOIN payments p ON p.reference_type = 'sale' AND p.reference_id = s.id
-       WHERE s.business_id = ? AND s.sale_date BETWEEN ? AND ? 
+       WHERE s.business_id = ? AND ${period.clause}
        AND p.payment_method = 'cash'`,
-      [businessId, startDate, endDate]
+      [businessId, ...period.params]
     );
     return row?.total ?? 0;
   }
 
   async getSalesWithItems(businessId: string, startDate: string, endDate: string): Promise<(Sale & { items: SaleItem[] })[]> {
-    const db = await this.getDb();
     const sales = await this.findByDateRange(businessId, startDate, endDate);
-    
+    const result: (Sale & { items: SaleItem[] })[] = [];
+
     for (const sale of sales) {
-      sale.items = await saleItemRepository.findBySale(sale.id, businessId);
+      const items = await saleItemRepository.findBySale(sale.id, businessId);
+      result.push({ ...sale, items });
     }
-    
-    return sales;
+
+    return result;
   }
 }
 
@@ -82,36 +86,39 @@ export class SaleItemRepository extends BaseRepository<SaleItem> {
 
   async getTotalQuantitySold(productId: string, businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(si.quantity), 0) as total
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
-       WHERE si.product_id = ? AND si.business_id = ? AND s.sale_date BETWEEN ? AND ?`,
-      [productId, businessId, startDate, endDate]
+       WHERE si.product_id = ? AND si.business_id = ? AND ${period.clause}`,
+      [productId, businessId, ...period.params]
     );
     return row?.total ?? 0;
   }
 
   async getTotalSalesAmount(productId: string, businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(si.total_amount), 0) as total
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
-       WHERE si.product_id = ? AND si.business_id = ? AND s.sale_date BETWEEN ? AND ?`,
-      [productId, businessId, startDate, endDate]
+       WHERE si.product_id = ? AND si.business_id = ? AND ${period.clause}`,
+      [productId, businessId, ...period.params]
     );
     return row?.total ?? 0;
   }
 
   async getTotalProfit(productId: string, businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(si.quantity * (si.selling_price - si.unit_cost)), 0) as total
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
-       WHERE si.product_id = ? AND si.business_id = ? AND s.sale_date BETWEEN ? AND ?`,
-      [productId, businessId, startDate, endDate]
+       WHERE si.product_id = ? AND si.business_id = ? AND ${period.clause}`,
+      [productId, businessId, ...period.params]
     );
     return row?.total ?? 0;
   }

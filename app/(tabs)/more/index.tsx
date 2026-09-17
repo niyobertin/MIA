@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Link } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { getInitials } from '@/utils/formatters';
 import { canManageUsers, canCloseDay } from '@/utils/permissions';
@@ -18,6 +19,13 @@ export default function MoreScreen() {
   const insets = useSafeAreaInsets();
   const { business, user, logout } = useAuthStore();
   const { language, setLanguage } = useUIStore();
+  const [showLogoutConfirm, setShowLogoutConfirm] = React.useState(false);
+
+  const handleLogout = () => {
+    setShowLogoutConfirm(false);
+    logout();
+    router.replace('/(auth)');
+  };
 
   const operations = [
     { title: t('navigation.reports'), icon: 'analytics', screen: '/reports' },
@@ -164,7 +172,12 @@ export default function MoreScreen() {
         </View>
 
         <View style={styles.logoutWrap}>
-          <Button variant="danger" fullWidth onPress={logout} leftIcon={<Ionicons name="log-out-outline" size={20} color={colors.dangerText} />}>
+          <Button
+            variant="danger"
+            fullWidth
+            onPress={() => setShowLogoutConfirm(true)}
+            leftIcon={<Ionicons name="log-out-outline" size={20} color={colors.dangerText} />}
+          >
             {t('common.logout')}
           </Button>
         </View>
@@ -173,6 +186,16 @@ export default function MoreScreen() {
           {t('settings.version')} {APP_VERSION}
         </Text>
       </ScrollView>
+
+      <ConfirmModal
+        visible={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleLogout}
+        title={t('common.logoutConfirmTitle')}
+        message={t('common.logoutConfirmMessage')}
+        confirmText={t('common.logout')}
+        variant="danger"
+      />
     </View>
   );
 }

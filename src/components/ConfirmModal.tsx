@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, Animated, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, Modal, Animated, Keyboard, Pressable } from 'react-native';
 import { Button } from './Button';
 import { useTranslation } from 'react-i18next';
 
@@ -41,9 +41,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(slideAnim, { toValue: 50, duration: 150, useNativeDriver: true }),
-      ]).start(() => {});
+      ]).start();
     }
-  }, [visible]);
+  }, [visible, fadeAnim, slideAnim]);
 
   const handleConfirm = () => {
     if (!loading) {
@@ -51,15 +51,10 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     }
   };
 
-  if (!visible) return null;
-
   return (
-    <Modal visible={visible} animationType="none" transparent>
-      <Animated.View
-        style={[styles.overlay, { opacity: fadeAnim }]}
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={onClose}
-      >
+    <Modal visible={visible} animationType="none" transparent onRequestClose={onClose}>
+      <Animated.View style={[styles.overlay, { opacity: fadeAnim }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={loading ? undefined : onClose} />
         <Animated.View
           style={[
             styles.modal,
@@ -71,11 +66,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           </View>
           <Text style={styles.message}>{message}</Text>
           <View style={styles.actions}>
-            <Button
-              variant="ghost"
-              onPress={onClose}
-              disabled={loading}
-            >
+            <Button variant="ghost" onPress={onClose} disabled={loading}>
               {cancelText ?? t('common.cancel')}
             </Button>
             <Button

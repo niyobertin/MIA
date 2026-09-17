@@ -1,17 +1,12 @@
 import { settingsStorage } from '@/repositories/settings';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { User, Business } from '@/types';
+import { User, Business, UserRole } from '@/types';
 import { userRepository } from '@/repositories/users/users';
 import { businessRepository } from '@/repositories/business/business';
+import { verifyPassword } from '@/utils/password';
+import { generateUUID } from '@/utils/uuid';
 import { showToast } from './toastStore';
-
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-  });
-}
 
 interface AuthState {
   user: User | null;
@@ -26,10 +21,11 @@ interface AuthState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setHasHydrated: () => void;
-  
+
   login: (email: string, password: string) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   createBusiness: (data: CreateBusinessData) => Promise<void>;
+  joinBusiness: (businessCode: string, role?: UserRole) => Promise<void>;
   logout: () => void;
   loadSession: () => Promise<void>;
 }
@@ -65,59 +61,91 @@ export const useAuthStore = create<AuthState>()(
       setHasHydrated: () => set({ hasHydrated: true }),
 
       login: async (email: string, password: string) => {
-        set({ isLoading: true, error: null });
+        set({ error: null });
         try {
-          // In a real app, this would call Supabase Auth
-          // For now, we'll simulate with local database
-          const db = await (await import('@/db/database')).getDatabase();
-          const row = await db.getFirstAsync<{ id: string; business_id: string }>(
-            `SELECT id, business_id FROM users WHERE email = ?`,
-            [email]
-          );
-          
-          if (!row) throw new Error('Invalid credentials');
-          
-          const user = await userRepository.findById(row.id, row.business_id);
-          if (!user) throw new Error('User not found');
-          
-          const business = await businessRepository.findById(user.business_id);
-          
-          set({ user, business, isAuthenticated: true, isLoading: false });
+          // Make sure demo accounts exist before attempting login
+          const { ensureDemoUsers } = await import('@/db/seed/demo');
+          await ensureDemoUsers();
+
+          const credential = await userRepository.findCredentialByEmail(email);
+          if (!credential || !credential.user.active) {
+            set({ error: 'Invalid email or password' });
+            showToast('Invalid email or password', 'error');
+            return;
+          }
+
+          const valid = await verifyPassword(password, credential.password_hash);
+          if (!valid) {
+            set({ error: 'Invalid email or password' });
+            showToast('Invalid email or password', 'error');
+            return;
+          }
+
+          const user = credential.user;
+          const business = user.business_id
+            ? await businessRepository.findById(user.business_id)
+            : null;
+
+          if (user.business_id && !business) {
+            set({ error: 'Business not found for this account' });
+            showToast('Business not found for this account', 'error');
+            return;
+          }
+
+          set({ user, business, isAuthenticated: true, error: null });
           showToast('Logged in successfully', 'success');
-        } catch (error) {
-          const message = String(error);
-          set({ error: message, isLoading: false });
-          showToast(message, 'error');
-          throw error;
+        } catch {
+          set({ error: 'Could not sign in. Please try again.' });
+          showToast('Could not sign in. Please try again.', 'error');
         }
       },
 
       register: async (data: RegisterData) => {
-        set({ isLoading: true, error: null });
+        set({ error: null });
         try {
-          // Create user in local DB (in real app, this would be Supabase Auth)
-          const userId = generateUUID();
-          const now = new Date().toISOString();
-          
-          // This would normally create a business first, then user
-          // For MVP, we'll handle this in createBusiness flow
-          set({ isLoading: false });
+          const user = await userRepository.createAccount({
+            name: data.name,
+            email: data.email,
+            password: data.password,
+            phone: data.phone,
+          });
+
+          set({
+            user,
+            business: null,
+            isAuthenticated: true,
+            error: null,
+          });
+          showToast('Account created successfully', 'success');
         } catch (error) {
-          set({ error: String(error), isLoading: false });
-          throw error;
+          const message = error instanceof Error ? error.message : 'Could not create account';
+          set({ error: message });
+          showToast(message, 'error');
         }
       },
 
       createBusiness: async (data: CreateBusinessData) => {
-        set({ isLoading: true, error: null });
+        set({ error: null });
         try {
+          const currentUser = get().user;
+          if (!currentUser) {
+            set({ error: 'You must create an account before registering a business' });
+            showToast('You must create an account before registering a business', 'error');
+            return;
+          }
+          if (currentUser.business_id) {
+            set({ error: 'You already belong to a business' });
+            showToast('You already belong to a business', 'error');
+            return;
+          }
+
           const businessCode = await businessRepository.generateBusinessCode();
           const businessId = generateUUID();
           const now = new Date().toISOString();
-          
+
           const business: Business = {
             id: businessId,
-            name: data.name,
+            name: data.name.trim(),
             business_code: businessCode,
             currency: data.currency ?? 'RWF',
             country: data.country ?? 'Rwanda',
@@ -125,32 +153,57 @@ export const useAuthStore = create<AuthState>()(
             created_at: now,
             updated_at: now,
           };
-          
+
           await businessRepository.create(business);
-          
-          // Create owner user
-          const userId = generateUUID();
-          const user: User = {
-            id: userId,
-            business_id: businessId,
-            name: data.name,
-            email: data.name.toLowerCase().replace(/\s+/g, '') + '@mia.local',
-            phone: null,
-            role: 'OWNER',
-            active: true,
-            created_at: now,
-            updated_at: now,
-          };
-          
-          await userRepository.create(user);
-          
-          set({ business, user, isAuthenticated: true, isLoading: false });
+          const user = await userRepository.attachToBusiness(
+            currentUser.id,
+            businessId,
+            'OWNER'
+          );
+
+          set({ business, user, isAuthenticated: true, error: null });
           showToast('Business created successfully', 'success');
         } catch (error) {
-          const message = String(error);
-          set({ error: message, isLoading: false });
+          const message = error instanceof Error ? error.message : 'Could not create business';
+          set({ error: message });
           showToast(message, 'error');
-          throw error;
+        }
+      },
+
+      joinBusiness: async (businessCode: string, role: UserRole = 'STAFF') => {
+        set({ error: null });
+        try {
+          const currentUser = get().user;
+          if (!currentUser) {
+            set({ error: 'You must sign in before joining a business' });
+            showToast('You must sign in before joining a business', 'error');
+            return;
+          }
+          if (currentUser.business_id) {
+            set({ error: 'You already belong to a business' });
+            showToast('You already belong to a business', 'error');
+            return;
+          }
+
+          const business = await businessRepository.findByCode(businessCode.trim().toUpperCase());
+          if (!business) {
+            set({ error: 'Business not found. Check the business code and try again.' });
+            showToast('Business not found. Check the business code and try again.', 'error');
+            return;
+          }
+
+          const user = await userRepository.attachToBusiness(
+            currentUser.id,
+            business.id,
+            role === 'OWNER' ? 'STAFF' : role
+          );
+
+          set({ business, user, isAuthenticated: true, error: null });
+          showToast('Joined business successfully', 'success');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Could not join business';
+          set({ error: message });
+          showToast(message, 'error');
         }
       },
 
@@ -161,15 +214,32 @@ export const useAuthStore = create<AuthState>()(
       loadSession: async () => {
         set({ isLoading: true });
         try {
-          // Seed demo data on first run
           const { seedDemoData } = await import('@/db/seed/demo');
           await seedDemoData();
 
-          // In real app, this would restore from Supabase session
-          // For now, check if we have persisted auth
           const state = get();
-          if (state.user && state.business) {
-            set({ isAuthenticated: true, isLoading: false });
+          if (state.user) {
+            const freshUser = await userRepository.findById(state.user.id);
+            if (!freshUser || !freshUser.active) {
+              set({
+                user: null,
+                business: null,
+                isAuthenticated: false,
+                isLoading: false,
+              });
+              return;
+            }
+
+            const business = freshUser.business_id
+              ? await businessRepository.findById(freshUser.business_id)
+              : null;
+
+            set({
+              user: freshUser,
+              business,
+              isAuthenticated: true,
+              isLoading: false,
+            });
           } else {
             set({ isLoading: false });
           }

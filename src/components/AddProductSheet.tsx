@@ -4,12 +4,33 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
-import { colors, spacing } from '@/theme/tokens';
+import { colors, spacing, radius } from '@/theme/tokens';
 import { Button } from './Button';
 import { FormInput } from './FormInput';
 import { FormPicker } from './FormPicker';
 import { BottomSheet } from './SegmentedControl';
 import { Picker } from '@react-native-picker/picker';
+import { Category } from '@/types';
+
+export type AddProductData = {
+  name: string;
+  sku?: string;
+  barcode?: string;
+  category_id?: string;
+  unit: string;
+  selling_price: number;
+  average_cost: number;
+  reorder_level: number;
+  track_inventory: boolean;
+};
+
+type AddProductSheetProps = {
+  visible: boolean;
+  onClose: () => void;
+  categories: Category[];
+  onSubmit: (data: AddProductData) => Promise<void> | void;
+  saving?: boolean;
+};
 
 export const AddProductSheet: React.FC<AddProductSheetProps> = ({
   visible,
@@ -65,11 +86,29 @@ export const AddProductSheet: React.FC<AddProductSheetProps> = ({
           <FormInput control={control} name="name" label={t('stock.productName')} required />
           <View style={styles.row}>
             <View style={styles.rowItem}>
-              <FormInput control={control} name="selling_price" label={t('stock.sellingPrice')} keyboardType="numeric" parseValue={(v) => parseInt(v.replace(/[^\d]/g, ''), 10) || 0} />
+              <FormInput
+                control={control}
+                name="selling_price"
+                label={t('stock.sellingPrice')}
+                keyboardType="numeric"
+                parseValue={(v) => parseInt(v.replace(/[^\d]/g, ''), 10) || 0}
+              />
             </View>
             <View style={styles.rowItem}>
-              <FormInput control={control} name="average_cost" label={t('stock.averageCost')} keyboardType="numeric" parseValue={(v) => parseInt(v.replace(/[^\d]/g, ''), 10) || 0} />
+              <FormInput
+                control={control}
+                name="average_cost"
+                label={t('stock.costPrice')}
+                keyboardType="numeric"
+                parseValue={(v) => parseInt(v.replace(/[^\d]/g, ''), 10) || 0}
+              />
             </View>
+          </View>
+          <View style={styles.priceHelp}>
+            <Text style={styles.priceHelpTitle}>{t('stock.priceHelpTitle')}</Text>
+            <Text style={styles.priceHelpBody}>{t('stock.sellingPriceHelp')}</Text>
+            <Text style={styles.priceHelpBody}>{t('stock.costPriceHelp')}</Text>
+            <Text style={styles.priceHelpBody}>{t('stock.averageCostHelp')}</Text>
           </View>
           <View style={styles.row}>
             <View style={styles.rowItem}>
@@ -90,7 +129,13 @@ export const AddProductSheet: React.FC<AddProductSheetProps> = ({
               <FormInput control={control} name="barcode" label={t('stock.barcode')} />
             </View>
             <View style={styles.rowItem}>
-              <FormInput control={control} name="reorder_level" label={t('stock.reorderLevel')} keyboardType="numeric" parseValue={(v) => parseInt(v, 10) || 0} />
+              <FormInput
+                control={control}
+                name="reorder_level"
+                label={t('stock.reorderLevel')}
+                keyboardType="numeric"
+                parseValue={(v) => parseInt(v, 10) || 0}
+              />
             </View>
           </View>
           <View style={styles.trackRow}>
@@ -138,6 +183,25 @@ const styles = StyleSheet.create({
     color: colors.primaryText,
     marginTop: 4,
     lineHeight: 18,
+  },
+  priceHelp: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: 6,
+  },
+  priceHelpTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: 2,
+  },
+  priceHelpBody: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
   },
   row: {
     flexDirection: 'row',

@@ -38,26 +38,30 @@ export class PaymentRepository extends BaseRepository<Payment> {
 
   async findByDateRange(businessId: string, startDate: string, endDate: string): Promise<Payment[]> {
     const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('payment_date', 'created_at', startDate, endDate);
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
-       WHERE business_id = ? AND payment_date BETWEEN ? AND ?
+       WHERE business_id = ? AND ${period.clause}
        ORDER BY payment_date DESC`,
-      [businessId, startDate, endDate]
+      [businessId, ...period.params]
     );
     return rows.map(row => this.mapRow(row));
   }
 
   async getTotalByMethod(businessId: string, startDate: string, endDate: string, method?: PaymentMethod): Promise<number> {
     const db = await this.getDb();
-    let query = `SELECT COALESCE(SUM(amount), 0) as total FROM ${this.tableName} WHERE business_id = ? AND payment_date BETWEEN ? AND ?`;
-    const params: unknown[] = [businessId, startDate, endDate];
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('payment_date', 'created_at', startDate, endDate);
+    let query = `SELECT COALESCE(SUM(amount), 0) as total FROM ${this.tableName} WHERE business_id = ? AND ${period.clause}`;
+    const params: unknown[] = [businessId, ...period.params];
     
     if (method) {
       query += ` AND payment_method = ?`;
       params.push(method);
     }
     
-    const row = await db.getFirstAsync<{ total: number }>(query, params);
+    const row = await db.getFirstAsync<{ total: number }>(query, params as (string | number | null)[]);
     return row?.total ?? 0;
   }
 

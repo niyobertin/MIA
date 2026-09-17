@@ -15,22 +15,26 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
   async findByDateRange(businessId: string, startDate: string, endDate: string): Promise<Expense[]> {
     const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('expense_date', 'created_at', startDate, endDate);
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
-       WHERE business_id = ? AND expense_date BETWEEN ? AND ?
+       WHERE business_id = ? AND ${period.clause}
        ORDER BY expense_date DESC`,
-      [businessId, startDate, endDate]
+      [businessId, ...period.params]
     );
     return rows.map(row => this.mapRow(row));
   }
 
   async getTotalExpenses(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('expense_date', 'created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(amount), 0) as total
        FROM ${this.tableName}
-       WHERE business_id = ? AND expense_date BETWEEN ? AND ?`,
-      [businessId, startDate, endDate]
+       WHERE business_id = ? AND ${period.clause}`,
+      [businessId, ...period.params]
     );
     return row?.total ?? 0;
   }

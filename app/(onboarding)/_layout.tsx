@@ -2,7 +2,7 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
-export default function AuthLayout() {
+export default function OnboardingLayout() {
   const { t } = useTranslation();
   return (
     <Stack
@@ -11,9 +11,9 @@ export default function AuthLayout() {
         contentStyle: { backgroundColor: '#fff' },
       }}
     >
-      <Stack.Screen name="index" options={{ title: t('auth.welcome') }} />
-      <Stack.Screen name="login" options={{ title: t('auth.signIn') }} />
-      <Stack.Screen name="register" options={{ title: t('auth.createAccount') }} />
+      <Stack.Screen name="index" options={{ title: t('auth.setupBusiness') }} />
+      <Stack.Screen name="create-business" options={{ title: t('auth.createBusiness') }} />
+      <Stack.Screen name="join-business" options={{ title: t('auth.joinBusiness') }} />
     </Stack>
   );
 }

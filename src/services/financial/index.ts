@@ -319,6 +319,8 @@ export class FinancialService {
     limit = 10
   ): Promise<Array<{ productId: string; productName: string; quantitySold: number; totalSales: number; totalProfit: number; margin: number }>> {
     const db = await (await import('../../db/database')).getDatabase();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
     const rows = await db.getAllAsync<{
       product_id: string;
       product_name: string;
@@ -335,11 +337,11 @@ export class FinancialService {
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
        JOIN products p ON si.product_id = p.id
-       WHERE si.business_id = ? AND s.sale_date BETWEEN ? AND ?
+       WHERE si.business_id = ? AND ${period.clause}
        GROUP BY p.id, p.name
        ORDER BY total_sales DESC
        LIMIT ?`,
-      [businessId, startDate, endDate, limit]
+      [businessId, ...period.params, limit]
     );
 
     return rows.map(row => ({
