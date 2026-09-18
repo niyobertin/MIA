@@ -37,12 +37,45 @@ export default function SyncScreen() {
         lastSyncAt: new Date(),
       });
       setLastSyncAt(new Date());
-      if (result.success) {
-        showToast(t('settings.statusSynced'), 'success');
-      } else if (result.errors[0]) {
-        showToast(result.errors[0], 'error');
+      if (result.failed > 0) {
+        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
+      } else if (result.synced === 0) {
+        showToast(t('settings.nothingToSync'), 'info');
       } else {
-        showToast(t('settings.statusFailed'), 'error');
+        showToast(t('settings.syncUploaded', { count: result.synced }), 'success');
+      }
+    } catch (error) {
+      showToast(String(error), 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleForceReupload = async () => {
+    if (!businessId) return;
+    setIsSyncing(true);
+    try {
+      const { syncRepository } = await import('@/repositories/sync');
+      const reset = await syncRepository.requeueSynced(businessId);
+      const engine = getSyncEngine('local-device');
+      const result = await engine.syncAll();
+      const count = await refreshPendingCount(businessId);
+      setPendingCount(count);
+      setStatus({
+        status: result.failed > 0 ? 'failed' : 'synced',
+        pendingCount: count,
+        syncedCount: result.synced,
+        failedCount: result.failed,
+        lastSyncAt: new Date(),
+      });
+      setLastSyncAt(new Date());
+      if (result.failed > 0) {
+        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
+      } else {
+        showToast(
+          t('settings.forceSyncDone', { reset, uploaded: result.synced }),
+          'success'
+        );
       }
     } catch (error) {
       showToast(String(error), 'error');
@@ -69,7 +102,7 @@ export default function SyncScreen() {
       if (result.success) {
         showToast(t('settings.statusSynced'), 'success');
       } else {
-        showToast(t('settings.statusFailed'), 'error');
+        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
       }
     } catch (error) {
       showToast(String(error), 'error');
@@ -83,6 +116,13 @@ export default function SyncScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>{t('settings.sync')}</Text>
         <Text style={styles.subtitle}>{t('settings.syncDesc')}</Text>
+        <Text style={styles.cloudTarget}>
+          {process.env.EXPO_PUBLIC_SUPABASE_URL
+            ? t('settings.cloudTarget', {
+                host: String(process.env.EXPO_PUBLIC_SUPABASE_URL).replace(/^https?:\/\//, ''),
+              })
+            : t('settings.cloudNotConfigured')}
+        </Text>
       </View>
 
       <View style={styles.statusCard}>
@@ -114,6 +154,14 @@ export default function SyncScreen() {
             disabled={isSyncing}
           >
             {isSyncing ? t('common.syncing') : t('settings.syncNow')}
+          </Button>
+          <Button
+            variant="outline"
+            fullWidth
+            onPress={() => void handleForceReupload()}
+            disabled={isSyncing}
+          >
+            {t('settings.forceReupload')}
           </Button>
           {pendingCount > 0 ? (
             <Button variant="outline" fullWidth onPress={() => void handleRetryFailed()} disabled={isSyncing}>
@@ -214,6 +262,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     marginTop: 4,
+  },
+  cloudTarget: {
+    fontSize: 12,
+    color: '#0ea5e9',
+    marginTop: 8,
+    fontWeight: '600',
   },
   statusCard: {
     backgroundColor: '#fff',

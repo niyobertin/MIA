@@ -57,6 +57,17 @@ export class SyncRepository extends BaseRepository<SyncRecord> {
   async getPendingCount(businessId: string): Promise<number> {
     return this.count(businessId, { status: 'pending' });
   }
+
+  async requeueSynced(businessId: string): Promise<number> {
+    const db = await this.getDb();
+    const result = await db.runAsync(
+      `UPDATE sync_records
+       SET status = 'pending', error_message = NULL, updated_at = ?
+       WHERE business_id = ? AND status IN ('synced', 'failed', 'syncing')`,
+      [new Date().toISOString(), businessId]
+    );
+    return result.changes;
+  }
 }
 
 export const syncRepository = new SyncRepository();

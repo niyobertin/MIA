@@ -94,6 +94,15 @@ export const useAuthStore = create<AuthState>()(
 
           set({ user, business, isAuthenticated: true, error: null });
           showToast('Logged in successfully', 'success');
+
+          if (business?.id) {
+            try {
+              const { getSyncEngine } = await import('@/services/sync/syncEngine');
+              void getSyncEngine('local-device').syncAll();
+            } catch {
+              // Auto-sync will retry
+            }
+          }
         } catch {
           set({ error: 'Could not sign in. Please try again.' });
           showToast('Could not sign in. Please try again.', 'error');
@@ -161,8 +170,20 @@ export const useAuthStore = create<AuthState>()(
             'OWNER'
           );
 
+          const { queueSync } = await import('@/services/sync/queue');
+          await queueSync('businesses', business.id, 'insert', business as unknown as Record<string, unknown>, businessId);
+          await queueSync('users', user.id, 'insert', user as unknown as Record<string, unknown>, businessId);
+
           set({ business, user, isAuthenticated: true, error: null });
           showToast('Business created successfully', 'success');
+
+          // Push to Supabase immediately (new registrations use real UUIDs)
+          try {
+            const { getSyncEngine } = await import('@/services/sync/syncEngine');
+            void getSyncEngine('local-device').syncAll();
+          } catch {
+            // Auto-sync will retry
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Could not create business';
           set({ error: message });
@@ -198,8 +219,18 @@ export const useAuthStore = create<AuthState>()(
             role === 'OWNER' ? 'STAFF' : role
           );
 
+          const { queueSync } = await import('@/services/sync/queue');
+          await queueSync('users', user.id, 'insert', user as unknown as Record<string, unknown>, business.id);
+
           set({ business, user, isAuthenticated: true, error: null });
           showToast('Joined business successfully', 'success');
+
+          try {
+            const { getSyncEngine } = await import('@/services/sync/syncEngine');
+            void getSyncEngine('local-device').syncAll();
+          } catch {
+            // Auto-sync will retry
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Could not join business';
           set({ error: message });
@@ -214,12 +245,24 @@ export const useAuthStore = create<AuthState>()(
       loadSession: async () => {
         set({ isLoading: true });
         try {
-          const { seedDemoData } = await import('@/db/seed/demo');
+          const { seedDemoData, DEMO_USERS, DEMO_BUSINESS } = await import('@/db/seed/demo');
           await seedDemoData();
 
           const state = get();
           if (state.user) {
-            const freshUser = await userRepository.findById(state.user.id);
+            let freshUser = await userRepository.findById(state.user.id);
+
+            // Persisted session may still hold legacy non-UUID demo ids
+            if (!freshUser && state.user.email) {
+              freshUser = await userRepository.findByEmail(state.user.email);
+            }
+            if (
+              !freshUser &&
+              DEMO_USERS.some((u) => u.email === state.user?.email?.toLowerCase())
+            ) {
+              freshUser = await userRepository.findByEmail(state.user.email);
+            }
+
             if (!freshUser || !freshUser.active) {
               set({
                 user: null,
@@ -230,9 +273,20 @@ export const useAuthStore = create<AuthState>()(
               return;
             }
 
-            const business = freshUser.business_id
+            let business = freshUser.business_id
               ? await businessRepository.findById(freshUser.business_id)
               : null;
+
+            if (!business && freshUser.email && DEMO_USERS.some((u) => u.email === freshUser!.email)) {
+              business = await businessRepository.findById(DEMO_BUSINESS.id);
+              if (business && freshUser.business_id !== business.id) {
+                freshUser = await userRepository.attachToBusiness(
+                  freshUser.id,
+                  business.id,
+                  freshUser.role ?? 'OWNER'
+                );
+              }
+            }
 
             set({
               user: freshUser,

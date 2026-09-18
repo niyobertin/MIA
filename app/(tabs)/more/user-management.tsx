@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { userRepository } from '@/repositories/users/users';
 import { showToast } from '@/stores/toastStore';
+import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
 
 const createUserSchema = z.object({
@@ -196,7 +197,7 @@ function AddUserModal({
   const onSubmit = async (data: CreateUserForm) => {
     if (!business) return;
     try {
-      await userRepository.createBusinessUser({
+      const created = await userRepository.createBusinessUser({
         name: data.name,
         email: data.email,
         phone: data.phone,
@@ -204,6 +205,13 @@ function AddUserModal({
         role: data.role,
         businessId: business.id,
       });
+      await queueSync(
+        'users',
+        created.id,
+        'insert',
+        created as unknown as Record<string, unknown>,
+        business.id
+      );
       showToast(t('users.userAdded'), 'success');
       await onCreated();
     } catch (error) {
