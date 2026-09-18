@@ -39,6 +39,11 @@ export function resolvePeriodBounds(start: string, end: string): PeriodBounds {
   };
 }
 
+/**
+ * Build a SQL WHERE fragment for a business calendar period.
+ * Date-only mode compares the first 10 chars so both `YYYY-MM-DD` and
+ * ISO timestamps (from cloud pull) match the same day.
+ */
 export function buildPeriodWhere(
   dateColumn: string,
   dateTimeColumn: string,
@@ -46,9 +51,14 @@ export function buildPeriodWhere(
   end: string
 ): { clause: string; params: [string, string] } {
   const bounds = resolvePeriodBounds(start, end);
-  const column = bounds.mode === 'datetime' ? dateTimeColumn : dateColumn;
+  if (bounds.mode === 'datetime') {
+    return {
+      clause: `${dateTimeColumn} BETWEEN ? AND ?`,
+      params: [bounds.start, bounds.end],
+    };
+  }
   return {
-    clause: `${column} BETWEEN ? AND ?`,
+    clause: `substr(${dateColumn}, 1, 10) BETWEEN ? AND ?`,
     params: [bounds.start, bounds.end],
   };
 }
@@ -57,4 +67,12 @@ export function combineDateAndTime(date: string, time: string, fallbackTime: str
   const d = date.trim().slice(0, 10);
   const t = (time.trim() || fallbackTime).slice(0, 5);
   return `${d}T${t}:00`;
+}
+
+/** Local-calendar YYYY-MM-DD (avoids UTC day shift for Africa/Kigali). */
+export function toLocalDateString(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }

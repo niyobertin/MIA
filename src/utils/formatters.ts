@@ -42,33 +42,48 @@ export function formatTime(date: string | Date, locale = 'en-RW'): string {
 }
 
 export function getTodayDateString(): string {
-  return new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function getYesterdayDateString(): string {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  return yesterday.toISOString().split('T')[0];
+  const y = yesterday.getFullYear();
+  const m = String(yesterday.getMonth() + 1).padStart(2, '0');
+  const d = String(yesterday.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function getWeekStartDateString(): string {
   const now = new Date();
   const day = now.getDay();
   const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(now.setDate(diff));
-  return monday.toISOString().split('T')[0];
+  const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+  const y = monday.getFullYear();
+  const m = String(monday.getMonth() + 1).padStart(2, '0');
+  const d = String(monday.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function getWeekEndDateString(): string {
-  const monday = new Date(getWeekStartDateString());
+  const monday = new Date(getWeekStartDateString() + 'T12:00:00');
   const sunday = new Date(monday);
   sunday.setDate(sunday.getDate() + 6);
-  return sunday.toISOString().split('T')[0];
+  const y = sunday.getFullYear();
+  const m = String(sunday.getMonth() + 1).padStart(2, '0');
+  const d = String(sunday.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function getMonthStartDateString(): string {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
 }
 
 export function getMonthEndDateString(): string {
@@ -78,12 +93,19 @@ export function getMonthEndDateString(): string {
 
 export function getLastMonthStartDateString(): string {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}-01`;
 }
 
 export function getLastMonthEndDateString(): string {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+  const d = new Date(now.getFullYear(), now.getMonth(), 0);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export function generateId(): string {

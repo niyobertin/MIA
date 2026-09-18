@@ -23,6 +23,7 @@ import { PAYMENT_METHODS } from '@/constants';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { getTodayDateString } from '@/utils/formatters';
 
 const schema = z.object({
   partyId: z.string().min(1, 'Select a party'),
@@ -41,7 +42,7 @@ interface PartyPaymentProps {
 export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) {
   const { t } = useTranslation();
   const isCustomer = kind === 'customer';
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
 
   const { data: customers } = useCustomers();
   const { data: suppliers } = useSuppliers();

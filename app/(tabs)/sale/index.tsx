@@ -27,7 +27,7 @@ import { showToast } from '@/stores/toastStore';
 import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
-import { debounce } from '@/utils/formatters';
+import { debounce, getTodayDateString } from '@/utils/formatters';
 import { PAYMENT_METHODS } from '@/constants';
 import { Customer } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
@@ -148,7 +148,7 @@ export default function NewSaleScreen() {
 
   const closeSuccess = () => setSuccess(null);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
   const historyQuery = useSales({ start: today, end: today });
   const { business } = useAuthStore();
   const todaysSales = [...(historyQuery.data ?? [])].sort((a, b) =>
@@ -156,6 +156,8 @@ export default function NewSaleScreen() {
   );
   const customerNameOf = (id: string | null) =>
     id ? (customers?.find((c) => c.id === id)?.name ?? t('sales.walkInCustomer')) : t('sales.walkInCustomer');
+  const productNameOf = (id: string) =>
+    products?.find((p) => p.id === id)?.name ?? t('sales.items');
 
   const shareReceipt = async () => {
     if (!success) return;
@@ -207,7 +209,12 @@ export default function NewSaleScreen() {
       </View>
 
       {tab === 'history' ? (
-        <SaleHistoryList sales={todaysSales} loading={historyQuery.isLoading} customerNameOf={customerNameOf} />
+        <SaleHistoryList
+          sales={todaysSales}
+          loading={historyQuery.isLoading}
+          customerNameOf={customerNameOf}
+          productNameOf={productNameOf}
+        />
       ) : isLoading ? (
         <View style={styles.list}>
           <Skeleton height={76} style={styles.skel} />
@@ -604,10 +611,12 @@ function SaleHistoryList({
   sales,
   loading,
   customerNameOf,
+  productNameOf,
 }: {
   sales: Array<{ id: string; reference_number: string | null; total_amount: number; payment_status: string; customer_id: string | null; created_at: string }>;
   loading: boolean;
   customerNameOf: (id: string | null) => string;
+  productNameOf: (id: string) => string;
 }) {
   const { t } = useTranslation();
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
@@ -639,6 +648,7 @@ function SaleHistoryList({
         <SaleHistoryRow
           sale={item}
           customerName={customerNameOf(item.customer_id)}
+          productNameOf={productNameOf}
           expanded={expandedId === item.id}
           onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
         />
@@ -652,11 +662,13 @@ function SaleHistoryList({
 function SaleHistoryRow({
   sale,
   customerName,
+  productNameOf,
   expanded,
   onToggle,
 }: {
   sale: { id: string; reference_number: string | null; total_amount: number; payment_status: string };
   customerName: string;
+  productNameOf: (id: string) => string;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -679,10 +691,16 @@ function SaleHistoryRow({
         <View style={styles.historyItems}>
           {(items ?? []).map((it) => (
             <View key={it.id} style={styles.historyItem}>
+              <Text style={styles.historyItemName} numberOfLines={1}>
+                {productNameOf(it.product_id)}
+              </Text>
               <Text style={styles.historyItemQty}>×{it.quantity}</Text>
               <Text style={styles.historyItemTotal}>{it.total_amount.toLocaleString()} RWF</Text>
             </View>
           ))}
+          {(items ?? []).length === 0 ? (
+            <Text style={styles.historySub}>—</Text>
+          ) : null}
         </View>
       ) : null}
     </TouchableOpacity>
@@ -944,7 +962,14 @@ const styles = StyleSheet.create({
   },
   historyItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  historyItemName: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.ink,
+    fontWeight: '600',
   },
   historyItemQty: {
     fontSize: 13,

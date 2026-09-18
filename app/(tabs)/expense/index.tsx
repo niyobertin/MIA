@@ -23,6 +23,7 @@ import { Expense } from '@/types';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { getTodayDateString } from '@/utils/formatters';
 
 const EXPENSE_PAYMENT_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -51,7 +52,7 @@ const categoryTone: Record<string, 'info' | 'warning' | 'success' | 'danger' | '
 
 export default function ExpenseScreen() {
   const { t } = useTranslation();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
   const createExpenseMutation = useCreateExpense();
   const updateExpenseMutation = useUpdateExpense();
   const deleteExpenseMutation = useDeleteExpense();

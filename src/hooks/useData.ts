@@ -12,6 +12,8 @@ import { dailyClosingRepository } from '@/repositories/reports/dailyClosing';
 import { financialService } from '@/services/financial';
 import { queueSync } from '@/services/sync/queue';
 import { Product, Category, Supplier, Customer, Purchase, Sale, Expense, Payment, PaymentMethod, DailyClosing, StockMovement } from '@/types';
+import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
+import { toLocalDateString } from '@/utils/periodBounds';
 
 const getBusinessId = () => useAuthStore.getState().business?.id ?? '';
 const getUserId = () => useAuthStore.getState().user?.id ?? '';
@@ -139,15 +141,13 @@ export function useOpenDailyClosing() {
 
 export function useDashboardStats() {
   const businessId = getBusinessId();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
   
   return useQuery({
     queryKey: ['dashboardStats', businessId, today],
     queryFn: async () => {
       const financials = await financialService.calculateDailyFinancials(businessId, today);
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayIso = yesterday.toISOString().split('T')[0];
+      const yesterdayIso = getYesterdayDateString();
       const [itemsSold, stockValue, yesterdaySales] = await Promise.all([
         financialService.getTotalItemsSold(businessId, today, today),
         productRepository.getStockValue(businessId),
@@ -208,7 +208,7 @@ function buildDaySeries(sales: Array<{ sale_date: string; total_amount: number }
   for (let offset = days - 1; offset >= 0; offset--) {
     const d = new Date();
     d.setDate(d.getDate() - offset);
-    const iso = d.toISOString().split('T')[0];
+    const iso = toLocalDateString(d);
     series.push({
       date: iso,
       weekday: d.toLocaleDateString('en', { weekday: 'narrow' }),
@@ -222,7 +222,7 @@ function buildDaySeries(sales: Array<{ sale_date: string; total_amount: number }
 
 export function useWeeklySales() {
   const businessId = getBusinessId();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
   return useQuery({
     queryKey: ['weeklySales', businessId, today],
     queryFn: async (): Promise<DaySales[]> => {
@@ -230,7 +230,7 @@ export function useWeeklySales() {
       start.setDate(start.getDate() - 6);
       const sales = await saleRepository.findByDateRange(
         businessId,
-        start.toISOString().split('T')[0],
+        toLocalDateString(start),
         today
       );
       return buildDaySeries(sales, 7);
@@ -241,7 +241,7 @@ export function useWeeklySales() {
 
 export function useMonthlySales() {
   const businessId = getBusinessId();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
   return useQuery({
     queryKey: ['monthlySales', businessId, today],
     queryFn: async (): Promise<DaySales[]> => {
@@ -249,7 +249,7 @@ export function useMonthlySales() {
       start.setDate(start.getDate() - 29);
       const sales = await saleRepository.findByDateRange(
         businessId,
-        start.toISOString().split('T')[0],
+        toLocalDateString(start),
         today
       );
       return buildDaySeries(sales, 30);
@@ -799,7 +799,7 @@ export function useCreateSale() {
       
       const saleId = generateUUID();
       const now = new Date().toISOString();
-      const today = now.split('T')[0];
+      const today = getTodayDateString();
       
       const sale = await saleRepository.create({
         id: saleId,
@@ -877,6 +877,8 @@ export function useCreateSale() {
       queryClient.invalidateQueries({ queryKey: ['sales', businessId] });
       queryClient.invalidateQueries({ queryKey: ['products', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['weeklySales', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['monthlySales', businessId] });
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
       queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
     },
@@ -905,7 +907,7 @@ export function useCreatePurchase() {
       
       const purchaseId = generateUUID();
       const now = new Date().toISOString();
-      const today = now.split('T')[0];
+      const today = getTodayDateString();
       
       // Create purchase
       const purchase = await purchaseRepository.create({

@@ -22,6 +22,7 @@ import {
   useDailyFinancials,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
+import { getTodayDateString } from '@/utils/formatters';
 
 interface DayForm {
   openingCash: string;
@@ -32,7 +33,7 @@ interface DayForm {
 export default function ClosingScreen() {
   const { t } = useTranslation();
   const { user } = useAuthStore();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayDateString();
 
   const openClosingQuery = useOpenDailyClosing();
   const todayClosingQuery = useDailyClosing(today);

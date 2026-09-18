@@ -27,7 +27,8 @@ import {
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
-import { combineDateAndTime } from '@/utils/periodBounds';
+import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
+import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
 import { shareReportPdf } from '@/utils/reportExport';
 import { showToast } from '@/stores/toastStore';
 
@@ -36,23 +37,23 @@ type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 function isoDaysAgo(offset: number): string {
   const d = new Date();
   d.setDate(d.getDate() - offset);
-  return d.toISOString().split('T')[0];
+  return toLocalDateString(d);
 }
 
 function todayIso(): string {
-  return isoDaysAgo(0);
+  return getTodayDateString();
 }
 
 function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
   const today = todayIso();
   switch (period) {
     case 'yesterday':
-      return { start: isoDaysAgo(1), end: isoDaysAgo(1) };
+      return { start: getYesterdayDateString(), end: getYesterdayDateString() };
     case 'week':
       return { start: isoDaysAgo(6), end: today };
     case 'month': {
       const d = new Date();
-      const first = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+      const first = toLocalDateString(new Date(d.getFullYear(), d.getMonth(), 1));
       return { start: first, end: today };
     }
     case 'custom':

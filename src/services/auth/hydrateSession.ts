@@ -26,9 +26,24 @@ type PullResponse = {
   tables?: Record<string, Record<string, unknown>[] | null> | null;
 };
 
-function normalizeCell(v: unknown): string | number | null {
+function normalizeCell(v: unknown, key?: string): string | number | null {
   if (v == null) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
+
+  const DATE_KEYS = new Set([
+    'sale_date',
+    'purchase_date',
+    'expense_date',
+    'payment_date',
+    'business_date',
+  ]);
+
+  if (key && DATE_KEYS.has(key)) {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const text = String(v);
+    return text.length >= 10 ? text.slice(0, 10) : text;
+  }
+
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'object') return String(v);
   return v as string | number;
@@ -87,7 +102,7 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
           safeKeys.push('password_hash');
           const safeValues = safeKeys.map((k) => {
             if (k === 'password_hash') return 'legacy:unmigrated';
-            return normalizeCell(record[k]);
+            return normalizeCell(record[k], k);
           });
           const placeholders = safeKeys.map(() => '?').join(', ');
           const updates = safeKeys
@@ -108,7 +123,7 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
           .filter((k) => k !== 'id')
           .map((k) => `${k} = excluded.${k}`)
           .join(', ');
-        const values = keys.map((k) => normalizeCell(record[k]));
+        const values = keys.map((k) => normalizeCell(record[k], k));
         await db.runAsync(
           `INSERT INTO ${table} (${keys.join(', ')})
            VALUES (${placeholders})
