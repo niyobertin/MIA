@@ -15,6 +15,14 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_APP_NAME": "MIA",
+        "EXPO_PUBLIC_APP_VERSION": "1.0.0",
+        "EXPO_PUBLIC_DEFAULT_CURRENCY": "RWF",
+        "EXPO_PUBLIC_DEFAULT_COUNTRY": "Rwanda",
+        "EXPO_PUBLIC_DEFAULT_TIMEZONE": "Africa/Kigali",
+        "EXPO_PUBLIC_API_URL": "https://mia-miaapi-muyibr-2549bb-31-97-185-224.sslip.io"
       }
     },
     "production": {
