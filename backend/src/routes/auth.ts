@@ -1,6 +1,6 @@
+import { randomUUID } from 'crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
 import { ILike } from 'typeorm';
 import { AppDataSource } from '../data-source';
 import { Business, User } from '../entities';
@@ -65,7 +65,7 @@ authRouter.post('/register', async (req, res) => {
 
     const now = new Date();
     const user = users.create({
-      id: uuidv4(),
+      id: randomUUID(),
       business_id: null,
       name: body.name.trim(),
       email,

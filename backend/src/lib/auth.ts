@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-insecure-secret-change-me';
 const JWT_ACCESS_EXPIRES = process.env.JWT_EXPIRES ?? '12h';
@@ -16,7 +15,7 @@ export type AuthTokenPayload = {
 
 /** Match the mobile app hash format: `${saltHex}:${sha256Hex}` */
 export async function hashPassword(password: string): Promise<string> {
-  const salt = uuidv4().replace(/-/g, '');
+  const salt = crypto.randomUUID().replace(/-/g, '');
   const digest = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
   return `${salt}:${digest}`;
 }

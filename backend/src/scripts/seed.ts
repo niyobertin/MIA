@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
 import { initDatabase, AppDataSource } from '../data-source';
 import {
   Business,
