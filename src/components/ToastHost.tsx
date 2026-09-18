@@ -36,7 +36,7 @@ export const ToastHost: React.FC = () => {
   }, [message, counter, hide, opacity, translateY, tone]);
 
   if (!message) return null;
-  const config = toneConfig[tone];
+  const config = toneConfig[tone] ?? toneConfig.info;
 
   return (
     <View

@@ -8,11 +8,12 @@ import { Easing } from 'react-native';
 export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { t } = useTranslation();
   const { status, pendingCount } = useSyncStore();
+  const syncStatus = status?.status ?? 'idle';
   
   const spinAnim = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
-    if (status.status === 'syncing') {
+    if (syncStatus === 'syncing') {
       spinAnim.setValue(0);
       Animated.timing(spinAnim, {
         toValue: 1,
@@ -21,10 +22,10 @@ export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false
         useNativeDriver: true,
       }).start(() => {});
     }
-  }, [status.status]);
+  }, [syncStatus]);
 
   const getStatusConfig = () => {
-    switch (status.status) {
+    switch (syncStatus) {
       case 'syncing':
         return {
           icon: 'sync',
@@ -122,7 +123,7 @@ export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false
         )}
       </Animated.View>
       <Text style={[styles.label, { color: config.color }]}>{config.label}</Text>
-      {pendingCount > 0 && status.status !== 'syncing' && (
+      {pendingCount > 0 && syncStatus !== 'syncing' && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{pendingCount}</Text>
         </View>

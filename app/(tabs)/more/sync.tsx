@@ -118,9 +118,9 @@ export default function SyncScreen() {
         <Text style={styles.title}>{t('settings.sync')}</Text>
         <Text style={styles.subtitle}>{t('settings.syncDesc')}</Text>
         <Text style={styles.cloudTarget}>
-          {process.env.EXPO_PUBLIC_SUPABASE_URL
+          {process.env.EXPO_PUBLIC_API_URL
             ? t('settings.cloudTarget', {
-                host: String(process.env.EXPO_PUBLIC_SUPABASE_URL).replace(/^https?:\/\//, ''),
+                host: String(process.env.EXPO_PUBLIC_API_URL).replace(/^https?:\/\//, ''),
               })
             : t('settings.cloudNotConfigured')}
         </Text>
@@ -140,7 +140,7 @@ export default function SyncScreen() {
             label={t('settings.lastSync')}
             value={lastSyncAt ? formatDateTime(lastSyncAt) : t('settings.never')}
           />
-          <StatusRow label={t('settings.currentStatus')} value={getStatusLabel(status.status, t)} />
+          <StatusRow label={t('settings.currentStatus')} value={getStatusLabel(status?.status ?? 'idle', t)} />
         </View>
       </View>
 
@@ -230,8 +230,11 @@ function getStatusLabel(status: string, t: (key: string) => string) {
   return labels[status] ?? status;
 }
 
-function formatDateTime(date: Date) {
-  return date.toLocaleString('en-RW', {
+function formatDateTime(date: Date | string | null | undefined) {
+  if (!date) return '—';
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-RW', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

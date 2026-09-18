@@ -199,8 +199,10 @@ export interface DaySales {
 function buildDaySeries(sales: Array<{ sale_date: string; total_amount: number }>, days: number): DaySales[] {
   const byDate = new Map<string, number>();
   for (const s of sales) {
-    const day = s.sale_date.slice(0, 10);
-    byDate.set(day, (byDate.get(day) ?? 0) + s.total_amount);
+    const raw = s?.sale_date;
+    if (!raw) continue;
+    const day = String(raw).slice(0, 10);
+    byDate.set(day, (byDate.get(day) ?? 0) + (s.total_amount ?? 0));
   }
   const series: DaySales[] = [];
   for (let offset = days - 1; offset >= 0; offset--) {
@@ -817,7 +819,7 @@ export function useCreateSale() {
       });
       
       for (const item of totals.itemsWithCost) {
-        await saleItemRepository.create({
+        const saleItem = await saleItemRepository.create({
           id: generateUUID(),
           business_id: bid,
           sale_id: saleId,
@@ -830,7 +832,7 @@ export function useCreateSale() {
           total_amount: item.quantity * item.selling_price - (item.discount_amount ?? 0) + (item.tax_amount ?? 0),
         });
         
-        await stockMovementRepository.create({
+        const movement = await stockMovementRepository.create({
           id: generateUUID(),
           business_id: bid,
           product_id: item.product_id,
@@ -844,6 +846,9 @@ export function useCreateSale() {
           device_id: deviceId,
           sync_status: 'pending',
         });
+
+        await queueSync('sale_items', saleItem.id, 'insert', saleItem as unknown as Record<string, unknown>, bid);
+        await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
       }
       
       if (data.paymentMethod !== 'credit') {
@@ -919,7 +924,7 @@ export function useCreatePurchase() {
       });
       
       for (const item of totals.itemsWithTotal) {
-        await purchaseItemRepository.create({
+        const purchaseItem = await purchaseItemRepository.create({
           id: generateUUID(),
           business_id: businessId,
           purchase_id: purchaseId,
@@ -929,7 +934,7 @@ export function useCreatePurchase() {
           total_cost: item.total_cost,
         });
         
-        await stockMovementRepository.create({
+        const movement = await stockMovementRepository.create({
           id: generateUUID(),
           business_id: businessId,
           product_id: item.product_id,
@@ -945,6 +950,13 @@ export function useCreatePurchase() {
         });
         
         await financialService.updateProductAverageCost(item.product_id, businessId, item.quantity, item.unit_cost);
+        const product = await productRepository.findById(item.product_id, businessId);
+
+        await queueSync('purchase_items', purchaseItem.id, 'insert', purchaseItem as unknown as Record<string, unknown>, businessId);
+        await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, businessId);
+        if (product) {
+          await queueSync('products', product.id, 'update', product as unknown as Record<string, unknown>, businessId);
+        }
       }
 
       await queueSync('purchases', purchase.id, 'insert', purchase as unknown as Record<string, unknown>, businessId);
@@ -1179,7 +1191,7 @@ export function useStartDay() {
         throw new Error('DAY_ALREADY_OPEN');
       }
 
-      return dailyClosingRepository.create({
+      const closing = await dailyClosingRepository.create({
         id: generateUUID(),
         business_id: businessId,
         business_date: data.businessDate,
@@ -1204,6 +1216,14 @@ export function useStartDay() {
         closed_at: null,
         status: 'open',
       });
+      await queueSync(
+        'daily_closings',
+        closing.id,
+        'insert',
+        closing as unknown as Record<string, unknown>,
+        businessId
+      );
+      return closing;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
@@ -1266,6 +1286,16 @@ export function useCloseDay() {
           business_date: data.businessDate,
           ...payload,
         });
+      }
+
+      if (closing) {
+        await queueSync(
+          'daily_closings',
+          closing.id,
+          existing ? 'update' : 'insert',
+          closing as unknown as Record<string, unknown>,
+          businessId
+        );
       }
       
       return { closing, reconciliation };

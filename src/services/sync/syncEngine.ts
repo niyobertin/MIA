@@ -3,30 +3,13 @@ import { syncRepository } from '@/repositories/sync';
 import { useAuthStore } from '@/stores/authStore';
 import NetInfo from '@react-native-community/netinfo';
 import { formatCloudError } from '@/utils/cloudErrors';
+import { apiFetch, getApiBaseUrl, isApiConfigured } from '@/lib/api';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
-
-/** Legacy anon keys are JWTs (eyJ…). New publishable keys (sb_…) must NOT be sent as Bearer. */
-const IS_LEGACY_JWT_KEY = SUPABASE_ANON_KEY.startsWith('eyJ');
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
-}
-
-function buildSupabaseHeaders(prefer: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    apikey: SUPABASE_ANON_KEY,
-    Prefer: prefer,
-  };
-  // New sb_publishable / sb_secret keys are not JWTs — Bearer causes auth/gateway failures.
-  if (IS_LEGACY_JWT_KEY) {
-    headers.Authorization = `Bearer ${SUPABASE_ANON_KEY}`;
-  }
-  return headers;
 }
 
 const SYNC_ORDER = [
@@ -48,13 +31,14 @@ const SYNC_ORDER = [
 
 const STRIP_KEYS = new Set([
   'current_stock',
-  'password_hash',
 ]);
 
-/** Only columns that exist on Supabase — extra local fields cause PostgREST 500. */
+/** Only columns that exist on the MIA backend schema. */
 const TABLE_COLUMNS: Record<string, Set<string>> = {
   businesses: new Set(['id', 'name', 'business_code', 'currency', 'country', 'timezone', 'created_at', 'updated_at']),
-  users: new Set(['id', 'business_id', 'name', 'email', 'phone', 'role', 'active', 'created_at', 'updated_at']),
+  users: new Set([
+    'id', 'business_id', 'name', 'email', 'phone', 'password_hash', 'role', 'active', 'created_at', 'updated_at',
+  ]),
   categories: new Set(['id', 'business_id', 'name', 'description', 'active', 'created_at', 'updated_at']),
   products: new Set([
     'id', 'business_id', 'category_id', 'name', 'sku', 'barcode', 'unit',
@@ -77,7 +61,7 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   sales: new Set([
     'id', 'business_id', 'customer_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
-    'total_amount', 'paid_amount', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id',
+    'total_amount', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id',
     'sync_status', 'created_at', 'updated_at',
   ]),
   sale_items: new Set([
@@ -96,7 +80,7 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'id', 'business_id', 'business_date', 'opening_cash', 'cash_sales', 'customer_cash_payments',
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
-    'net_profit', 'notes', 'closed_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
+    'net_profit', 'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
   ]),
 };
 
@@ -268,29 +252,13 @@ export class SyncEngine {
       return { success: false, synced: 0, failed: 0, errors: ['No active business'] };
     }
 
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    if (!isApiConfigured || !getApiBaseUrl()) {
       this.notify({ status: 'failed', pendingCount: await syncRepository.getPendingCount(businessId) });
       return {
         success: false,
         synced: 0,
         failed: 0,
-        errors: ['Cloud sync is not configured (missing Supabase URL/key)'],
-      };
-    }
-
-    if (
-      !IS_LEGACY_JWT_KEY &&
-      !SUPABASE_ANON_KEY.startsWith('sb_publishable_') &&
-      !SUPABASE_ANON_KEY.startsWith('sb_secret_')
-    ) {
-      this.notify({ status: 'failed', pendingCount: await syncRepository.getPendingCount(businessId) });
-      return {
-        success: false,
-        synced: 0,
-        failed: 0,
-        errors: [
-          'Invalid Supabase key in .env — use the legacy anon JWT (eyJ…) or sb_publishable_… from Project Settings → API Keys',
-        ],
+        errors: ['Cloud sync is not configured (set EXPO_PUBLIC_API_URL to your MIA backend)'],
       };
     }
 
@@ -298,6 +266,20 @@ export class SyncEngine {
     this.notify({ status: 'syncing', pendingCount: 0 });
 
     try {
+      try {
+        const { ensureCloudSession } = await import('@/services/auth/cloudAuth');
+        const auth = useAuthStore.getState();
+        await ensureCloudSession({ email: auth.user?.email });
+      } catch (error) {
+        const message = formatCloudError(error);
+        this.notify({
+          status: 'failed',
+          pendingCount: await syncRepository.getPendingCount(businessId),
+          lastSyncAt: new Date(),
+        });
+        return { success: false, synced: 0, failed: 1, errors: [message] };
+      }
+
       try {
         await this.upsertTenantAnchors(businessId);
       } catch (error) {
@@ -334,6 +316,15 @@ export class SyncEngine {
         });
       }
 
+      // Pull remote changes so other devices' data lands locally
+      try {
+        const { pullCloudData } = await import('@/services/auth/hydrateSession');
+        await pullCloudData();
+      } catch (error) {
+        errors.push(`Pull failed: ${formatCloudError(error)}`);
+        failed++;
+      }
+
       const pendingCount = await syncRepository.getPendingCount(businessId);
       this.notify({
         status: failed > 0 ? 'failed' : 'synced',
@@ -362,25 +353,6 @@ export class SyncEngine {
         typeof record.payload === 'string' ? JSON.parse(record.payload) : record.payload;
       const payload = preparePayload(record.table_name, raw as Record<string, unknown>);
 
-      let url = `${SUPABASE_URL}/rest/v1/${record.table_name}`;
-      let method: string = 'POST';
-
-      if (record.operation === 'update') {
-        method = 'PATCH';
-        url += `?id=eq.${encodeURIComponent(record.record_id)}`;
-      } else if (record.operation === 'delete') {
-        method = 'DELETE';
-        url += `?id=eq.${encodeURIComponent(record.record_id)}`;
-      } else {
-        url += `?on_conflict=id`;
-      }
-
-      const prefer =
-        record.operation === 'insert'
-          ? 'resolution=merge-duplicates,return=representation'
-          : 'return=representation';
-      const headers = buildSupabaseHeaders(prefer);
-
       if (record.operation !== 'delete') {
         const id = payload.id;
         if (id != null && !isUuid(id)) {
@@ -396,31 +368,15 @@ export class SyncEngine {
         }
       }
 
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: record.operation === 'delete' ? undefined : JSON.stringify(payload),
-      });
-
-      const responseText = await response.text();
-      if (!response.ok) {
-        const short = responseText.length > 280 ? `${responseText.slice(0, 280)}…` : responseText;
-        console.warn('[sync]', method, url, response.status, short, payload);
-        throw new Error(`HTTP ${response.status}: ${short}`);
-      }
-
-      if (record.operation !== 'delete') {
-        let body: unknown = null;
-        try {
-          body = responseText ? JSON.parse(responseText) : null;
-        } catch {
-          body = null;
-        }
-        if (Array.isArray(body) && body.length === 0) {
-          throw new Error(
-            'Cloud write returned 0 rows (usually RLS blocked the insert). Apply supabase/migrations/004_offline_device_sync.sql'
-          );
-        }
+      if (record.operation === 'delete') {
+        await apiFetch(`/sync/${record.table_name}/${encodeURIComponent(record.record_id)}`, {
+          method: 'DELETE',
+        });
+      } else {
+        await apiFetch(`/sync/${record.table_name}`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
       }
 
       if (!options?.skipStatusUpdate) {
@@ -470,6 +426,14 @@ export class SyncEngine {
     this.notify({ status: 'syncing', pendingCount: 0 });
 
     try {
+      try {
+        const { ensureCloudSession } = await import('@/services/auth/cloudAuth');
+        const auth = useAuthStore.getState();
+        await ensureCloudSession({ email: auth.user?.email });
+      } catch (error) {
+        return { success: false, synced: 0, failed: 1, errors: [formatCloudError(error)] };
+      }
+
       try {
         await this.upsertTenantAnchors(businessId);
       } catch (error) {

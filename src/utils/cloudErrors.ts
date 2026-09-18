@@ -7,15 +7,16 @@ export function formatCloudError(raw: unknown): string {
     lower.includes('42p17') ||
     lower.includes('infinite recursion')
   ) {
-    return 'Cloud security rules are misconfigured. Run supabase/migrations/006_fix_rls_recursion.sql in the Supabase SQL Editor, then try again.';
+    return 'Cloud security rules failed. Check the MIA backend logs.';
   }
 
   if (
     lower.includes('0 rows') ||
     lower.includes('rls blocked') ||
-    lower.includes('row-level security')
+    lower.includes('row-level security') ||
+    lower.includes('access denied')
   ) {
-    return 'Cloud blocked the upload. Run supabase/migrations/004_offline_device_sync.sql in the Supabase SQL Editor, then tap Re-upload.';
+    return 'Cloud blocked the upload. Sign in again, then tap Sync.';
   }
 
   if (
@@ -28,10 +29,12 @@ export function formatCloudError(raw: unknown): string {
 
   if (
     lower.includes('invalid jwt') ||
-    lower.includes('invalid supabase key') ||
-    lower.includes('invalid api key')
+    lower.includes('unauthorized') ||
+    lower.includes('invalid or expired token') ||
+    lower.includes('missing or invalid authorization') ||
+    lower.includes('not signed in to the cloud')
   ) {
-    return 'Cloud API key is invalid. Check EXPO_PUBLIC_SUPABASE_ANON_KEY (use sb_publishable_… or the legacy anon JWT).';
+    return 'Not signed in to the cloud. Sign out, then sign in again while online.';
   }
 
   if (
@@ -43,8 +46,12 @@ export function formatCloudError(raw: unknown): string {
     return 'No internet right now. Your data is saved on this phone and will sync when you are online.';
   }
 
-  if (lower.includes('cloud sync is not configured') || lower.includes('missing supabase')) {
-    return 'Cloud sync is not set up on this build.';
+  if (
+    lower.includes('cloud sync is not configured') ||
+    lower.includes('api_url') ||
+    lower.includes('expo_public_api')
+  ) {
+    return 'Cloud sync is not set up. Set EXPO_PUBLIC_API_URL to your MIA backend.';
   }
 
   if (lower.includes('already syncing')) {
@@ -75,7 +82,21 @@ export function formatAuthError(raw: unknown, fallback: string): string {
   const text = raw instanceof Error ? raw.message : String(raw ?? '');
   const lower = text.toLowerCase();
 
-  if (lower.includes('already exists') || lower.includes('unique')) {
+  if (
+    lower.includes('email not confirmed') ||
+    lower.includes('confirm your email') ||
+    lower.includes('confirm email')
+  ) {
+    return 'Could not verify this email. Try signing in again.';
+  }
+  if (
+    lower.includes('internet is required') ||
+    lower.includes('online account') ||
+    lower.includes('check your email')
+  ) {
+    return text.trim();
+  }
+  if (lower.includes('already exists') || lower.includes('unique') || lower.includes('already registered')) {
     return 'An account with this email already exists. Sign in instead.';
   }
   if (lower.includes('invalid email or password')) {

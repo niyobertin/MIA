@@ -21,6 +21,8 @@ export type CreateAccountInput = {
   email: string;
   password: string;
   phone?: string | null;
+  /** When set (cloud auth user id), use this id instead of generating one. */
+  id?: string;
 };
 
 export type CreateBusinessUserInput = {
@@ -149,18 +151,41 @@ export class UserRepository {
     }
 
     if (await this.emailExists(normalizedEmail)) {
-      throw new Error('An account with this email already exists');
+      if (!input.id) {
+        throw new Error('An account with this email already exists');
+      }
     }
 
-    const id = generateUUID();
+    const id = input.id ?? generateUUID();
     const now = new Date().toISOString();
     const password_hash = await hashPassword(input.password);
+
+    // Clear stale local row with same email but different id (device switched to cloud auth)
+    if (input.id) {
+      await db.runAsync(
+        `DELETE FROM ${this.tableName} WHERE lower(email) = ? AND id != ? AND business_id IS NULL`,
+        [normalizedEmail, input.id]
+      );
+      const clash = await this.findByEmail(normalizedEmail);
+      if (clash && clash.id !== input.id) {
+        await db.runAsync(
+          `UPDATE ${this.tableName} SET email = ? WHERE id = ?`,
+          [`legacy+${clash.id.slice(0, 8)}@local.mia`, clash.id]
+        );
+      }
+    }
 
     try {
       await db.runAsync(
         `INSERT INTO ${this.tableName}
           (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
-         VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)`,
+         VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           email = excluded.email,
+           phone = excluded.phone,
+           password_hash = excluded.password_hash,
+           updated_at = excluded.updated_at`,
         [
           id,
           name,
@@ -180,7 +205,13 @@ export class UserRepository {
         await db.runAsync(
           `INSERT INTO ${this.tableName}
             (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
-           VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)`,
+           VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             email = excluded.email,
+             phone = excluded.phone,
+             password_hash = excluded.password_hash,
+             updated_at = excluded.updated_at`,
           [
             id,
             name,

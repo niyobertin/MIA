@@ -43,7 +43,7 @@ export default function LoginScreen() {
         <View style={styles.content}>
           <Logo size={88} style={styles.logo} />
           <Text style={styles.title}>{t('auth.signIn')}</Text>
-          <Text style={styles.subtitle}>{t('auth.noAccount')}</Text>
+          <Text style={styles.subtitle}>{t('auth.onlineLoginHint')}</Text>
 
           <View style={styles.form}>
             <FormInput

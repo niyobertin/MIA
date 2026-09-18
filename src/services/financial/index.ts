@@ -165,10 +165,13 @@ export class FinancialService {
     let totalCOGS = 0;
     
     for (const sale of sales) {
-      for (const item of sale.items) {
-        totalCOGS += item.quantity * item.unit_cost;
-      }
+    const items = sale?.items;
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!item) continue;
+      totalCOGS += (item.quantity ?? 0) * (item.unit_cost ?? 0);
     }
+  }
     
     return totalCOGS;
   }

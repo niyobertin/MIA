@@ -64,14 +64,71 @@ export const useAuthStore = create<AuthState>()(
       login: async (email: string, password: string) => {
         set({ error: null });
         try {
-          // Make sure demo accounts exist before attempting login
           const { ensureDemoUsers } = await import('@/db/seed/demo');
           await ensureDemoUsers();
 
-          const credential = await userRepository.findCredentialByEmail(email);
+          const normalized = email.trim().toLowerCase();
+          const { isApiConfigured } = await import('@/lib/api');
+          const { cloudSignIn, isOnline } = await import('@/services/auth/cloudAuth');
+          const online = await isOnline();
+
+          // 1) Online → always authenticate against the API (never local-only cache)
+          if (isApiConfigured && online) {
+            try {
+              const cloudUser = await cloudSignIn(normalized, password);
+              const { hydrateLocalSession } = await import('@/services/auth/hydrateSession');
+              const { user, business } = await hydrateLocalSession({
+                authUserId: cloudUser.id,
+                email: cloudUser.email,
+                name: cloudUser.name,
+                password,
+              });
+
+              if (user.business_id && !business) {
+                const message = 'Business not found for this account in the cloud yet.';
+                set({ error: message });
+                showToast(message, 'error');
+                return;
+              }
+
+              set({ user, business, isAuthenticated: true, error: null });
+              showToast(
+                business
+                  ? 'Signed in online. Business data synced to this device.'
+                  : 'Signed in online. Create or join a business next.',
+                'success'
+              );
+
+              if (business?.id) {
+                try {
+                  const { getSyncEngine } = await import('@/services/sync/syncEngine');
+                  void getSyncEngine('local-device').syncAll();
+                } catch {
+                  // ignore
+                }
+              }
+              return;
+            } catch (cloudError) {
+              const message = formatAuthError(
+                cloudError,
+                'Could not sign in to the cloud. Check your internet and try again.'
+              );
+              set({ error: message });
+              showToast(message, 'error');
+              return;
+            }
+          }
+
+          // 2) Offline only → use locally cached account
+          const credential = await userRepository.findCredentialByEmail(normalized);
           if (!credential || !credential.user.active) {
             set({ error: 'Invalid email or password' });
-            showToast('Invalid email or password', 'error');
+            showToast(
+              online
+                ? 'Invalid email or password.'
+                : 'You are offline. Sign in once while online so this device can work offline.',
+              'error'
+            );
             return;
           }
 
@@ -94,16 +151,7 @@ export const useAuthStore = create<AuthState>()(
           }
 
           set({ user, business, isAuthenticated: true, error: null });
-          showToast('Logged in successfully', 'success');
-
-          if (business?.id) {
-            try {
-              const { getSyncEngine } = await import('@/services/sync/syncEngine');
-              void getSyncEngine('local-device').syncAll();
-            } catch {
-              // Auto-sync will retry
-            }
-          }
+          showToast('Signed in offline. Sync will run when you are back online.', 'success');
         } catch (error) {
           const message = formatAuthError(error, 'Could not sign in. Please try again.');
           set({ error: message });
@@ -135,7 +183,22 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
+          let accountId: string | undefined;
+          const { isApiConfigured } = await import('@/lib/api');
+          const { cloudSignUp, isOnline } = await import('@/services/auth/cloudAuth');
+
+          if (isApiConfigured && (await isOnline())) {
+            const cloudUser = await cloudSignUp({
+              email,
+              password: data.password,
+              name,
+              phone: data.phone,
+            });
+            accountId = cloudUser.id;
+          }
+
           const user = await userRepository.createAccount({
+            id: accountId,
             name,
             email,
             password: data.password,
@@ -149,7 +212,12 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: null,
           });
-          showToast('Account created. Next, register your business.', 'success');
+          showToast(
+            accountId
+              ? 'Online account created. Next, register your business (syncs to all devices).'
+              : 'Account created offline. Connect to the internet next time to enable multi-device login.',
+            'success'
+          );
         } catch (error) {
           const message = formatAuthError(error, 'Could not create your account. Please try again.');
           set({ error: message });
@@ -217,6 +285,8 @@ export const useAuthStore = create<AuthState>()(
               try {
                 const { getSyncEngine } = await import('@/services/sync/syncEngine');
                 await getSyncEngine('local-device').syncAll();
+                const { cloudRefreshSession } = await import('@/services/auth/cloudAuth');
+                await cloudRefreshSession();
               } catch {
                 // Local data is already saved
               }
@@ -243,6 +313,37 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
+          const joinRole: UserRole = role === 'OWNER' ? 'STAFF' : role;
+          const { isApiConfigured } = await import('@/lib/api');
+          const { isOnline, cloudJoinBusiness } = await import('@/services/auth/cloudAuth');
+
+          if (isApiConfigured && (await isOnline())) {
+            const joined = await cloudJoinBusiness(
+              businessCode,
+              joinRole === 'MANAGER' || joinRole === 'CASHIER' || joinRole === 'STAFF'
+                ? joinRole
+                : 'STAFF'
+            );
+            const { pullCloudData } = await import('@/services/auth/hydrateSession');
+            const pulled = await pullCloudData();
+
+            const businessId = String(joined.business?.id ?? pulled.business?.id ?? '');
+            if (!businessId) {
+              throw new Error('Could not load that business after joining. Try again.');
+            }
+            const user = await userRepository.attachToBusiness(currentUser.id, businessId, joinRole);
+            const business =
+              (pulled.business as Business | null) ??
+              (joined.business as unknown as Business | null);
+            if (!business) {
+              throw new Error('Could not load that business after joining. Try again.');
+            }
+
+            set({ business, user, isAuthenticated: true, error: null });
+            showToast('Joined business successfully', 'success');
+            return;
+          }
+
           const business = await businessRepository.findByCode(businessCode.trim().toUpperCase());
           if (!business) {
             set({ error: 'Business not found. Check the business code and try again.' });
@@ -253,7 +354,7 @@ export const useAuthStore = create<AuthState>()(
           const user = await userRepository.attachToBusiness(
             currentUser.id,
             business.id,
-            role === 'OWNER' ? 'STAFF' : role
+            joinRole
           );
 
           const { queueSync } = await import('@/services/sync/queue');
@@ -277,6 +378,7 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         set({ user: null, business: null, isAuthenticated: false });
+        void import('@/services/auth/cloudAuth').then(({ cloudSignOut }) => cloudSignOut());
       },
 
       loadSession: async () => {
@@ -289,7 +391,6 @@ export const useAuthStore = create<AuthState>()(
           if (state.user) {
             let freshUser = await userRepository.findById(state.user.id);
 
-            // Persisted session may still hold legacy non-UUID demo ids
             if (!freshUser && state.user.email) {
               freshUser = await userRepository.findByEmail(state.user.email);
             }
@@ -331,6 +432,24 @@ export const useAuthStore = create<AuthState>()(
               isAuthenticated: true,
               isLoading: false,
             });
+
+            // When online, refresh cloud tokens from the API (keeps sync working)
+            try {
+              const { isApiConfigured } = await import('@/lib/api');
+              const { cloudRefreshSession, isOnline, hasValidCloudSession } = await import(
+                '@/services/auth/cloudAuth'
+              );
+              if (isApiConfigured && (await isOnline())) {
+                if (!(await hasValidCloudSession())) {
+                  await cloudRefreshSession();
+                } else {
+                  // Still refresh periodically so business_id stays current
+                  void cloudRefreshSession().catch(() => undefined);
+                }
+              }
+            } catch {
+              // Offline or expired refresh — local session still works
+            }
           } else {
             set({ isLoading: false });
           }

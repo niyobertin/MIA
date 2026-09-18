@@ -15,14 +15,17 @@
     "db:reset": "node scripts/reset-db.js",
     "db:seed": "node scripts/seed-db.js",
     "build:apk": "eas build --platform android --profile preview",
-    "build:apk:local": "eas build --platform android --profile preview --local"
+    "build:apk:local": "eas build --platform android --profile preview --local",
+    "backend:dev": "npm --prefix backend run dev",
+    "backend:init-db": "npm --prefix backend run db:init",
+    "backend:seed": "npm --prefix backend run db:seed"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@hookform/resolvers": "^5.9.1",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/netinfo": "12.0.1",
     "@react-native-picker/picker": "2.11.4",
-    "@supabase/supabase-js": "^2.116.0",
     "@tanstack/react-query": "^5.102.8",
     "babel-preset-expo": "^57.0.11",
     "expo": "~57.0.22",

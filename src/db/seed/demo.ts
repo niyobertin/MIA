@@ -2,7 +2,7 @@ import { getDatabase } from '../database';
 import { hashPassword } from '@/utils/password';
 import { queueSync } from '@/services/sync/queue';
 
-/** Stable UUIDs — required for Supabase UUID primary keys. */
+/** Stable UUIDs — required for cloud Postgres UUID primary keys. */
 export const DEMO_BUSINESS = {
   id: 'a1000000-0000-4000-8000-000000000001',
   name: 'MIA Demo Shop',

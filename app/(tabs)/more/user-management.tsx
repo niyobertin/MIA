@@ -62,6 +62,16 @@ export default function UserManagementScreen() {
     if (!business) return;
     try {
       await userRepository.setActive(userId, business.id, active);
+      const updated = await userRepository.findByIdInBusiness(userId, business.id);
+      if (updated) {
+        await queueSync(
+          'users',
+          updated.id,
+          'update',
+          updated as unknown as Record<string, unknown>,
+          business.id
+        );
+      }
       showToast(t('users.userUpdated'), 'success');
       await refetch();
     } catch (error) {
@@ -83,6 +93,7 @@ export default function UserManagementScreen() {
           onPress: async () => {
             try {
               await userRepository.delete(userId, business.id);
+              await queueSync('users', userId, 'delete', { id: userId }, business.id);
               showToast(t('users.userDeleted'), 'success');
               await refetch();
             } catch (error) {
@@ -205,11 +216,15 @@ function AddUserModal({
         role: data.role,
         businessId: business.id,
       });
+      const creds = await userRepository.findCredentialByEmail(created.email);
       await queueSync(
         'users',
         created.id,
         'insert',
-        created as unknown as Record<string, unknown>,
+        {
+          ...(created as unknown as Record<string, unknown>),
+          ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
+        },
         business.id
       );
       showToast(t('users.userAdded'), 'success');
