@@ -101,6 +101,28 @@ export class ProductRepository extends BaseRepository<Product> {
     return rows.reduce((sum, row) => sum + (row.average_cost * row.balance), 0);
   }
 
+  async getStockSnapshot(businessId: string): Promise<{ quantity: number; value: number }> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<{ average_cost: number; balance: number }>(
+      `SELECT p.average_cost,
+        COALESCE(SUM(CASE WHEN sm.type IN ('opening', 'purchase', 'return_in', 'adjustment_in') THEN sm.quantity ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN sm.type IN ('sale', 'return_out', 'adjustment_out', 'damaged') THEN sm.quantity ELSE 0 END), 0) as balance
+       FROM products p
+       LEFT JOIN stock_movements sm ON p.id = sm.product_id AND sm.business_id = p.business_id
+       WHERE p.business_id = ? AND p.active = 1 AND p.track_inventory = 1
+       GROUP BY p.id, p.average_cost`,
+      [businessId]
+    );
+
+    return rows.reduce(
+      (acc, row) => ({
+        quantity: acc.quantity + row.balance,
+        value: acc.value + row.average_cost * row.balance,
+      }),
+      { quantity: 0, value: 0 }
+    );
+  }
+
   async searchProducts(businessId: string, query: string, limit = 20): Promise<Product[]> {
     const db = await this.getDb();
     const searchTerm = `%${query}%`;

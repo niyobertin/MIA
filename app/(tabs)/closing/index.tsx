@@ -20,6 +20,7 @@ import {
   useCloseDay,
   useStartDay,
   useDailyFinancials,
+  useStockSnapshot,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';
@@ -38,6 +39,7 @@ export default function ClosingScreen() {
   const openClosingQuery = useOpenDailyClosing();
   const todayClosingQuery = useDailyClosing(today);
   const financialsQuery = useDailyFinancials(today);
+  const stockQuery = useStockSnapshot();
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
 
@@ -65,6 +67,11 @@ export default function ClosingScreen() {
   const [refreshing, setRefreshing] = React.useState(false);
 
   const fin = financialsQuery.data;
+  const liveStock = stockQuery.data;
+  const openingStockQty = activeOpen?.opening_stock_qty ?? liveStock?.quantity ?? 0;
+  const openingStockValue = activeOpen?.opening_stock_value ?? liveStock?.value ?? 0;
+  const availableStockQty = liveStock?.quantity ?? 0;
+  const availableStockValue = liveStock?.value ?? 0;
   const openingCash = parseInt(watch('openingCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
   const actualCash = parseInt(watch('actualCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
 
@@ -81,7 +88,12 @@ export default function ClosingScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([openClosingQuery.refetch(), todayClosingQuery.refetch(), financialsQuery.refetch()]);
+    await Promise.all([
+      openClosingQuery.refetch(),
+      todayClosingQuery.refetch(),
+      financialsQuery.refetch(),
+      stockQuery.refetch(),
+    ]);
     setRefreshing(false);
   };
 
@@ -144,7 +156,7 @@ export default function ClosingScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {openClosingQuery.isLoading || todayClosingQuery.isLoading || financialsQuery.isLoading ? (
+        {openClosingQuery.isLoading || todayClosingQuery.isLoading || financialsQuery.isLoading || stockQuery.isLoading ? (
           <Skeleton height={220} style={styles.skel} />
         ) : isClosed && todayClosing ? (
           <View style={styles.closedCard}>
@@ -164,6 +176,17 @@ export default function ClosingScreen() {
               />
               <ClosedRow label={t('dashboard.grossProfit')} value={todayClosing.gross_profit} />
               <ClosedRow label={t('dashboard.netProfit')} value={todayClosing.net_profit} />
+              <View style={styles.divider} />
+              <ClosedCountRow
+                label={t('cash.openingStock')}
+                value={`${(todayClosing.opening_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
+              />
+              <ClosedRow label={t('cash.stockValue')} value={todayClosing.opening_stock_value ?? 0} />
+              <ClosedCountRow
+                label={t('cash.availableStock')}
+                value={`${(todayClosing.closing_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
+              />
+              <ClosedRow label={t('cash.stockValue')} value={todayClosing.closing_stock_value ?? 0} />
             </View>
           </View>
         ) : needsStart ? (
@@ -175,6 +198,13 @@ export default function ClosingScreen() {
                 <Text style={styles.infoBody}>{t('cash.startDayHint')}</Text>
               </View>
             </View>
+            <StockCard
+              title={t('cash.openingStock')}
+              quantity={liveStock?.quantity ?? 0}
+              value={liveStock?.value ?? 0}
+              unitsLabel={t('cash.stockUnits')}
+              valueLabel={t('cash.stockValue')}
+            />
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.openingCash')}</Text>
               <FormInput
@@ -223,6 +253,21 @@ export default function ClosingScreen() {
               <FlowRow label={t('dashboard.grossProfit')} value={fin?.grossProfit ?? 0} strong />
               <FlowRow label={t('dashboard.netProfit')} value={fin?.netProfit ?? 0} strong />
             </View>
+
+            <StockCard
+              title={t('cash.openingStock')}
+              quantity={openingStockQty}
+              value={openingStockValue}
+              unitsLabel={t('cash.stockUnits')}
+              valueLabel={t('cash.stockValue')}
+            />
+            <StockCard
+              title={t('cash.availableStock')}
+              quantity={availableStockQty}
+              value={availableStockValue}
+              unitsLabel={t('cash.stockUnits')}
+              valueLabel={t('cash.stockValue')}
+            />
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.cashReconciliation')}</Text>
@@ -300,11 +345,48 @@ export default function ClosingScreen() {
   );
 }
 
+function StockCard({
+  title,
+  quantity,
+  value,
+  unitsLabel,
+  valueLabel,
+}: {
+  title: string;
+  quantity: number;
+  value: number;
+  unitsLabel: string;
+  valueLabel: string;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.flowRow}>
+        <Text style={styles.flowLabel}>{unitsLabel}</Text>
+        <Text style={styles.qtyValue}>{quantity.toLocaleString()}</Text>
+      </View>
+      <View style={styles.flowRow}>
+        <Text style={styles.flowLabel}>{valueLabel}</Text>
+        <MoneyText amount={value} size={14} weight="600" />
+      </View>
+    </View>
+  );
+}
+
 function FlowRow({ label, value, negative, strong }: { label: string; value: number; negative?: boolean; strong?: boolean }) {
   return (
     <View style={styles.flowRow}>
       <Text style={StyleSheet.flatten([styles.flowLabel, strong ? styles.flowLabelStrong : null])}>{label}</Text>
       <MoneyText amount={value} size={strong ? 16 : 14} weight={strong ? '700' : '600'} color={negative ? colors.danger : undefined} />
+    </View>
+  );
+}
+
+function ClosedCountRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.flowRow}>
+      <Text style={styles.flowLabel}>{label}</Text>
+      <Text style={styles.qtyValue}>{value}</Text>
     </View>
   );
 }
@@ -394,6 +476,11 @@ const styles = StyleSheet.create({
     color: colors.body,
   },
   flowLabelStrong: {
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  qtyValue: {
+    fontSize: 15,
     fontWeight: '700',
     color: colors.ink,
   },

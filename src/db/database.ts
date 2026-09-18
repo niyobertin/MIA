@@ -44,6 +44,7 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
   } else {
     await ensureUsersIdentitySchema(database);
     await normalizeBusinessDateColumns(database);
+    await migrateDailyClosingStockColumns(database);
   }
 }
 
@@ -68,6 +69,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion < 5) {
       await normalizeBusinessDateColumns(database);
+    }
+    if (fromVersion > 0 && fromVersion < 6) {
+      await migrateDailyClosingStockColumns(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -182,6 +186,27 @@ export async function ensureUsersIdentitySchemaForApp(): Promise<void> {
 
 async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
   await ensureUsersIdentitySchema(database);
+}
+
+async function migrateDailyClosingStockColumns(database: SQLite.SQLiteDatabase): Promise<void> {
+  const exists = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'daily_closings'`
+  );
+  if (!exists) return;
+
+  const columns = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(daily_closings)');
+  const names = new Set(columns.map((c) => c.name));
+  const additions: Array<[string, string]> = [
+    ['opening_stock_qty', 'INTEGER NOT NULL DEFAULT 0'],
+    ['opening_stock_value', 'INTEGER NOT NULL DEFAULT 0'],
+    ['closing_stock_qty', 'INTEGER NOT NULL DEFAULT 0'],
+    ['closing_stock_value', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+
+  for (const [name, ddl] of additions) {
+    if (names.has(name)) continue;
+    await database.execAsync(`ALTER TABLE daily_closings ADD COLUMN ${name} ${ddl}`);
+  }
 }
 
 /** Cloud pull can store ISO timestamps in date columns; keep YYYY-MM-DD for day filters. */

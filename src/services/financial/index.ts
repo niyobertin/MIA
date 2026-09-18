@@ -86,9 +86,10 @@ export class FinancialService {
     const product = await productRepository.findById(productId, businessId);
     if (!product) throw new Error('Product not found');
 
-    const currentStock = await productRepository.getStockBalance(productId, businessId);
+    const stockOnHand = await productRepository.getStockBalance(productId, businessId);
+    const quantityBeforePurchase = stockOnHand - purchaseQuantity;
     const newAverageCost = calculateWeightedAverageCost(
-      currentStock,
+      quantityBeforePurchase,
       product.average_cost,
       purchaseQuantity,
       purchaseCost

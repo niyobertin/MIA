@@ -80,7 +80,8 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'id', 'business_id', 'business_date', 'opening_cash', 'cash_sales', 'customer_cash_payments',
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
-    'net_profit', 'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
+    'net_profit', 'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
+    'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
   ]),
 };
 

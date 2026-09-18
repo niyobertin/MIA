@@ -265,6 +265,10 @@ export interface DailyClosing {
   gross_profit: number;
   expenses: number;
   net_profit: number;
+  opening_stock_qty: number;
+  opening_stock_value: number;
+  closing_stock_qty: number;
+  closing_stock_value: number;
   notes: string | null;
   closed_by: string | null;
   closed_at: string | null;

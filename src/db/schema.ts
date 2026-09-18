@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 5;
+export const DATABASE_VERSION = 6;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -233,6 +233,10 @@ CREATE TABLE IF NOT EXISTS daily_closings (
   gross_profit INTEGER NOT NULL DEFAULT 0,
   expenses INTEGER NOT NULL DEFAULT 0,
   net_profit INTEGER NOT NULL DEFAULT 0,
+  opening_stock_qty INTEGER NOT NULL DEFAULT 0,
+  opening_stock_value INTEGER NOT NULL DEFAULT 0,
+  closing_stock_qty INTEGER NOT NULL DEFAULT 0,
+  closing_stock_value INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   closed_by TEXT REFERENCES users(id),
   closed_at TEXT,

@@ -294,6 +294,15 @@ export function useDailyFinancials(businessDate: string) {
   });
 }
 
+export function useStockSnapshot() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['stockSnapshot', businessId],
+    queryFn: () => productRepository.getStockSnapshot(businessId),
+    enabled: !!businessId,
+  });
+}
+
 export interface PeriodRange {
   start: string;
   end: string;
@@ -881,6 +890,7 @@ export function useCreateSale() {
       queryClient.invalidateQueries({ queryKey: ['monthlySales', businessId] });
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
       queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
     },
   });
 }
@@ -990,6 +1000,7 @@ export function useCreatePurchase() {
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
     },
   });
 }
@@ -1193,6 +1204,7 @@ export function useStartDay() {
         throw new Error('DAY_ALREADY_OPEN');
       }
 
+      const snapshot = await productRepository.getStockSnapshot(businessId);
       const closing = await dailyClosingRepository.create({
         id: generateUUID(),
         business_id: businessId,
@@ -1213,6 +1225,10 @@ export function useStartDay() {
         gross_profit: 0,
         expenses: 0,
         net_profit: 0,
+        opening_stock_qty: snapshot.quantity,
+        opening_stock_value: snapshot.value,
+        closing_stock_qty: 0,
+        closing_stock_value: 0,
         notes: data.notes ?? null,
         closed_by: null,
         closed_at: null,
@@ -1230,6 +1246,7 @@ export function useStartDay() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
     },
   });
 }
@@ -1253,6 +1270,7 @@ export function useCloseDay() {
         data.actualCash
       );
       const financials = await financialService.calculateDailyFinancials(businessId, data.businessDate);
+      const snapshot = await productRepository.getStockSnapshot(businessId);
 
       const existing = await dailyClosingRepository.findByDate(businessId, data.businessDate);
       const payload = {
@@ -1272,6 +1290,10 @@ export function useCloseDay() {
         gross_profit: financials.grossProfit,
         expenses: financials.expenses,
         net_profit: financials.netProfit,
+        opening_stock_qty: existing?.opening_stock_qty ?? snapshot.quantity,
+        opening_stock_value: existing?.opening_stock_value ?? snapshot.value,
+        closing_stock_qty: snapshot.quantity,
+        closing_stock_value: snapshot.value,
         notes: data.notes ?? null,
         closed_by: userId,
         closed_at: new Date().toISOString(),
@@ -1305,6 +1327,7 @@ export function useCloseDay() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
     },
   });
 }

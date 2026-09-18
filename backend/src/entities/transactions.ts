@@ -381,6 +381,18 @@ export class DailyClosing {
   @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
   net_profit!: number;
 
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  opening_stock_qty!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  opening_stock_value!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  closing_stock_qty!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  closing_stock_value!: number;
+
   @Column({ type: 'text', nullable: true })
   notes!: string | null;
 
