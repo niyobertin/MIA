@@ -525,6 +525,7 @@ export const rw = {
     syncUploaded: 'Byoherejwe {{count}} ku cloud',
     forceReupload: 'Ongera wohereze ku cloud',
     forceSyncDone: 'Byasubijwe {{reset}}, byoherejwe {{uploaded}}',
+    syncFailedHint: 'Kohereza byanze — amakuru arahari kuri telefone',
   },
   features: {
     inventory: 'Ububiko',

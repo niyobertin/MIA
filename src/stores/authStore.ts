@@ -7,6 +7,7 @@ import { businessRepository } from '@/repositories/business/business';
 import { verifyPassword } from '@/utils/password';
 import { generateUUID } from '@/utils/uuid';
 import { showToast } from './toastStore';
+import { formatAuthError } from '@/utils/cloudErrors';
 
 interface AuthState {
   user: User | null;
@@ -103,18 +104,40 @@ export const useAuthStore = create<AuthState>()(
               // Auto-sync will retry
             }
           }
-        } catch {
-          set({ error: 'Could not sign in. Please try again.' });
-          showToast('Could not sign in. Please try again.', 'error');
+        } catch (error) {
+          const message = formatAuthError(error, 'Could not sign in. Please try again.');
+          set({ error: message });
+          showToast(message, 'error');
         }
       },
 
       register: async (data: RegisterData) => {
         set({ error: null });
         try {
+          const name = data.name.trim();
+          const email = data.email.trim().toLowerCase();
+          if (name.length < 2) {
+            const message = 'Enter your full name (at least 2 characters).';
+            set({ error: message });
+            showToast(message, 'error');
+            return;
+          }
+          if (!email.includes('@')) {
+            const message = 'Enter a valid email address.';
+            set({ error: message });
+            showToast(message, 'error');
+            return;
+          }
+          if (!data.password || data.password.length < 6) {
+            const message = 'Password must be at least 6 characters.';
+            set({ error: message });
+            showToast(message, 'error');
+            return;
+          }
+
           const user = await userRepository.createAccount({
-            name: data.name,
-            email: data.email,
+            name,
+            email,
             password: data.password,
             phone: data.phone,
           });
@@ -123,11 +146,12 @@ export const useAuthStore = create<AuthState>()(
             user,
             business: null,
             isAuthenticated: true,
+            isLoading: false,
             error: null,
           });
-          showToast('Account created successfully', 'success');
+          showToast('Account created. Next, register your business.', 'success');
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Could not create account';
+          const message = formatAuthError(error, 'Could not create your account. Please try again.');
           set({ error: message });
           showToast(message, 'error');
         }
@@ -138,13 +162,23 @@ export const useAuthStore = create<AuthState>()(
         try {
           const currentUser = get().user;
           if (!currentUser) {
-            set({ error: 'You must create an account before registering a business' });
-            showToast('You must create an account before registering a business', 'error');
+            const message = 'Create an account first, then register your business.';
+            set({ error: message });
+            showToast(message, 'error');
             return;
           }
           if (currentUser.business_id) {
-            set({ error: 'You already belong to a business' });
-            showToast('You already belong to a business', 'error');
+            const message = 'You already belong to a business.';
+            set({ error: message });
+            showToast(message, 'error');
+            return;
+          }
+
+          const businessName = data.name.trim();
+          if (businessName.length < 2) {
+            const message = 'Enter a business name (at least 2 characters).';
+            set({ error: message });
+            showToast(message, 'error');
             return;
           }
 
@@ -154,7 +188,7 @@ export const useAuthStore = create<AuthState>()(
 
           const business: Business = {
             id: businessId,
-            name: data.name.trim(),
+            name: businessName,
             business_code: businessCode,
             currency: data.currency ?? 'RWF',
             country: data.country ?? 'Rwanda',
@@ -174,23 +208,26 @@ export const useAuthStore = create<AuthState>()(
           await queueSync('businesses', business.id, 'insert', business as unknown as Record<string, unknown>, businessId);
           await queueSync('users', user.id, 'insert', user as unknown as Record<string, unknown>, businessId);
 
-          set({ business, user, isAuthenticated: true, error: null });
-          showToast('Business created successfully', 'success');
+          set({ business, user, isAuthenticated: true, isLoading: false, error: null });
+          showToast('Business registered. You can start selling offline.', 'success');
 
-          // Push to Supabase immediately (new registrations use real UUIDs)
-          try {
-            const { getSyncEngine } = await import('@/services/sync/syncEngine');
-            void getSyncEngine('local-device').syncAll();
-          } catch {
-            // Auto-sync will retry
-          }
+          // Cloud upload is best-effort; never fail local registration if sync errors
+          setTimeout(() => {
+            void (async () => {
+              try {
+                const { getSyncEngine } = await import('@/services/sync/syncEngine');
+                await getSyncEngine('local-device').syncAll();
+              } catch {
+                // Local data is already saved
+              }
+            })();
+          }, 500);
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Could not create business';
+          const message = formatAuthError(error, 'Could not register your business. Please try again.');
           set({ error: message });
           showToast(message, 'error');
         }
       },
-
       joinBusiness: async (businessCode: string, role: UserRole = 'STAFF') => {
         set({ error: null });
         try {
@@ -232,7 +269,7 @@ export const useAuthStore = create<AuthState>()(
             // Auto-sync will retry
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'Could not join business';
+          const message = formatAuthError(error, 'Could not join that business. Check the code and try again.');
           set({ error: message });
           showToast(message, 'error');
         }

@@ -520,6 +520,7 @@ export const en = {
     syncUploaded: 'Uploaded {{count}} records to the cloud',
     forceReupload: 'Re-upload to cloud',
     forceSyncDone: 'Re-queued {{reset}}, uploaded {{uploaded}}',
+    syncFailedHint: 'Upload failed — data is still safe on this phone',
     statusIdle: 'Idle',
     statusSyncing: 'Syncing...',
     statusSynced: 'Synced',

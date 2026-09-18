@@ -2,7 +2,7 @@ import { FormScrollView, FormInput, Button, Logo } from '@/components';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -25,11 +25,18 @@ type RegisterForm = z.infer<typeof registerSchema>;
 
 export default function RegisterScreen() {
   const { t } = useTranslation();
-  const { register: registerUser } = useAuthStore();
-  const { control, handleSubmit, formState: { isSubmitting } } = useForm<RegisterForm>({
+  const router = useRouter();
+  const registerUser = useAuthStore((s) => s.register);
+  const error = useAuthStore((s) => s.error);
+  const clearError = useAuthStore((s) => s.setError);
+  const { control, handleSubmit, formState: { isSubmitting, errors } } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
     defaultValues: { name: '', email: '', phone: '', password: '', confirmPassword: '' },
   });
+
+  React.useEffect(() => {
+    clearError(null);
+  }, [clearError]);
 
   const onSubmit = async (data: RegisterForm) => {
     await registerUser({
@@ -38,6 +45,10 @@ export default function RegisterScreen() {
       phone: data.phone,
       password: data.password,
     });
+    const { user, isAuthenticated } = useAuthStore.getState();
+    if (isAuthenticated && user && !user.business_id) {
+      router.replace('/(onboarding)');
+    }
   };
 
   return (
@@ -55,6 +66,8 @@ export default function RegisterScreen() {
           <Logo size={88} style={styles.logo} />
           <Text style={styles.title}>{t('auth.createAccount')}</Text>
           <Text style={styles.subtitle}>{t('auth.registerDescription')}</Text>
+
+          {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
           <View style={styles.form}>
             <FormInput
@@ -102,6 +115,9 @@ export default function RegisterScreen() {
               autoComplete="new-password"
               required
             />
+            {errors.confirmPassword?.message ? (
+              <Text style={styles.fieldError}>{String(errors.confirmPassword.message)}</Text>
+            ) : null}
           </View>
 
           <Button
@@ -167,7 +183,23 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#6b7280',
-    marginBottom: 32,
+    marginBottom: 24,
+  },
+  errorBanner: {
+    backgroundColor: '#fef2f2',
+    color: '#b91c1c',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    fontSize: 14,
+    fontWeight: '600',
+    overflow: 'hidden',
+  },
+  fieldError: {
+    color: '#b91c1c',
+    fontSize: 13,
+    marginTop: -8,
   },
   form: {
     gap: 16,

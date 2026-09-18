@@ -31,9 +31,9 @@ export const ToastHost: React.FC = () => {
         Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }),
         Animated.timing(translateY, { toValue: -20, duration: 180, useNativeDriver: true }),
       ]).start(() => hide());
-    }, 3200);
+    }, tone === 'error' ? 5600 : 3200);
     return () => clearTimeout(timer);
-  }, [message, counter, hide, opacity, translateY]);
+  }, [message, counter, hide, opacity, translateY, tone]);
 
   if (!message) return null;
   const config = toneConfig[tone];
@@ -55,7 +55,7 @@ export const ToastHost: React.FC = () => {
         ]}
       >
         <Ionicons name={config.icon as any} size={20} color="#fff" />
-        <Text style={styles.text} numberOfLines={3}>
+        <Text style={styles.text} numberOfLines={5}>
           {message}
         </Text>
       </Animated.View>

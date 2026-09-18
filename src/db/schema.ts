@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 3;
+export const DATABASE_VERSION = 4;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (

@@ -136,6 +136,17 @@ export class UserRepository {
   async createAccount(input: CreateAccountInput): Promise<User> {
     const db = await this.getDb();
     const normalizedEmail = input.email.trim().toLowerCase();
+    const name = input.name.trim();
+
+    if (!name) {
+      throw new Error('Enter your name.');
+    }
+    if (!normalizedEmail.includes('@')) {
+      throw new Error('Enter a valid email address.');
+    }
+    if (!input.password || input.password.length < 6) {
+      throw new Error('Password must be at least 6 characters.');
+    }
 
     if (await this.emailExists(normalizedEmail)) {
       throw new Error('An account with this email already exists');
@@ -145,20 +156,45 @@ export class UserRepository {
     const now = new Date().toISOString();
     const password_hash = await hashPassword(input.password);
 
-    await db.runAsync(
-      `INSERT INTO ${this.tableName}
-        (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
-       VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)`,
-      [
-        id,
-        input.name.trim(),
-        normalizedEmail,
-        input.phone?.trim() || null,
-        password_hash,
-        now,
-        now,
-      ]
-    );
+    try {
+      await db.runAsync(
+        `INSERT INTO ${this.tableName}
+          (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
+         VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)`,
+        [
+          id,
+          name,
+          normalizedEmail,
+          input.phone?.trim() || null,
+          password_hash,
+          now,
+          now,
+        ]
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // Old local schema blocked NULL business_id/role — repair and retry once
+      if (/not null|constraint|null/i.test(msg)) {
+        const { ensureUsersIdentitySchemaForApp } = await import('@/db/database');
+        await ensureUsersIdentitySchemaForApp();
+        await db.runAsync(
+          `INSERT INTO ${this.tableName}
+            (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
+           VALUES (?, NULL, ?, ?, ?, ?, NULL, 1, ?, ?)`,
+          [
+            id,
+            name,
+            normalizedEmail,
+            input.phone?.trim() || null,
+            password_hash,
+            now,
+            now,
+          ]
+        );
+      } else {
+        throw error;
+      }
+    }
 
     const user = await this.findById(id);
     if (!user) throw new Error('Failed to create account');

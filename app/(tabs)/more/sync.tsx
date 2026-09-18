@@ -10,6 +10,7 @@ import { SyncIndicator } from '@/components/SyncIndicator';
 import { getSyncEngine } from '@/services/sync/syncEngine';
 import { refreshPendingCount } from '@/services/sync/queue';
 import { showToast } from '@/stores/toastStore';
+import { formatCloudError } from '@/utils/cloudErrors';
 
 export default function SyncScreen() {
   const { t } = useTranslation();
@@ -38,14 +39,14 @@ export default function SyncScreen() {
       });
       setLastSyncAt(new Date());
       if (result.failed > 0) {
-        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
+        showToast(formatCloudError(result.errors[0] ?? t('settings.statusFailed')), 'error');
       } else if (result.synced === 0) {
         showToast(t('settings.nothingToSync'), 'info');
       } else {
         showToast(t('settings.syncUploaded', { count: result.synced }), 'success');
       }
     } catch (error) {
-      showToast(String(error), 'error');
+      showToast(formatCloudError(error), 'error');
     } finally {
       setIsSyncing(false);
     }
@@ -70,7 +71,7 @@ export default function SyncScreen() {
       });
       setLastSyncAt(new Date());
       if (result.failed > 0) {
-        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
+        showToast(formatCloudError(result.errors[0] ?? t('settings.statusFailed')), 'error');
       } else {
         showToast(
           t('settings.forceSyncDone', { reset, uploaded: result.synced }),
@@ -78,7 +79,7 @@ export default function SyncScreen() {
         );
       }
     } catch (error) {
-      showToast(String(error), 'error');
+      showToast(formatCloudError(error), 'error');
     } finally {
       setIsSyncing(false);
     }
@@ -102,10 +103,10 @@ export default function SyncScreen() {
       if (result.success) {
         showToast(t('settings.statusSynced'), 'success');
       } else {
-        showToast(result.errors[0] ?? t('settings.statusFailed'), 'error');
+        showToast(formatCloudError(result.errors[0] ?? t('settings.statusFailed')), 'error');
       }
     } catch (error) {
-      showToast(String(error), 'error');
+      showToast(formatCloudError(error), 'error');
     } finally {
       setIsSyncing(false);
     }

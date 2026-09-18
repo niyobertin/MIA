@@ -2,6 +2,7 @@ import { SyncRecord } from '@/types';
 import { syncRepository } from '@/repositories/sync';
 import { useAuthStore } from '@/stores/authStore';
 import NetInfo from '@react-native-community/netinfo';
+import { formatCloudError } from '@/utils/cloudErrors';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
@@ -300,7 +301,7 @@ export class SyncEngine {
       try {
         await this.upsertTenantAnchors(businessId);
       } catch (error) {
-        const message = `Tenant sync failed (business/user must exist in Supabase first): ${error}`;
+        const message = `Tenant sync failed: ${formatCloudError(error)}`;
         this.notify({
           status: 'failed',
           pendingCount: await syncRepository.getPendingCount(businessId),

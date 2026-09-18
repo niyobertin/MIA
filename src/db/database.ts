@@ -32,15 +32,18 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
 async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.execAsync('PRAGMA foreign_keys = ON;');
   await database.execAsync('PRAGMA journal_mode = WAL;');
-  
+
   const versionResult = await database.getFirstAsync<{ user_version: number }>(
     'PRAGMA user_version;'
   );
-  
+
   const currentVersion = versionResult?.user_version ?? 0;
-  
+
   if (currentVersion < DATABASE_VERSION) {
     await runMigrations(database, currentVersion);
+  } else {
+    // Repair installs that are on version 3+ but still have the old NOT NULL users schema
+    await ensureUsersIdentitySchema(database);
   }
 }
 
@@ -55,13 +58,40 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     if (fromVersion > 0 && fromVersion < 3) {
       await migrateToV3(database);
     }
+    if (fromVersion < 4) {
+      await ensureUsersIdentitySchema(database);
+    }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   });
 }
 
-async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
+type ColumnInfo = {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+};
+
+async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(users)');
+  if (columns.length === 0) return;
+
+  const byName = new Map(columns.map((c) => [c.name, c]));
+  const businessCol = byName.get('business_id');
+  const roleCol = byName.get('role');
+  const hasPasswordHash = byName.has('password_hash');
+
+  const needsRebuild =
+    !hasPasswordHash ||
+    (businessCol?.notnull ?? 0) === 1 ||
+    (roleCol?.notnull ?? 0) === 1;
+
+  if (!needsRebuild) return;
+
   await database.execAsync(`
-    CREATE TABLE IF NOT EXISTS users_v3 (
+    CREATE TABLE IF NOT EXISTS users_identity (
       id TEXT PRIMARY KEY,
       business_id TEXT REFERENCES businesses(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
@@ -75,20 +105,8 @@ async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
     );
   `);
 
-  const existingUsers = await database.getAllAsync<{
-    id: string;
-    business_id: string;
-    name: string;
-    email: string;
-    phone: string | null;
-    role: string;
-    active: number;
-    created_at: string;
-    updated_at: string;
-  }>('SELECT * FROM users');
-
+  const existingUsers = await database.getAllAsync<Record<string, unknown>>('SELECT * FROM users');
   const { hashPassword } = await import('@/utils/password');
-  // Inline demo passwords here to avoid circular imports with seed/demo
   const demoPasswords: Record<string, string> = {
     'owner@mia.rw': 'Owner123!',
     'manager@mia.rw': 'Manager123!',
@@ -97,35 +115,55 @@ async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
   };
 
   for (const user of existingUsers) {
-    const email = user.email.toLowerCase();
+    const email = String(user.email ?? '').toLowerCase();
+    const existingHash =
+      typeof user.password_hash === 'string' && user.password_hash.length > 0
+        ? user.password_hash
+        : null;
     const plain = demoPasswords[email];
-    const passwordHash = plain ? await hashPassword(plain) : 'legacy:unmigrated';
+    const passwordHash = existingHash ?? (plain ? await hashPassword(plain) : 'legacy:unmigrated');
+    const role =
+      user.role == null || user.role === ''
+        ? null
+        : String(user.role);
 
     await database.runAsync(
-      `INSERT OR IGNORE INTO users_v3
+      `INSERT OR IGNORE INTO users_identity
         (id, business_id, name, email, phone, password_hash, role, active, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        user.id,
-        user.business_id,
-        user.name,
-        user.email,
-        user.phone,
+        String(user.id),
+        user.business_id == null || user.business_id === '' ? null : String(user.business_id),
+        String(user.name ?? ''),
+        email,
+        user.phone == null || user.phone === '' ? null : String(user.phone),
         passwordHash,
-        user.role,
-        user.active,
-        user.created_at,
-        user.updated_at,
+        role,
+        user.active === 0 || user.active === false || user.active === '0' ? 0 : 1,
+        String(user.created_at ?? new Date().toISOString()),
+        String(user.updated_at ?? new Date().toISOString()),
       ]
     );
   }
 
+  // Drop FKs that reference users before replacing the table
+  await database.execAsync('PRAGMA foreign_keys = OFF;');
   await database.execAsync(`
     DROP TABLE users;
-    ALTER TABLE users_v3 RENAME TO users;
+    ALTER TABLE users_identity RENAME TO users;
     CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
   `);
+  await database.execAsync('PRAGMA foreign_keys = ON;');
+}
+
+export async function ensureUsersIdentitySchemaForApp(): Promise<void> {
+  const database = await getDatabase();
+  await ensureUsersIdentitySchema(database);
+}
+
+async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
+  await ensureUsersIdentitySchema(database);
 }
 
 export async function resetDatabase(): Promise<void> {
@@ -135,6 +173,8 @@ export async function resetDatabase(): Promise<void> {
     await database.execAsync(CREATE_TABLES_SQL);
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   });
+  db = null;
+  initialization = null;
 }
 
 export async function closeDatabase(): Promise<void> {
