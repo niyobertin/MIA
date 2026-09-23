@@ -96,7 +96,9 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
       refetchPayments();
     } catch (error) {
       setShowConfirm(false);
-      showToast(t('payments.paymentFailed'), 'error');
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+      else showToast(t('payments.paymentFailed'), 'error');
     }
   };
 

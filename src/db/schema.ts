@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 6;
+export const DATABASE_VERSION = 7;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -150,6 +150,8 @@ CREATE TABLE IF NOT EXISTS sales (
   discount_amount INTEGER NOT NULL DEFAULT 0,
   tax_amount INTEGER NOT NULL DEFAULT 0,
   total_amount INTEGER NOT NULL DEFAULT 0,
+  paid_amount INTEGER NOT NULL DEFAULT 0,
+  voided INTEGER NOT NULL DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('paid', 'partial', 'unpaid', 'credit')),
   sale_date TEXT NOT NULL,
   notes TEXT,

@@ -34,6 +34,7 @@ type AddProductSheetProps = {
   saving?: boolean;
   mode?: 'create' | 'edit';
   initialProduct?: Product | null;
+  lockCost?: boolean;
 };
 
 export const AddProductSheet: React.FC<AddProductSheetProps> = ({
@@ -45,6 +46,7 @@ export const AddProductSheet: React.FC<AddProductSheetProps> = ({
   saving,
   mode = 'create',
   initialProduct,
+  lockCost = false,
 }) => {
   const { t } = useTranslation();
   const [showNewCategory, setShowNewCategory] = React.useState(false);
@@ -163,6 +165,8 @@ export const AddProductSheet: React.FC<AddProductSheetProps> = ({
                 label={t('stock.costPrice')}
                 keyboardType="numeric"
                 parseValue={(v) => parseInt(v.replace(/[^\d]/g, ''), 10) || 0}
+                disabled={lockCost}
+                helperText={lockCost ? t('stock.costLocked') : undefined}
               />
             </View>
           </View>

@@ -23,13 +23,14 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { BottomSheet, SegmentedControl } from '@/components/SegmentedControl';
 import { StatusBadge } from '@/components/StatusBadge';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer } from '@/hooks/useData';
+import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
 import { debounce, getTodayDateString } from '@/utils/formatters';
 import { PAYMENT_METHODS } from '@/constants';
-import { Customer } from '@/types';
+import { Customer, Product } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 
@@ -41,6 +42,7 @@ export default function NewSaleScreen() {
   const { data: products, isLoading } = useProducts({ active: true });
   const { data: customers, refetch: refetchCustomers } = useCustomers();
   const createSaleMutation = useCreateSale();
+  const voidSaleMutation = useVoidSale();
   const createCustomer = useCreateCustomer();
   const [showAddCustomer, setShowAddCustomer] = React.useState(false);
 
@@ -96,9 +98,23 @@ export default function NewSaleScreen() {
   const cartProfit = React.useMemo(() => {
     return cart.reduce((sum, item) => {
       const cost = item.product.average_cost ?? 0;
-      return sum + (item.sellingPrice - cost) * item.quantity;
+      return sum + item.sellingPrice * item.quantity - item.discountAmount - cost * item.quantity;
     }, 0);
   }, [cart]);
+
+  const addProduct = (product: Product) => {
+    const onHand = product.current_stock ?? 0;
+    if (product.track_inventory && onHand <= 0) {
+      showToast(t('sales.insufficientStock', { product: product.name }), 'error');
+      return;
+    }
+    const inCart = cart.find((item) => item.product.id === product.id);
+    if (product.track_inventory && inCart && inCart.quantity >= onHand) {
+      showToast(t('sales.insufficientStock', { product: product.name }), 'error');
+      return;
+    }
+    addToCart(product);
+  };
 
   const startCheckout = () => {
     if (cart.length === 0) return;
@@ -142,7 +158,19 @@ export default function NewSaleScreen() {
       setShowPaymentSheet(false);
     } catch (error) {
       console.error('Sale failed:', error);
-      showToast(t('sales.saleFailed'), 'error');
+      const code = error instanceof Error ? error.message : '';
+      const productName = error instanceof Error ? (error as Error & { productName?: string }).productName : undefined;
+      if (code === 'INSUFFICIENT_STOCK') {
+        showToast(t('sales.insufficientStock', { product: productName ?? '' }), 'error');
+      } else if (code === 'DAY_CLOSED') {
+        showToast(t('cash.dayAlreadyClosed'), 'error');
+      } else if (code === 'CREDIT_LIMIT') {
+        showToast(t('sales.creditLimit'), 'error');
+      } else if (code === 'INVALID_PRICE') {
+        showToast(t('sales.priceRequired'), 'error');
+      } else {
+        showToast(t('sales.saleFailed'), 'error');
+      }
     }
   };
 
@@ -214,6 +242,18 @@ export default function NewSaleScreen() {
           loading={historyQuery.isLoading}
           customerNameOf={customerNameOf}
           productNameOf={productNameOf}
+          voiding={voidSaleMutation.isPending}
+          onVoid={(saleId) => {
+            voidSaleMutation.mutate(saleId, {
+              onSuccess: () => showToast(t('sales.saleVoided'), 'success'),
+              onError: (error) => {
+                const code = error instanceof Error ? error.message : '';
+                if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+                else if (code === 'ALREADY_VOID') showToast(t('sales.saleVoided'), 'info');
+                else showToast(t('sales.saleFailed'), 'error');
+              },
+            });
+          }}
         />
       ) : isLoading ? (
         <View style={styles.list}>
@@ -279,7 +319,7 @@ export default function NewSaleScreen() {
             />
           }
           renderItem={({ item }) => (
-            <ProductCard product={item} compact onPress={() => addToCart(item)} />
+            <ProductCard product={item} compact onPress={() => addProduct(item)} />
           )}
         />
       )}
@@ -519,15 +559,20 @@ function CartLine({
       setQtyText(String(item.quantity));
       return;
     }
-    const stock = item.product.current_stock;
-    const next = stock != null ? Math.min(parsed, Math.max(1, stock)) : parsed;
+    const stock = item.product.track_inventory ? item.product.current_stock : null;
+    const cap = stock != null ? Math.max(0, stock) : null;
+    if (cap != null && cap < 1) {
+      setQtyText(String(item.quantity));
+      return;
+    }
+    const next = cap != null ? Math.min(parsed, cap) : parsed;
     onQuantityChange(next);
     setQtyText(String(next));
   };
 
   const commitPrice = () => {
     const parsed = parseInt(priceText.replace(/[^\d]/g, ''), 10);
-    if (!Number.isFinite(parsed) || parsed < 0) {
+    if (!Number.isFinite(parsed) || parsed < 1) {
       setPriceText(String(item.sellingPrice));
       return;
     }
@@ -589,7 +634,11 @@ function CartLine({
             />
             <TouchableOpacity
               style={styles.stepButton}
-              onPress={() => onQuantityChange(item.quantity + 1)}
+              onPress={() => {
+                const stock = item.product.track_inventory ? item.product.current_stock : null;
+                if (stock != null && item.quantity >= stock) return;
+                onQuantityChange(item.quantity + 1);
+              }}
               hitSlop={6}
               accessibilityLabel={t('sales.increaseQty')}
             >
@@ -612,14 +661,19 @@ function SaleHistoryList({
   loading,
   customerNameOf,
   productNameOf,
+  voiding,
+  onVoid,
 }: {
-  sales: Array<{ id: string; reference_number: string | null; total_amount: number; payment_status: string; customer_id: string | null; created_at: string }>;
+  sales: Array<{ id: string; reference_number: string | null; total_amount: number; payment_status: string; customer_id: string | null; created_at: string; voided?: boolean }>;
   loading: boolean;
   customerNameOf: (id: string | null) => string;
   productNameOf: (id: string) => string;
+  voiding: boolean;
+  onVoid: (saleId: string) => void;
 }) {
   const { t } = useTranslation();
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  const [pendingVoidId, setPendingVoidId] = React.useState<string | null>(null);
 
   if (loading) {
     return (
@@ -651,10 +705,27 @@ function SaleHistoryList({
           productNameOf={productNameOf}
           expanded={expandedId === item.id}
           onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+          onVoid={() => setPendingVoidId(item.id)}
         />
       )}
       contentContainerStyle={styles.list}
       showsVerticalScrollIndicator={false}
+      ListFooterComponent={
+        <ConfirmModal
+          visible={pendingVoidId != null}
+          onClose={() => setPendingVoidId(null)}
+          onConfirm={() => {
+            if (!pendingVoidId) return;
+            const saleId = pendingVoidId;
+            setPendingVoidId(null);
+            onVoid(saleId);
+          }}
+          title={t('sales.voidSaleTitle')}
+          message={t('sales.voidSaleMessage')}
+          confirmText={t('sales.voidSale')}
+          loading={voiding}
+        />
+      }
     />
   );
 }
@@ -665,15 +736,20 @@ function SaleHistoryRow({
   productNameOf,
   expanded,
   onToggle,
+  onVoid,
 }: {
-  sale: { id: string; reference_number: string | null; total_amount: number; payment_status: string };
+  sale: { id: string; reference_number: string | null; total_amount: number; payment_status: string; voided?: boolean };
   customerName: string;
   productNameOf: (id: string) => string;
   expanded: boolean;
   onToggle: () => void;
+  onVoid: () => void;
 }) {
+  const { t } = useTranslation();
   const { data: items } = useSaleItems(expanded ? sale.id : null);
-  const tone = sale.payment_status === 'paid' ? 'success' : sale.payment_status === 'credit' ? 'warning' : 'neutral';
+  const voided = sale.voided === true;
+  const tone = voided ? 'neutral' : sale.payment_status === 'paid' ? 'success' : sale.payment_status === 'credit' || sale.payment_status === 'partial' ? 'warning' : 'neutral';
+  const statusLabel = voided ? t('sales.voided') : sale.payment_status;
   return (
     <TouchableOpacity style={styles.historyCard} onPress={onToggle} activeOpacity={0.8}>
       <View style={styles.historyTop}>
@@ -683,7 +759,7 @@ function SaleHistoryRow({
         </View>
         <View style={styles.historyRight}>
           <MoneyText amount={sale.total_amount} size={16} weight="800" color={colors.ink} />
-          <StatusBadge label={sale.payment_status} tone={tone} />
+          <StatusBadge label={statusLabel} tone={tone} />
         </View>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.faint} />
       </View>
@@ -701,6 +777,11 @@ function SaleHistoryRow({
           {(items ?? []).length === 0 ? (
             <Text style={styles.historySub}>—</Text>
           ) : null}
+          {voided ? null : (
+            <TouchableOpacity onPress={onVoid} style={styles.voidButton} activeOpacity={0.8}>
+              <Text style={styles.voidButtonText}>{t('sales.voidSale')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : null}
     </TouchableOpacity>
@@ -980,6 +1061,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.ink,
     fontVariant: ['tabular-nums'],
+  },
+  voidButton: {
+    marginTop: spacing.sm,
+    alignSelf: 'flex-start',
+    paddingVertical: spacing.xs,
+  },
+  voidButtonText: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '700',
   },
   totalRow: {
     flexDirection: 'row',

@@ -3,6 +3,7 @@ import { CREATE_TABLES_SQL, CREATE_APP_SETTINGS_SQL, DROP_TABLES_SQL, DATABASE_V
 
 let db: SQLite.SQLiteDatabase | null = null;
 let initialization: Promise<SQLite.SQLiteDatabase> | null = null;
+const LEDGER_SETTLED_KEY = 'ledger_settled_v7';
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
@@ -22,8 +23,10 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   try {
     await initializeDatabase(database);
     db = database;
+    await settleLedgerIfNeeded(database);
     return database;
   } catch (error) {
+    db = null;
     await database.closeAsync();
     throw error;
   }
@@ -72,6 +75,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion > 0 && fromVersion < 6) {
       await migrateDailyClosingStockColumns(database);
+    }
+    if (fromVersion < 7) {
+      await migrateSalesLedgerColumns(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -186,6 +192,45 @@ export async function ensureUsersIdentitySchemaForApp(): Promise<void> {
 
 async function migrateToV3(database: SQLite.SQLiteDatabase): Promise<void> {
   await ensureUsersIdentitySchema(database);
+}
+
+async function migrateSalesLedgerColumns(database: SQLite.SQLiteDatabase): Promise<void> {
+  const exists = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sales'`
+  );
+  if (!exists) return;
+
+  const columns = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(sales)');
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has('paid_amount')) {
+    await database.execAsync(`ALTER TABLE sales ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!names.has('voided')) {
+    await database.execAsync(`ALTER TABLE sales ADD COLUMN voided INTEGER NOT NULL DEFAULT 0`);
+  }
+  await database.runAsync(
+    `UPDATE sales SET paid_amount = CASE WHEN payment_status = 'paid' THEN total_amount ELSE paid_amount END`
+  );
+}
+
+async function settleLedgerIfNeeded(database: SQLite.SQLiteDatabase): Promise<void> {
+  const flag = await database.getFirstAsync<{ value: string }>(
+    `SELECT value FROM app_settings WHERE key = ?`,
+    [LEDGER_SETTLED_KEY]
+  );
+  if (flag?.value === '1') return;
+
+  try {
+    const { backfillSettlements } = await import('@/services/books/settle');
+    await backfillSettlements();
+    await database.runAsync(
+      `INSERT INTO app_settings (key, value) VALUES (?, '1')
+       ON CONFLICT(key) DO UPDATE SET value = '1'`,
+      [LEDGER_SETTLED_KEY]
+    );
+  } catch (error) {
+    console.error('Ledger settlement backfill failed', error);
+  }
 }
 
 async function migrateDailyClosingStockColumns(database: SQLite.SQLiteDatabase): Promise<void> {

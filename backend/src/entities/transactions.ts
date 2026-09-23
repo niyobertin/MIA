@@ -163,6 +163,12 @@ export class Sale {
   @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
   total_amount!: number;
 
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  paid_amount!: number;
+
+  @Column({ type: 'boolean', default: false })
+  voided!: boolean;
+
   @Column({ type: 'text', default: 'unpaid' })
   payment_status!: string;
 

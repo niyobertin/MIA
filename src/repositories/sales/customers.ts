@@ -6,7 +6,7 @@ export class CustomerRepository extends BaseRepository<Customer> {
   protected columns = ['id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'active', 'created_at', 'updated_at'];
 
   async findActive(businessId: string): Promise<Customer[]> {
-    return this.findAll(businessId, { where: { active: 1 } });
+    return this.findAll(businessId, { where: { active: 1 }, limit: 5000, orderBy: 'name', orderDirection: 'ASC' });
   }
 
   async search(businessId: string, query: string): Promise<Customer[]> {

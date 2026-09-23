@@ -10,6 +10,7 @@ import {
   calculateGrossProfit,
   calculateGrossMargin,
   calculateNetProfit,
+  salesRevenue,
   calculateExpectedCash,
   calculateCashVariance,
   roundToMinorUnits,
@@ -48,9 +49,10 @@ export class FinancialService {
     const discountAmount = itemsWithCost.reduce((sum, item) => sum + (item.discount_amount ?? 0), 0);
     const taxAmount = itemsWithCost.reduce((sum, item) => sum + (item.tax_amount ?? 0), 0);
     const totalAmount = calculateSaleTotal(subtotal, discountAmount, taxAmount);
+    const revenue = salesRevenue(totalAmount, taxAmount);
     const cogs = calculateCOGS(itemsWithCost);
-    const grossProfit = calculateGrossProfit(totalAmount, cogs);
-    const grossMargin = calculateGrossMargin(grossProfit, totalAmount);
+    const grossProfit = calculateGrossProfit(revenue, cogs);
+    const grossMargin = calculateGrossMargin(grossProfit, revenue);
 
     return {
       subtotal,
@@ -120,8 +122,10 @@ export class FinancialService {
 
     const [
       totalSales,
+      tax,
       cogs,
       expenses,
+      inventoryLoss,
       cashSales,
       customerCashPayments,
       otherCashIncome,
@@ -131,8 +135,10 @@ export class FinancialService {
       withdrawals,
     ] = await Promise.all([
       saleRepository.getTotalSales(businessId, startOfDay, endOfDay),
+      saleRepository.getTotalTax(businessId, startOfDay, endOfDay),
       this.calculateCOGSForPeriod(businessId, startOfDay, endOfDay),
       expenseRepository.getTotalExpenses(businessId, startOfDay, endOfDay),
+      stockMovementRepository.getInventoryLoss(businessId, startOfDay, endOfDay),
       saleRepository.getCashSales(businessId, startOfDay, endOfDay),
       paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'customer_payment', 'cash'),
       paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'other_income', 'cash'),
@@ -142,8 +148,9 @@ export class FinancialService {
       paymentRepository.getTotalByTypeAndMethod(businessId, startOfDay, endOfDay, 'withdrawal', 'cash'),
     ]);
 
-    const grossProfit = calculateGrossProfit(totalSales, cogs);
-    const netProfit = calculateNetProfit(grossProfit, expenses);
+    const revenue = salesRevenue(totalSales, tax);
+    const grossProfit = calculateGrossProfit(revenue, cogs);
+    const netProfit = calculateNetProfit(grossProfit, expenses, inventoryLoss);
 
     return {
       totalSales,
@@ -166,6 +173,7 @@ export class FinancialService {
     let totalCOGS = 0;
     
     for (const sale of sales) {
+    if (sale.voided) continue;
     const items = sale?.items;
     if (!Array.isArray(items)) continue;
     for (const item of items) {
@@ -273,8 +281,10 @@ export class FinancialService {
   }> {
     const [
       totalSales,
+      tax,
       totalCOGS,
       totalExpenses,
+      inventoryLoss,
       itemsSold,
       transactionCount,
       stockValue,
@@ -282,18 +292,21 @@ export class FinancialService {
       paymentBreakdown,
     ] = await Promise.all([
       saleRepository.getTotalSales(businessId, startDate, endDate),
+      saleRepository.getTotalTax(businessId, startDate, endDate),
       this.calculateCOGSForPeriod(businessId, startDate, endDate),
       expenseRepository.getTotalExpenses(businessId, startDate, endDate),
+      stockMovementRepository.getInventoryLoss(businessId, startDate, endDate),
       this.getTotalItemsSold(businessId, startDate, endDate),
-      saleRepository.count(businessId, {}),
+      saleRepository.countInPeriod(businessId, startDate, endDate),
       productRepository.getStockValue(businessId),
       this.getTopProducts(businessId, startDate, endDate),
       paymentRepository.getPaymentBreakdown(businessId, startDate, endDate),
     ]);
 
-    const grossProfit = calculateGrossProfit(totalSales, totalCOGS);
-    const grossMargin = calculateGrossMargin(grossProfit, totalSales);
-    const netProfit = calculateNetProfit(grossProfit, totalExpenses);
+    const revenue = salesRevenue(totalSales, tax);
+    const grossProfit = calculateGrossProfit(revenue, totalCOGS);
+    const grossMargin = calculateGrossMargin(grossProfit, revenue);
+    const netProfit = calculateNetProfit(grossProfit, totalExpenses, inventoryLoss);
     const averageTransactionValue = calculateAverageTransactionValue(totalSales, transactionCount);
 
     return {
@@ -314,7 +327,10 @@ export class FinancialService {
 
   async getTotalItemsSold(businessId: string, startDate: string, endDate: string): Promise<number> {
     const sales = await saleRepository.getSalesWithItems(businessId, startDate, endDate);
-    return sales.reduce((sum, sale) => sum + sale.items.reduce((s, item) => s + item.quantity, 0), 0);
+    return sales.reduce((sum, sale) => {
+      if (sale.voided) return sum;
+      return sum + sale.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+    }, 0);
   }
 
   async getTopProducts(
@@ -331,6 +347,7 @@ export class FinancialService {
       product_name: string;
       quantity_sold: number;
       total_sales: number;
+      revenue: number;
       total_profit: number;
     }>(
       `SELECT 
@@ -338,11 +355,12 @@ export class FinancialService {
         p.name as product_name,
         SUM(si.quantity) as quantity_sold,
         SUM(si.total_amount) as total_sales,
-        SUM(si.quantity * (si.selling_price - si.unit_cost)) as total_profit
+        SUM(si.total_amount - si.tax_amount) as revenue,
+        SUM(si.total_amount - si.tax_amount - si.quantity * si.unit_cost) as total_profit
        FROM sale_items si
        JOIN sales s ON si.sale_id = s.id
        JOIN products p ON si.product_id = p.id
-       WHERE si.business_id = ? AND ${period.clause}
+       WHERE si.business_id = ? AND s.voided = 0 AND ${period.clause}
        GROUP BY p.id, p.name
        ORDER BY total_sales DESC
        LIMIT ?`,
@@ -355,7 +373,7 @@ export class FinancialService {
       quantitySold: row.quantity_sold,
       totalSales: row.total_sales,
       totalProfit: row.total_profit,
-      margin: row.total_sales > 0 ? Math.round((row.total_profit / row.total_sales) * 10000) / 100 : 0,
+      margin: row.revenue > 0 ? Math.round((row.total_profit / row.revenue) * 10000) / 100 : 0,
     }));
   }
 

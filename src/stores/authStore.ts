@@ -8,6 +8,10 @@ import { verifyPassword } from '@/utils/password';
 import { generateUUID } from '@/utils/uuid';
 import { showToast } from './toastStore';
 import { formatAuthError } from '@/utils/cloudErrors';
+import { ensureDemoUsers } from '@/db/seed/demo';
+import { isApiConfigured } from '@/lib/api';
+import { cloudSignIn, isOnline } from '@/services/auth/cloudAuth';
+import { hydrateLocalSession } from '@/services/auth/hydrateSession';
 
 interface AuthState {
   user: User | null;
@@ -64,19 +68,15 @@ export const useAuthStore = create<AuthState>()(
       login: async (email: string, password: string) => {
         set({ error: null });
         try {
-          const { ensureDemoUsers } = await import('@/db/seed/demo');
           await ensureDemoUsers();
 
           const normalized = email.trim().toLowerCase();
-          const { isApiConfigured } = await import('@/lib/api');
-          const { cloudSignIn, isOnline } = await import('@/services/auth/cloudAuth');
           const online = await isOnline();
 
           // 1) Online → always authenticate against the API (never local-only cache)
           if (isApiConfigured && online) {
             try {
               const cloudUser = await cloudSignIn(normalized, password);
-              const { hydrateLocalSession } = await import('@/services/auth/hydrateSession');
               const { user, business } = await hydrateLocalSession({
                 authUserId: cloudUser.id,
                 email: cloudUser.email,

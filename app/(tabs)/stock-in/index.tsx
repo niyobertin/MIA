@@ -24,7 +24,8 @@ import { BottomSheet } from '@/components/SegmentedControl';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useSuppliers, useCreatePurchase, useCreateSupplier } from '@/hooks/useData';
+import { useProducts, useSuppliers, useCreatePurchase, useCreateSupplier, usePurchases, useVoidPurchase } from '@/hooks/useData';
+import { getTodayDateString } from '@/utils/formatters';
 import { PAYMENT_METHODS } from '@/constants';
 import { Supplier } from '@/types';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
@@ -45,6 +46,10 @@ export default function StockInScreen() {
   const { data: suppliers, refetch: refetchSuppliers } = useSuppliers();
   const createPurchaseMutation = useCreatePurchase();
   const createSupplier = useCreateSupplier();
+  const today = getTodayDateString();
+  const { data: todaysPurchases } = usePurchases({ start: today, end: today });
+  const voidPurchaseMutation = useVoidPurchase();
+  const [voidingId, setVoidingId] = React.useState<string | null>(null);
   const [showAddSupplier, setShowAddSupplier] = React.useState(false);
 
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -152,7 +157,9 @@ export default function StockInScreen() {
       showToast(t('purchases.purchaseCompleted'), 'success');
     } catch (error) {
       setShowConfirm(false);
-      showToast(t('purchases.purchaseFailed'), 'error');
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+      else showToast(t('purchases.purchaseFailed'), 'error');
     }
   };
 
@@ -277,6 +284,29 @@ export default function StockInScreen() {
               <MoneyText amount={item.quantity * item.unitCost} size={14} weight="700" color={colors.ink} />
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {(todaysPurchases ?? []).some((purchase) => purchase.status !== 'cancelled') ? (
+        <View style={styles.metaCard}>
+          <Text style={styles.listLabel}>{t('purchases.todaysPurchases')}</Text>
+          {(todaysPurchases ?? [])
+            .filter((purchase) => purchase.status !== 'cancelled')
+            .map((purchase) => {
+              const name = suppliers?.find((row) => row.id === purchase.supplier_id)?.name ?? t('purchases.supplier');
+              return (
+                <View key={purchase.id} style={styles.purchaseRow}>
+                  <View style={styles.supplierInfo}>
+                    <Text style={styles.supplierName}>{purchase.reference_number || name}</Text>
+                    <Text style={styles.supplierPhone}>{name}</Text>
+                  </View>
+                  <MoneyText amount={purchase.total_amount} size={15} weight="700" color={colors.ink} />
+                  <TouchableOpacity onPress={() => setVoidingId(purchase.id)} hitSlop={8}>
+                    <Text style={styles.voidText}>{t('purchases.voidPurchase')}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
         </View>
       ) : null}
 
@@ -415,6 +445,32 @@ export default function StockInScreen() {
         title={t('purchases.completePurchase')}
         message={`${supplier?.name ?? ''} · ${subtotal.toLocaleString()} RWF`}
         confirmText={t('purchases.completePurchase')}
+      />
+
+      <ConfirmModal
+        visible={voidingId !== null}
+        onClose={() => setVoidingId(null)}
+        loading={voidPurchaseMutation.isPending}
+        title={t('purchases.voidPurchaseTitle')}
+        message={t('purchases.voidPurchaseMessage')}
+        confirmText={t('purchases.voidPurchase')}
+        onConfirm={() => {
+          if (!voidingId) return;
+          voidPurchaseMutation.mutate(voidingId, {
+            onSuccess: () => {
+              setVoidingId(null);
+              showToast(t('purchases.purchaseVoided'), 'success');
+            },
+            onError: (error) => {
+              const code = error instanceof Error ? error.message : '';
+              const named = error as Error & { productName?: string };
+              if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+              else if (code === 'STOCK_ALREADY_SOLD') showToast(t('purchases.stockAlreadySold', { product: named.productName ?? '' }), 'error');
+              else if (code === 'ALREADY_VOID') showToast(t('purchases.purchaseVoided'), 'info');
+              else showToast(t('purchases.purchaseFailed'), 'error');
+            },
+          });
+        }}
       />
     </KeyboardAvoidingView>
   );
@@ -584,6 +640,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: colors.muted,
+  },
+  purchaseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  voidText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.danger,
   },
   list: {
     paddingHorizontal: spacing.lg,

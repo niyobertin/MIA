@@ -1,9 +1,6 @@
 import { BaseRepository } from '../base';
 import { Purchase, PurchaseItem, PurchaseStatus } from '@/types';
-import { getDatabase } from '../../db/database';
-import { productRepository, stockMovementRepository } from '../products/products';
-import { paymentRepository } from '../payments/payments';
-import { financialService } from '../../services/financial/calculations';
+import { buildPeriodWhere } from '@/utils/periodBounds';
 
 export class PurchaseRepository extends BaseRepository<Purchase> {
   protected tableName = 'purchases';
@@ -22,37 +19,74 @@ export class PurchaseRepository extends BaseRepository<Purchase> {
 
   async findByDateRange(businessId: string, startDate: string, endDate: string): Promise<Purchase[]> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('purchase_date', 'created_at', startDate, endDate);
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
-       WHERE business_id = ? AND purchase_date BETWEEN ? AND ?
+       WHERE business_id = ? AND ${period.clause}
        ORDER BY purchase_date DESC`,
-      [businessId, startDate, endDate]
+      [businessId, ...period.params]
     );
     return rows.map(row => this.mapRow(row));
   }
 
   async getTotalPurchases(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('purchase_date', 'created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
       `SELECT COALESCE(SUM(total_amount), 0) as total
        FROM ${this.tableName}
-       WHERE business_id = ? AND purchase_date BETWEEN ? AND ? AND status = 'completed'`,
-      [businessId, startDate, endDate]
+       WHERE business_id = ? AND status != 'cancelled' AND ${period.clause}`,
+      [businessId, ...period.params]
     );
     return row?.total ?? 0;
   }
 
   async getCashPurchases(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
+    const period = buildPeriodWhere('p.purchase_date', 'p.created_at', startDate, endDate);
     const row = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(p.paid_amount), 0) as total
+      `SELECT COALESCE(SUM(pay.amount), 0) as total
        FROM ${this.tableName} p
-       JOIN payments pay ON pay.reference_type = 'purchase' AND pay.reference_id = p.id
-       WHERE p.business_id = ? AND p.purchase_date BETWEEN ? AND ? 
-       AND p.status = 'completed' AND pay.payment_method = 'cash'`,
-      [businessId, startDate, endDate]
+       JOIN payments pay ON pay.reference_type = 'purchase' AND pay.reference_id = p.id AND pay.business_id = p.business_id
+       WHERE p.business_id = ? AND ${period.clause}
+       AND p.status != 'cancelled'
+       AND pay.type = 'purchase_payment'
+       AND pay.payment_method = 'cash'`,
+      [businessId, ...period.params]
     );
     return row?.total ?? 0;
+  }
+
+  async getSupplierPosition(
+    supplierId: string,
+    businessId: string
+  ): Promise<{ owed: number; paid: number; outstanding: number }> {
+    const db = await this.getDb();
+    const purchases = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total_amount), 0) as total
+       FROM purchases
+       WHERE business_id = ? AND supplier_id = ? AND status != 'cancelled'`,
+      [businessId, supplierId]
+    );
+    const checkout = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(pay.amount), 0) as total
+       FROM payments pay
+       JOIN purchases p ON p.id = pay.reference_id AND p.business_id = pay.business_id
+       WHERE pay.business_id = ? AND pay.type = 'purchase_payment' AND pay.reference_type = 'purchase'
+         AND p.supplier_id = ? AND p.status != 'cancelled'`,
+      [businessId, supplierId]
+    );
+    const later = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM payments
+       WHERE business_id = ? AND type = 'supplier_payment' AND party_id = ?`,
+      [businessId, supplierId]
+    );
+    const purchaseTotal = purchases?.total ?? 0;
+    const checkoutPaid = checkout?.total ?? 0;
+    const laterPaid = later?.total ?? 0;
+    const owed = purchaseTotal - checkoutPaid;
+    return { owed, paid: laterPaid, outstanding: owed - laterPaid };
   }
 }
 

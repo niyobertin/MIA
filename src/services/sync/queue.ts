@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore';
 const BOOLEAN_KEYS = new Set([
   'active',
   'track_inventory',
+  'voided',
   'is_open',
 ]);
 

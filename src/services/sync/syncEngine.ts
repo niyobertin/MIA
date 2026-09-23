@@ -61,7 +61,7 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   sales: new Set([
     'id', 'business_id', 'customer_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
-    'total_amount', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id',
+    'total_amount', 'paid_amount', 'voided', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id',
     'sync_status', 'created_at', 'updated_at',
   ]),
   sale_items: new Set([
@@ -92,7 +92,7 @@ function preparePayload(tableName: string, payload: Record<string, unknown>): Re
     if (STRIP_KEYS.has(key)) continue;
     if (allowed && !allowed.has(key)) continue;
     if (value === undefined) continue;
-    if ((key === 'active' || key === 'track_inventory') && (value === 0 || value === 1)) {
+    if ((key === 'active' || key === 'track_inventory' || key === 'voided') && (value === 0 || value === 1)) {
       out[key] = value === 1;
       continue;
     }
@@ -321,6 +321,18 @@ export class SyncEngine {
       try {
         const { pullCloudData } = await import('@/services/auth/hydrateSession');
         await pullCloudData();
+        const { reconcileBusinessAverageCosts } = await import('@/services/books/averageCost');
+        await reconcileBusinessAverageCosts(businessId);
+        const costUpdates = sortPending(await syncRepository.findPending(businessId));
+        for (const record of costUpdates) {
+          try {
+            await this.syncRecord(record);
+            synced++;
+          } catch (error) {
+            failed++;
+            errors.push(`Failed to sync ${record.table_name}:${record.record_id} - ${error}`);
+          }
+        }
       } catch (error) {
         errors.push(`Pull failed: ${formatCloudError(error)}`);
         failed++;

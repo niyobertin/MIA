@@ -1,6 +1,15 @@
 import { getDatabase } from '../database';
 import { hashPassword } from '@/utils/password';
-import { queueSync } from '@/services/sync/queue';
+
+async function enqueue(
+  tableName: string,
+  recordId: string,
+  payload: Record<string, unknown>,
+  businessId: string
+): Promise<void> {
+  const { queueSync } = await import('@/services/sync/queue');
+  await queueSync(tableName, recordId, 'insert', payload, businessId);
+}
 
 /** Stable UUIDs — required for cloud Postgres UUID primary keys. */
 export const DEMO_BUSINESS = {
@@ -287,7 +296,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
     [businessId]
   );
   if (business) {
-    await queueSync('businesses', businessId, 'insert', business, businessId);
+    await enqueue('businesses', businessId, business, businessId);
   }
 
   for (const account of DEMO_USERS) {
@@ -297,7 +306,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
       [account.id]
     );
     if (user) {
-      await queueSync('users', account.id, 'insert', user, businessId);
+      await enqueue('users', account.id, user, businessId);
     }
   }
 
@@ -306,7 +315,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
       `SELECT * FROM categories WHERE id = ?`,
       [cat.id]
     );
-    if (row) await queueSync('categories', cat.id, 'insert', row, businessId);
+    if (row) await enqueue('categories', cat.id, row, businessId);
   }
 
   for (const prod of DEMO_PRODUCTS) {
@@ -316,7 +325,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
        FROM products WHERE id = ?`,
       [prod.id]
     );
-    if (row) await queueSync('products', prod.id, 'insert', row, businessId);
+    if (row) await enqueue('products', prod.id, row, businessId);
   }
 
   for (const sup of DEMO_SUPPLIERS) {
@@ -324,7 +333,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
       `SELECT * FROM suppliers WHERE id = ?`,
       [sup.id]
     );
-    if (row) await queueSync('suppliers', sup.id, 'insert', row, businessId);
+    if (row) await enqueue('suppliers', sup.id, row, businessId);
   }
 
   for (const cust of DEMO_CUSTOMERS) {
@@ -332,7 +341,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
       `SELECT * FROM customers WHERE id = ?`,
       [cust.id]
     );
-    if (row) await queueSync('customers', cust.id, 'insert', row, businessId);
+    if (row) await enqueue('customers', cust.id, row, businessId);
   }
 
   for (let i = 0; i < OPENING_STOCK.length; i++) {
@@ -343,7 +352,7 @@ async function queueDemoCatalog(businessId: string): Promise<void> {
        FROM stock_movements WHERE id = ?`,
       [smId]
     );
-    if (row) await queueSync('stock_movements', smId, 'insert', row, businessId);
+    if (row) await enqueue('stock_movements', smId, row, businessId);
   }
 }
 

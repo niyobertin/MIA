@@ -137,6 +137,29 @@ export class ProductRepository extends BaseRepository<Product> {
     return rows.map(row => this.mapRow(row));
   }
 
+  async getNetMovementForDate(
+    businessId: string,
+    businessDate: string
+  ): Promise<{ quantity: number; value: number }> {
+    const db = await this.getDb();
+    const day = businessDate.slice(0, 10);
+    const row = await db.getFirstAsync<{ quantity: number; value: number }>(
+      `SELECT
+         COALESCE(SUM(CASE
+           WHEN type IN ('opening', 'purchase', 'return_in', 'adjustment_in') THEN quantity
+           WHEN type IN ('sale', 'return_out', 'adjustment_out', 'damaged') THEN -quantity
+           ELSE 0 END), 0) as quantity,
+         COALESCE(SUM(CASE
+           WHEN type IN ('opening', 'purchase', 'return_in', 'adjustment_in') THEN quantity * unit_cost
+           WHEN type IN ('sale', 'return_out', 'adjustment_out', 'damaged') THEN -(quantity * unit_cost)
+           ELSE 0 END), 0) as value
+       FROM stock_movements
+       WHERE business_id = ? AND substr(occurred_at, 1, 10) = ?`,
+      [businessId, day]
+    );
+    return { quantity: row?.quantity ?? 0, value: row?.value ?? 0 };
+  }
+
   async updateAverageCost(productId: string, businessId: string, newAverageCost: number): Promise<Product | null> {
     return this.update(productId, businessId, { average_cost: newAverageCost });
   }
@@ -148,6 +171,21 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost',
     'reference_type', 'reference_id', 'occurred_at', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
   ];
+
+  async getInventoryLoss(businessId: string, startDate: string, endDate: string): Promise<number> {
+    const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('occurred_at', 'occurred_at', startDate, endDate);
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type IN ('damaged', 'adjustment_out') THEN quantity * unit_cost ELSE 0 END), 0)
+         - COALESCE(SUM(CASE WHEN type = 'adjustment_in' THEN quantity * unit_cost ELSE 0 END), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND ${period.clause}`,
+      [businessId, ...period.params]
+    );
+    return row?.total ?? 0;
+  }
 
   async findByProduct(productId: string, businessId: string, limit = 100): Promise<StockMovement[]> {
     return this.findAll(businessId, {

@@ -19,6 +19,7 @@ import {
   useDailyClosing,
   useCloseDay,
   useStartDay,
+  useLatestClosing,
   useDailyFinancials,
   useStockSnapshot,
 } from '@/hooks/useData';
@@ -42,6 +43,7 @@ export default function ClosingScreen() {
   const stockQuery = useStockSnapshot();
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
+  const latestClosingQuery = useLatestClosing();
 
   const todayClosing = todayClosingQuery.data;
   const openClosing = openClosingQuery.data;
@@ -57,11 +59,18 @@ export default function ClosingScreen() {
     },
   });
 
+  const didPrefillOpening = React.useRef(false);
   React.useEffect(() => {
     if (activeOpen) {
       setValue('openingCash', String(activeOpen.opening_cash ?? 0));
+      return;
     }
-  }, [activeOpen?.id, activeOpen?.opening_cash, setValue]);
+    if (didPrefillOpening.current || !needsStart) return;
+    const counted = latestClosingQuery.data?.actual_cash;
+    if (counted == null) return;
+    setValue('openingCash', String(counted));
+    didPrefillOpening.current = true;
+  }, [activeOpen, needsStart, latestClosingQuery.data?.actual_cash, setValue]);
 
   const [showConfirm, setShowConfirm] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);

@@ -75,7 +75,8 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
          currency = excluded.currency,
          country = excluded.country,
          timezone = excluded.timezone,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at
+       WHERE excluded.updated_at >= businesses.updated_at`,
       [
         remoteBusiness.id,
         remoteBusiness.name,
@@ -96,6 +97,7 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
       if (!record || typeof record !== 'object') continue;
       const keys = Object.keys(record);
       if (!keys.length || record.id == null) continue;
+      if (!/^[a-z_]+$/.test(table)) continue;
       try {
         if (table === 'users') {
           const safeKeys = keys.filter((k) => k !== 'password_hash');
@@ -109,10 +111,13 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
             .filter((k) => k !== 'id' && k !== 'password_hash')
             .map((k) => `${k} = excluded.${k}`)
             .join(', ');
+          const newerWins = safeKeys.includes('updated_at')
+            ? ' WHERE excluded.updated_at >= users.updated_at'
+            : '';
           await db.runAsync(
             `INSERT INTO users (${safeKeys.join(', ')})
              VALUES (${placeholders})
-             ON CONFLICT(id) DO UPDATE SET ${updates}`,
+             ON CONFLICT(id) DO UPDATE SET ${updates}${newerWins}`,
             safeValues
           );
           continue;
@@ -124,10 +129,13 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
           .map((k) => `${k} = excluded.${k}`)
           .join(', ');
         const values = keys.map((k) => normalizeCell(record[k], k));
+        const newerWins = keys.includes('updated_at')
+          ? ` WHERE excluded.updated_at >= ${table}.updated_at`
+          : '';
         await db.runAsync(
           `INSERT INTO ${table} (${keys.join(', ')})
            VALUES (${placeholders})
-           ON CONFLICT(id) DO UPDATE SET ${updates}`,
+           ON CONFLICT(id) DO UPDATE SET ${updates}${newerWins}`,
           values
         );
       } catch {

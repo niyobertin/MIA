@@ -132,9 +132,11 @@ export default function ExpenseScreen() {
       resetForm();
       setShowConfirm(false);
       await expensesQuery.refetch();
-    } catch {
+    } catch (error) {
       setShowConfirm(false);
-      showToast(t('expenses.expenseFailed'), 'error');
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+      else showToast(t('expenses.expenseFailed'), 'error');
     }
   };
 
@@ -146,8 +148,10 @@ export default function ExpenseScreen() {
       setDeleting(null);
       showToast(t('expenses.expenseDeleted'), 'success');
       await expensesQuery.refetch();
-    } catch {
-      showToast(t('expenses.expenseFailed'), 'error');
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+      else showToast(t('expenses.expenseFailed'), 'error');
     }
   };
 

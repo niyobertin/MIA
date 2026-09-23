@@ -137,13 +137,15 @@ export default function CustomersScreen() {
           )
         }
         renderItem={({ item }) => {
-          const tone = item.outstanding <= 0 ? 'success' : item.paid > 0 ? 'warning' : 'danger';
+          const tone = item.outstanding < 0 ? 'info' : item.outstanding === 0 ? 'success' : item.paid > 0 ? 'warning' : 'danger';
           const label =
-            item.outstanding <= 0
-              ? t('customers.paid')
-              : item.paid > 0
-                ? t('customers.partial')
-                : t('customers.outstanding');
+            item.outstanding < 0
+              ? t('sales.credit')
+              : item.outstanding === 0
+                ? t('customers.paid')
+                : item.paid > 0
+                  ? t('customers.partial')
+                  : t('customers.outstanding');
           return (
             <View style={styles.row}>
               <TouchableOpacity

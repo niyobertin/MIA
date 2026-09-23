@@ -10,7 +10,9 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { Button } from '@/components/Button';
+import { Input } from '@/components/Input';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { BottomSheet } from '@/components/SegmentedControl';
 import { AddProductSheet, AddProductData } from '@/components/AddProductSheet';
 import { getInitials } from '@/utils/formatters';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
@@ -26,6 +28,7 @@ import {
   useUpdateProduct,
   useDeleteProduct,
   useCreateCategory,
+  useAdjustStock,
 } from '@/hooks/useData';
 
 const IN_TYPES = ['opening', 'purchase', 'return_in', 'adjustment_in'];
@@ -47,6 +50,10 @@ export default function ProductDetailScreen() {
   const [refreshing, setRefreshing] = React.useState(false);
   const [showEdit, setShowEdit] = React.useState(false);
   const [showDelete, setShowDelete] = React.useState(false);
+  const [showAdjust, setShowAdjust] = React.useState(false);
+  const [adjustKind, setAdjustKind] = React.useState<'adjustment_in' | 'adjustment_out' | 'damaged'>('damaged');
+  const [adjustQty, setAdjustQty] = React.useState('1');
+  const adjustStock = useAdjustStock();
 
   const product = productQuery.data;
   const stock = balanceQuery.data ?? product?.current_stock ?? null;
@@ -165,6 +172,11 @@ export default function ProductDetailScreen() {
                 </Button>
               </View>
             ) : null}
+            {canEdit && product.track_inventory ? (
+              <Button variant="secondary" onPress={() => setShowAdjust(true)} style={styles.adjustBtn}>
+                {t('stock.adjustStock')}
+              </Button>
+            ) : null}
 
             <View style={styles.priceCard}>
               <View style={styles.priceRow}>
@@ -236,6 +248,7 @@ export default function ProductDetailScreen() {
         categories={categories ?? []}
         mode="edit"
         initialProduct={product}
+        lockCost={movements.length > 0}
         saving={updateProduct.isPending}
         onSubmit={handleUpdate}
         onCreateCategory={async (name) => {
@@ -256,6 +269,57 @@ export default function ProductDetailScreen() {
         variant="danger"
         loading={deleteProduct.isPending}
       />
+
+      <BottomSheet visible={showAdjust} onClose={() => setShowAdjust(false)} title={t('stock.adjustStockTitle')}>
+        <View style={styles.kindRow}>
+          {([
+            ['damaged', t('stock.damagedGoods')],
+            ['adjustment_out', t('stock.countOut')],
+            ['adjustment_in', t('stock.countIn')],
+          ] as const).map(([kind, label]) => (
+            <TouchableOpacity
+              key={kind}
+              style={[styles.kindChip, adjustKind === kind && styles.kindChipActive]}
+              onPress={() => setAdjustKind(kind)}
+            >
+              <Text style={[styles.kindText, adjustKind === kind && styles.kindTextActive]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Input
+          label={t('stock.adjustQuantity')}
+          value={adjustQty}
+          onChangeText={setAdjustQty}
+          keyboardType="number-pad"
+        />
+        <Button
+          variant="primary"
+          fullWidth
+          loading={adjustStock.isPending}
+          onPress={() => {
+            if (!id) return;
+            const quantity = Number(adjustQty);
+            adjustStock.mutate(
+              { productId: id, kind: adjustKind, quantity },
+              {
+                onSuccess: () => {
+                  setShowAdjust(false);
+                  setAdjustQty('1');
+                  showToast(t('stock.stockAdjusted'), 'success');
+                },
+                onError: (error) => {
+                  const code = error instanceof Error ? error.message : '';
+                  if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+                  else if (code === 'INSUFFICIENT_STOCK') showToast(t('sales.insufficientStock', { product: product?.name ?? '' }), 'error');
+                  else showToast(t('stock.adjustFailed'), 'error');
+                },
+              }
+            );
+          }}
+        >
+          {t('common.save')}
+        </Button>
+      </BottomSheet>
     </View>
   );
 }
@@ -329,6 +393,32 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
+  },
+  adjustBtn: {
+    marginTop: spacing.sm,
+  },
+  kindRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  kindChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.borderSoft,
+  },
+  kindChipActive: {
+    backgroundColor: colors.primary,
+  },
+  kindText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.body,
+  },
+  kindTextActive: {
+    color: colors.white,
   },
   priceCard: {
     backgroundColor: colors.card,

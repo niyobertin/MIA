@@ -11,6 +11,13 @@ import { paymentRepository } from '@/repositories/payments/payments';
 import { dailyClosingRepository } from '@/repositories/reports/dailyClosing';
 import { financialService } from '@/services/financial';
 import { queueSync } from '@/services/sync/queue';
+import { getDatabase } from '@/db/database';
+import { assertDayIsOpen, assertSaleAllowed } from '@/services/books/guards';
+import { settleCustomerAccount, settleSupplierAccount } from '@/services/books/settle';
+import { voidSale } from '@/services/books/voidSale';
+import { voidPurchase } from '@/services/books/voidPurchase';
+import { adjustStock, StockAdjustmentKind } from '@/services/books/adjustStock';
+import { reconcileProductCost } from '@/services/books/averageCost';
 import { Product, Category, Supplier, Customer, Purchase, Sale, Expense, Payment, PaymentMethod, DailyClosing, StockMovement } from '@/types';
 import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
 import { toLocalDateString } from '@/utils/periodBounds';
@@ -148,11 +155,13 @@ export function useDashboardStats() {
     queryFn: async () => {
       const financials = await financialService.calculateDailyFinancials(businessId, today);
       const yesterdayIso = getYesterdayDateString();
-      const [itemsSold, stockValue, yesterdaySales] = await Promise.all([
+      const [itemsSold, stockValue, yesterdaySales, day] = await Promise.all([
         financialService.getTotalItemsSold(businessId, today, today),
         productRepository.getStockValue(businessId),
         saleRepository.getTotalSales(businessId, yesterdayIso, yesterdayIso),
+        dailyClosingRepository.findByDate(businessId, today),
       ]);
+      const openingCash = day?.opening_cash ?? 0;
 
       return {
         todaySales: financials.totalSales,
@@ -165,6 +174,7 @@ export function useDashboardStats() {
         yesterdaySales,
         salesDelta: yesterdaySales > 0 ? (financials.totalSales - yesterdaySales) / yesterdaySales : null,
         cashBalance:
+          openingCash +
           financials.cashSales +
           financials.customerCashPayments +
           financials.otherCashIncome -
@@ -314,20 +324,23 @@ export function usePeriodStats(range: PeriodRange | null) {
     queryKey: ['periodStats', businessId, range?.start, range?.end],
     queryFn: async () => {
       const { start, end } = range!;
-      const [totalSales, cogs, expenses, itemsSold, stockValue] = await Promise.all([
+      const [totalSales, tax, cogs, expenses, inventoryLoss, itemsSold, stockValue] = await Promise.all([
         saleRepository.getTotalSales(businessId, start, end),
+        saleRepository.getTotalTax(businessId, start, end),
         financialService.calculateCOGSForPeriod(businessId, start, end),
         expenseRepository.getTotalExpenses(businessId, start, end),
+        stockMovementRepository.getInventoryLoss(businessId, start, end),
         financialService.getTotalItemsSold(businessId, start, end),
         productRepository.getStockValue(businessId),
       ]);
-      const grossProfit = totalSales - cogs;
+      const revenue = totalSales - tax;
+      const grossProfit = revenue - cogs;
       return {
         totalSales,
         cogs,
         grossProfit,
         expenses,
-        netProfit: grossProfit - expenses,
+        netProfit: grossProfit - expenses - inventoryLoss,
         itemsSold,
         stockValue,
       };
@@ -352,10 +365,10 @@ export function usePaymentBreakdown(range: PeriodRange | null) {
     queryFn: async () => {
       const { start, end } = range!;
       const [cash, mobileMoney, bank, credit] = await Promise.all([
-        paymentRepository.getTotalByMethod(businessId, start, end, 'cash'),
-        paymentRepository.getTotalByMethod(businessId, start, end, 'mobile_money'),
-        paymentRepository.getTotalByMethod(businessId, start, end, 'bank'),
-        paymentRepository.getTotalByMethod(businessId, start, end, 'credit'),
+        paymentRepository.getInflowByMethod(businessId, start, end, 'cash'),
+        paymentRepository.getInflowByMethod(businessId, start, end, 'mobile_money'),
+        paymentRepository.getInflowByMethod(businessId, start, end, 'bank'),
+        saleRepository.getReceivableInPeriod(businessId, start, end),
       ]);
       return { cash, mobileMoney, bank, credit };
     },
@@ -369,17 +382,7 @@ export function useCustomerBalance(customerId: string | null) {
     queryKey: ['customerBalance', businessId, customerId],
     queryFn: async () => {
       if (!customerId) return { owed: 0, paid: 0, outstanding: 0 };
-      const [sales, payments] = await Promise.all([
-        saleRepository.findByCustomer(customerId, businessId),
-        paymentRepository.findAll(businessId, {
-          where: { party_id: customerId, type: 'customer_payment' },
-        }),
-      ]);
-      const owed = sales
-        .filter((s) => s.payment_status !== 'paid')
-        .reduce((sum, s) => sum + s.total_amount, 0);
-      const paid = payments.reduce((sum, p) => sum + p.amount, 0);
-      return { owed, paid, outstanding: Math.max(0, owed - paid) };
+      return saleRepository.getCustomerPosition(customerId, businessId);
     },
     enabled: !!businessId && !!customerId,
   });
@@ -391,15 +394,7 @@ export function useSupplierBalance(supplierId: string | null) {
     queryKey: ['supplierBalance', businessId, supplierId],
     queryFn: async () => {
       if (!supplierId) return { owed: 0, paid: 0, outstanding: 0 };
-      const [purchases, payments] = await Promise.all([
-        purchaseRepository.findBySupplier(supplierId, businessId),
-        paymentRepository.findAll(businessId, {
-          where: { party_id: supplierId, type: 'supplier_payment' },
-        }),
-      ]);
-      const owed = purchases.reduce((sum, p) => sum + (p.total_amount - p.paid_amount), 0);
-      const paid = payments.reduce((sum, p) => sum + p.amount, 0);
-      return { owed, paid, outstanding: Math.max(0, owed - paid) };
+      return purchaseRepository.getSupplierPosition(supplierId, businessId);
     },
     enabled: !!businessId && !!supplierId,
   });
@@ -417,24 +412,22 @@ export function useCustomersWithBalances() {
   return useQuery({
     queryKey: ['customersWithBalances', businessId],
     queryFn: async (): Promise<{ rows: CustomerBalanceRow[]; totalOutstanding: number }> => {
-      const customers = await customerRepository.findActive(businessId);
-      const rows = await Promise.all(
-        customers.map(async (customer) => {
-          const [sales, payments] = await Promise.all([
-            saleRepository.findByCustomer(customer.id, businessId),
-            paymentRepository.findAll(businessId, {
-              where: { party_id: customer.id, type: 'customer_payment' },
-            }),
-          ]);
-          const owed = sales
-            .filter((s) => s.payment_status !== 'paid')
-            .reduce((sum, s) => sum + s.total_amount, 0);
-          const paid = payments.reduce((sum, p) => sum + p.amount, 0);
-          return { customer, owed, paid, outstanding: Math.max(0, owed - paid) };
-        })
-      );
+      const [customers, positions] = await Promise.all([
+        customerRepository.findActive(businessId),
+        saleRepository.listCustomerPositions(businessId),
+      ]);
+      const byId = new Map(positions.map((position) => [position.customer_id, position]));
+      const rows = customers.map((customer) => {
+        const position = byId.get(customer.id);
+        return {
+          customer,
+          owed: position?.owed ?? 0,
+          paid: position?.paid ?? 0,
+          outstanding: position?.outstanding ?? 0,
+        };
+      });
       rows.sort((a, b) => b.outstanding - a.outstanding);
-      return { rows, totalOutstanding: rows.reduce((sum, r) => sum + r.outstanding, 0) };
+      return { rows, totalOutstanding: rows.reduce((sum, row) => sum + row.outstanding, 0) };
     },
     enabled: !!businessId,
   });
@@ -462,7 +455,15 @@ export function useUpdateProduct() {
   
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Product> }) => {
-      const updated = await productRepository.update(id, businessId, updates);
+      let next = updates;
+      if (updates.average_cost != null) {
+        const movements = await stockMovementRepository.findByProduct(id, businessId, 1);
+        if (movements.length > 0) {
+          const { average_cost: _cost, ...rest } = updates;
+          next = rest;
+        }
+      }
+      const updated = await productRepository.update(id, businessId, next);
       if (updated) {
         await queueSync('products', id, 'update', updated as unknown as Record<string, unknown>, businessId);
       }
@@ -743,7 +744,7 @@ export function useImportProducts() {
             created++;
           }
 
-          if (row.opening_stock > 0) {
+          if (!existing && row.opening_stock > 0) {
             const movement = await stockMovementRepository.create({
               id: generateUUID(),
               business_id: bid,
@@ -795,91 +796,103 @@ export function useCreateSale() {
       notes?: string;
     }) => {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
-      const totals = await financialService.calculateSaleTotals(
-        data.items.map(item => ({
-          product_id: item.productId,
-          quantity: item.quantity,
-          selling_price: item.sellingPrice,
-          discount_amount: item.discountAmount,
-          tax_amount: item.taxAmount,
-        })),
-        bid
-      );
-      
-      const saleId = generateUUID();
-      const now = new Date().toISOString();
-      const today = getTodayDateString();
-      
-      const sale = await saleRepository.create({
-        id: saleId,
-        business_id: bid,
-        customer_id: data.customerId,
-        reference_number: `SALE-${Date.now().toString(36).toUpperCase()}`,
-        subtotal: totals.subtotal,
-        discount_amount: totals.discountAmount,
-        tax_amount: totals.taxAmount,
-        total_amount: totals.totalAmount,
-        payment_status: data.paymentMethod === 'credit' ? 'credit' : 'paid',
-        sale_date: today,
-        notes: data.notes ?? null,
-        created_by: userId,
-        device_id: deviceId,
-        sync_status: 'pending',
-      });
-      
-      for (const item of totals.itemsWithCost) {
-        const saleItem = await saleItemRepository.create({
-          id: generateUUID(),
-          business_id: bid,
-          sale_id: saleId,
-          product_id: item.product_id,
-          quantity: item.quantity,
-          selling_price: item.selling_price,
-          unit_cost: item.unit_cost,
-          discount_amount: item.discount_amount ?? 0,
-          tax_amount: item.tax_amount ?? 0,
-          total_amount: item.quantity * item.selling_price - (item.discount_amount ?? 0) + (item.tax_amount ?? 0),
-        });
-        
-        const movement = await stockMovementRepository.create({
-          id: generateUUID(),
-          business_id: bid,
-          product_id: item.product_id,
-          type: 'sale',
-          quantity: item.quantity,
-          unit_cost: item.unit_cost,
-          reference_type: 'sale',
-          reference_id: saleId,
-          occurred_at: now,
-          created_by: userId,
-          device_id: deviceId,
-          sync_status: 'pending',
-        });
+      const db = await getDatabase();
+      let sale: Sale | null = null;
+      await db.withTransactionAsync(async () => {
+        const today = getTodayDateString();
+        await assertDayIsOpen(bid, today);
+        const totals = await financialService.calculateSaleTotals(
+          data.items.map(item => ({
+            product_id: item.productId,
+            quantity: item.quantity,
+            selling_price: item.sellingPrice,
+            discount_amount: item.discountAmount,
+            tax_amount: item.taxAmount,
+          })),
+          bid
+        );
+        await assertSaleAllowed(bid, data.items, data.paymentMethod, data.customerId, totals.totalAmount);
 
-        await queueSync('sale_items', saleItem.id, 'insert', saleItem as unknown as Record<string, unknown>, bid);
-        await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
-      }
-      
-      if (data.paymentMethod !== 'credit') {
-        const payment = await paymentRepository.create({
-          id: generateUUID(),
+        const saleId = generateUUID();
+        const now = new Date().toISOString();
+        const created = await saleRepository.create({
+          id: saleId,
           business_id: bid,
-          type: 'sale_payment',
-          payment_method: data.paymentMethod,
-          amount: totals.totalAmount,
-          reference_type: 'sale',
-          reference_id: saleId,
-          party_id: data.customerId,
-          payment_date: today,
+          customer_id: data.customerId,
+          reference_number: `SALE-${Date.now().toString(36).toUpperCase()}`,
+          subtotal: totals.subtotal,
+          discount_amount: totals.discountAmount,
+          tax_amount: totals.taxAmount,
+          total_amount: totals.totalAmount,
+          paid_amount: data.paymentMethod === 'credit' ? 0 : totals.totalAmount,
+          voided: false,
+          payment_status: data.paymentMethod === 'credit' ? 'credit' : 'paid',
+          sale_date: today,
           notes: data.notes ?? null,
           created_by: userId,
           device_id: deviceId,
           sync_status: 'pending',
         });
-        await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, bid);
-      }
 
-      await queueSync('sales', sale.id, 'insert', sale as unknown as Record<string, unknown>, bid);
+        for (const item of totals.itemsWithCost) {
+          const saleItem = await saleItemRepository.create({
+            id: generateUUID(),
+            business_id: bid,
+            sale_id: saleId,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            selling_price: item.selling_price,
+            unit_cost: item.unit_cost,
+            discount_amount: item.discount_amount ?? 0,
+            tax_amount: item.tax_amount ?? 0,
+            total_amount: item.quantity * item.selling_price - (item.discount_amount ?? 0) + (item.tax_amount ?? 0),
+          });
+          await queueSync('sale_items', saleItem.id, 'insert', saleItem as unknown as Record<string, unknown>, bid);
+
+          const product = await productRepository.findById(item.product_id, bid);
+          if (product?.track_inventory) {
+            const movement = await stockMovementRepository.create({
+              id: generateUUID(),
+              business_id: bid,
+              product_id: item.product_id,
+              type: 'sale',
+              quantity: item.quantity,
+              unit_cost: item.unit_cost,
+              reference_type: 'sale',
+              reference_id: saleId,
+              occurred_at: now,
+              created_by: userId,
+              device_id: deviceId,
+              sync_status: 'pending',
+            });
+            await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
+          }
+        }
+
+        if (data.paymentMethod !== 'credit') {
+          const payment = await paymentRepository.create({
+            id: generateUUID(),
+            business_id: bid,
+            type: 'sale_payment',
+            payment_method: data.paymentMethod,
+            amount: totals.totalAmount,
+            reference_type: 'sale',
+            reference_id: saleId,
+            party_id: data.customerId,
+            payment_date: today,
+            notes: data.notes ?? null,
+            created_by: userId,
+            device_id: deviceId,
+            sync_status: 'pending',
+          });
+          await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, bid);
+        }
+
+        await queueSync('sales', created.id, 'insert', created as unknown as Record<string, unknown>, bid);
+        await settleCustomerAccount(bid, data.customerId);
+        sale = (await saleRepository.findById(saleId, bid)) ?? created;
+      });
+      if (!sale) throw new Error('SALE_NOT_FOUND');
       return sale;
     },
     onSuccess: () => {
@@ -907,91 +920,103 @@ export function useCreatePurchase() {
       referenceNumber?: string;
       notes?: string;
     }) => {
-      const totals = await financialService.calculatePurchaseTotals(
-        data.items.map(item => ({
-          product_id: item.productId,
-          quantity: item.quantity,
-          unit_cost: item.unitCost,
-        }))
-      );
-      
-      const purchaseId = generateUUID();
-      const now = new Date().toISOString();
-      const today = getTodayDateString();
-      
-      // Create purchase
-      const purchase = await purchaseRepository.create({
-        id: purchaseId,
-        business_id: businessId,
-        supplier_id: data.supplierId,
-        reference_number: data.referenceNumber ?? `PUR-${Date.now().toString(36).toUpperCase()}`,
-        total_amount: totals.totalAmount,
-        paid_amount: data.paymentMethod === 'credit' ? 0 : totals.totalAmount,
-        status: data.paymentMethod === 'credit' ? 'pending' : 'completed',
-        purchase_date: today,
-        notes: data.notes ?? null,
-        created_by: getUserId(),
-        device_id: getDeviceId(),
-        sync_status: 'pending',
-      });
-      
-      for (const item of totals.itemsWithTotal) {
-        const purchaseItem = await purchaseItemRepository.create({
-          id: generateUUID(),
-          business_id: businessId,
-          purchase_id: purchaseId,
-          product_id: item.product_id,
-          quantity: item.quantity,
-          unit_cost: item.unit_cost,
-          total_cost: item.total_cost,
-        });
-        
-        const movement = await stockMovementRepository.create({
-          id: generateUUID(),
-          business_id: businessId,
-          product_id: item.product_id,
-          type: 'purchase',
-          quantity: item.quantity,
-          unit_cost: item.unit_cost,
-          reference_type: 'purchase',
-          reference_id: purchaseId,
-          occurred_at: now,
-          created_by: getUserId(),
-          device_id: getDeviceId(),
-          sync_status: 'pending',
-        });
-        
-        await financialService.updateProductAverageCost(item.product_id, businessId, item.quantity, item.unit_cost);
-        const product = await productRepository.findById(item.product_id, businessId);
-
-        await queueSync('purchase_items', purchaseItem.id, 'insert', purchaseItem as unknown as Record<string, unknown>, businessId);
-        await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, businessId);
-        if (product) {
-          await queueSync('products', product.id, 'update', product as unknown as Record<string, unknown>, businessId);
-        }
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      for (const item of data.items) {
+        if (!Number.isInteger(item.quantity) || item.quantity < 1) throw new Error('INVALID_QUANTITY');
+        if (!Number.isInteger(item.unitCost) || item.unitCost < 0) throw new Error('INVALID_PRICE');
       }
+      const db = await getDatabase();
+      let purchase: Purchase | null = null;
+      await db.withTransactionAsync(async () => {
+        const today = getTodayDateString();
+        await assertDayIsOpen(bid, today);
+        const totals = await financialService.calculatePurchaseTotals(
+          data.items.map(item => ({
+            product_id: item.productId,
+            quantity: item.quantity,
+            unit_cost: item.unitCost,
+          }))
+        );
 
-      await queueSync('purchases', purchase.id, 'insert', purchase as unknown as Record<string, unknown>, businessId);
-
-      if (data.paymentMethod !== 'credit') {
-        const payment = await paymentRepository.create({
-          id: generateUUID(),
-          business_id: businessId,
-          type: 'purchase_payment',
-          payment_method: data.paymentMethod,
-          amount: totals.totalAmount,
-          reference_type: 'purchase',
-          reference_id: purchaseId,
-          party_id: data.supplierId,
-          payment_date: today,
+        const purchaseId = generateUUID();
+        const now = new Date().toISOString();
+        const created = await purchaseRepository.create({
+          id: purchaseId,
+          business_id: bid,
+          supplier_id: data.supplierId,
+          reference_number: data.referenceNumber ?? `PUR-${Date.now().toString(36).toUpperCase()}`,
+          total_amount: totals.totalAmount,
+          paid_amount: data.paymentMethod === 'credit' ? 0 : totals.totalAmount,
+          status: data.paymentMethod === 'credit' ? 'pending' : 'completed',
+          purchase_date: today,
           notes: data.notes ?? null,
-          created_by: getUserId(),
-          device_id: getDeviceId(),
+          created_by: userId,
+          device_id: deviceId,
           sync_status: 'pending',
         });
-        await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
-      }
 
+        for (const item of totals.itemsWithTotal) {
+          const purchaseItem = await purchaseItemRepository.create({
+            id: generateUUID(),
+            business_id: bid,
+            purchase_id: purchaseId,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            unit_cost: item.unit_cost,
+            total_cost: item.total_cost,
+          });
+          await queueSync('purchase_items', purchaseItem.id, 'insert', purchaseItem as unknown as Record<string, unknown>, bid);
+
+          const productBefore = await productRepository.findById(item.product_id, bid);
+          if (productBefore?.track_inventory) {
+            const movement = await stockMovementRepository.create({
+              id: generateUUID(),
+              business_id: bid,
+              product_id: item.product_id,
+              type: 'purchase',
+              quantity: item.quantity,
+              unit_cost: item.unit_cost,
+              reference_type: 'purchase',
+              reference_id: purchaseId,
+              occurred_at: now,
+              created_by: userId,
+              device_id: deviceId,
+              sync_status: 'pending',
+            });
+            await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
+            await reconcileProductCost(bid, item.product_id);
+            const product = await productRepository.findById(item.product_id, bid);
+            if (product) {
+              await queueSync('products', product.id, 'update', product as unknown as Record<string, unknown>, bid);
+            }
+          }
+        }
+
+        await queueSync('purchases', created.id, 'insert', created as unknown as Record<string, unknown>, bid);
+
+        if (data.paymentMethod !== 'credit') {
+          const payment = await paymentRepository.create({
+            id: generateUUID(),
+            business_id: bid,
+            type: 'purchase_payment',
+            payment_method: data.paymentMethod,
+            amount: totals.totalAmount,
+            reference_type: 'purchase',
+            reference_id: purchaseId,
+            party_id: data.supplierId,
+            payment_date: today,
+            notes: data.notes ?? null,
+            created_by: userId,
+            device_id: deviceId,
+            sync_status: 'pending',
+          });
+          await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, bid);
+        }
+
+        await settleSupplierAccount(bid, data.supplierId);
+        purchase = (await purchaseRepository.findById(purchaseId, bid)) ?? created;
+      });
+      if (!purchase) throw new Error('PURCHASE_NOT_FOUND');
       return purchase;
     },
     onSuccess: () => {
@@ -1018,17 +1043,19 @@ export function useCreateExpense() {
       expenseDate: string;
       referenceNumber?: string;
     }) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      await assertDayIsOpen(bid, data.expenseDate);
       const expense = await expenseRepository.create({
         id: generateUUID(),
-        business_id: businessId,
+        business_id: bid,
         category: data.category,
         amount: data.amount,
         payment_method: data.paymentMethod,
         description: data.description ?? null,
         expense_date: data.expenseDate,
         reference_number: data.referenceNumber ?? null,
-        created_by: getUserId(),
-        device_id: getDeviceId(),
+        created_by: userId,
+        device_id: deviceId,
         sync_status: 'pending',
       });
       
@@ -1080,6 +1107,10 @@ export function useUpdateExpense() {
         referenceNumber?: string;
       };
     }) => {
+      const existing = await expenseRepository.findById(id, businessId);
+      if (!existing) throw new Error('EXPENSE_NOT_FOUND');
+      await assertDayIsOpen(businessId, existing.expense_date);
+      await assertDayIsOpen(businessId, updates.expenseDate);
       const updated = await expenseRepository.update(id, businessId, {
         category: updates.category,
         amount: updates.amount,
@@ -1129,6 +1160,9 @@ export function useDeleteExpense() {
 
   return useMutation({
     mutationFn: async (id: string) => {
+      const existing = await expenseRepository.findById(id, businessId);
+      if (!existing) throw new Error('EXPENSE_NOT_FOUND');
+      await assertDayIsOpen(businessId, existing.expense_date);
       const linked = await paymentRepository.findByReference('expense', id, businessId);
       for (const payment of linked) {
         await paymentRepository.delete(payment.id, businessId);
@@ -1162,9 +1196,14 @@ export function useCreatePayment() {
       paymentDate: string;
       notes?: string | null;
     }) => {
-      const payment = await paymentRepository.create({
+      const { businessId: bid } = requireAuthContext();
+      await assertDayIsOpen(bid, data.paymentDate);
+      const db = await getDatabase();
+      let payment: Payment | null = null;
+      await db.withTransactionAsync(async () => {
+      const created = await paymentRepository.create({
         id: generateUUID(),
-        business_id: businessId,
+        business_id: bid,
         type: data.type,
         payment_method: data.paymentMethod,
         amount: data.amount,
@@ -1178,13 +1217,26 @@ export function useCreatePayment() {
         sync_status: 'pending',
       });
 
-      await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
+      await queueSync('payments', created.id, 'insert', created as unknown as Record<string, unknown>, bid);
+      if (data.type === 'customer_payment') {
+        await settleCustomerAccount(bid, data.partyId);
+      }
+      if (data.type === 'supplier_payment') {
+        await settleSupplierAccount(bid, data.partyId);
+      }
+      payment = created;
+      });
+      if (!payment) throw new Error('PAYMENT_NOT_FOUND');
       return payment;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customerBalance', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['supplierBalance', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['sales', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['purchases', businessId] });
     },
   });
 }
@@ -1273,6 +1325,13 @@ export function useCloseDay() {
       const snapshot = await productRepository.getStockSnapshot(businessId);
 
       const existing = await dailyClosingRepository.findByDate(businessId, data.businessDate);
+      let openingStockQty = existing?.opening_stock_qty ?? snapshot.quantity;
+      let openingStockValue = existing?.opening_stock_value ?? snapshot.value;
+      if (!existing) {
+        const net = await productRepository.getNetMovementForDate(businessId, data.businessDate);
+        openingStockQty = snapshot.quantity - net.quantity;
+        openingStockValue = snapshot.value - net.value;
+      }
       const payload = {
         opening_cash: data.openingCash,
         cash_sales: reconciliation.breakdown.cashSales,
@@ -1290,8 +1349,8 @@ export function useCloseDay() {
         gross_profit: financials.grossProfit,
         expenses: financials.expenses,
         net_profit: financials.netProfit,
-        opening_stock_qty: existing?.opening_stock_qty ?? snapshot.quantity,
-        opening_stock_value: existing?.opening_stock_value ?? snapshot.value,
+        opening_stock_qty: openingStockQty,
+        opening_stock_value: openingStockValue,
         closing_stock_qty: snapshot.quantity,
         closing_stock_value: snapshot.value,
         notes: data.notes ?? null,
@@ -1328,6 +1387,97 @@ export function useCloseDay() {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+    },
+  });
+}
+
+export function useLatestClosing() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['dailyClosing', businessId, 'latest'],
+    queryFn: () => dailyClosingRepository.getLatestClosing(businessId),
+    enabled: !!businessId,
+  });
+}
+
+export function useVoidSale() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (saleId: string) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const db = await getDatabase();
+      await db.withTransactionAsync(async () => {
+        await voidSale({ businessId: bid, saleId, userId, deviceId });
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sales', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['customerBalance', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function useVoidPurchase() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (purchaseId: string) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const db = await getDatabase();
+      await db.withTransactionAsync(async () => {
+        await voidPurchase({ businessId: bid, purchaseId, userId, deviceId });
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchases', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['suppliersWithBalances', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['supplierBalance', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function useAdjustStock() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (input: { productId: string; kind: StockAdjustmentKind; quantity: number }) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const db = await getDatabase();
+      await db.withTransactionAsync(async () => {
+        await adjustStock({
+          businessId: bid,
+          productId: input.productId,
+          userId,
+          deviceId,
+          kind: input.kind,
+          quantity: input.quantity,
+        });
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockBalance', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
     },
   });
 }

@@ -151,6 +151,8 @@ export interface Sale {
   discount_amount: number;
   tax_amount: number;
   total_amount: number;
+  paid_amount: number;
+  voided: boolean;
   payment_status: PaymentStatus;
   sale_date: string;
   notes: string | null;

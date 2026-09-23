@@ -68,7 +68,7 @@ const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   sales: [
     'id', 'business_id', 'customer_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
-    'total_amount', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id', 'sync_status',
+    'total_amount', 'paid_amount', 'voided', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id', 'sync_status',
     'created_at', 'updated_at',
   ],
   sale_items: [
