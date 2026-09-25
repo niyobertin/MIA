@@ -5,4 +5,4 @@
 
 -- Tables: businesses, users, categories, products, suppliers, customers,
 -- stock_movements, purchases, purchase_items, sales, sale_items,
--- expenses, payments, daily_closings
+-- expenses, payments, daily_closings, daily_stock_lines

@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 7;
+export const DATABASE_VERSION = 8;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   occurred_at TEXT NOT NULL,
   created_by TEXT NOT NULL REFERENCES users(id),
   device_id TEXT NOT NULL,
+  previous_quantity INTEGER NOT NULL DEFAULT 0,
+  new_quantity INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  reversal_of TEXT,
   sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending', 'syncing', 'synced', 'failed')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -240,12 +244,30 @@ CREATE TABLE IF NOT EXISTS daily_closings (
   closing_stock_qty INTEGER NOT NULL DEFAULT 0,
   closing_stock_value INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
+  opened_by TEXT REFERENCES users(id),
+  opened_at TEXT,
   closed_by TEXT REFERENCES users(id),
   closed_at TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'reopened')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(business_id, business_date)
+);
+
+-- Frozen per-item opening and closing quantities for each business day
+CREATE TABLE IF NOT EXISTS daily_stock_lines (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  daily_closing_id TEXT NOT NULL REFERENCES daily_closings(id) ON DELETE CASCADE,
+  business_date TEXT NOT NULL,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  opening_qty INTEGER NOT NULL DEFAULT 0,
+  opening_unit_cost INTEGER NOT NULL DEFAULT 0,
+  closing_qty INTEGER,
+  closing_unit_cost INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(business_id, business_date, product_id)
 );
 
 -- Sync records table
@@ -299,6 +321,8 @@ CREATE INDEX IF NOT EXISTS idx_payments_sync_status ON payments(sync_status);
 CREATE INDEX IF NOT EXISTS idx_payments_reference ON payments(reference_type, reference_id);
 CREATE INDEX IF NOT EXISTS idx_daily_closings_business_id ON daily_closings(business_id);
 CREATE INDEX IF NOT EXISTS idx_daily_closings_business_date ON daily_closings(business_date);
+CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
+CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
 CREATE INDEX IF NOT EXISTS idx_sync_records_business_id ON sync_records(business_id);
 CREATE INDEX IF NOT EXISTS idx_sync_records_status ON sync_records(status);
 CREATE INDEX IF NOT EXISTS idx_sync_records_table_record ON sync_records(table_name, record_id);
@@ -307,6 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_records_table_record ON sync_records(table_n
 export const DROP_TABLES_SQL = `
 DROP TABLE IF EXISTS app_settings;
 DROP TABLE IF EXISTS sync_records;
+DROP TABLE IF EXISTS daily_stock_lines;
 DROP TABLE IF EXISTS daily_closings;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS expenses;

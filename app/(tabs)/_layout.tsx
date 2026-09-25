@@ -87,6 +87,8 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen name="closing" options={{ href: null }} />
+        <Tabs.Screen name="stock-report" options={{ href: null }} />
+        <Tabs.Screen name="stock-movements" options={{ href: null }} />
         <Tabs.Screen name="expense" options={{ href: null }} />
         <Tabs.Screen name="stock-in" options={{ href: null }} />
         <Tabs.Screen name="payment" options={{ href: null }} />

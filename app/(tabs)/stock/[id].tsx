@@ -53,6 +53,7 @@ export default function ProductDetailScreen() {
   const [showAdjust, setShowAdjust] = React.useState(false);
   const [adjustKind, setAdjustKind] = React.useState<'adjustment_in' | 'adjustment_out' | 'damaged'>('damaged');
   const [adjustQty, setAdjustQty] = React.useState('1');
+  const [adjustReason, setAdjustReason] = React.useState('');
   const adjustStock = useAdjustStock();
 
   const product = productQuery.data;
@@ -292,6 +293,11 @@ export default function ProductDetailScreen() {
           onChangeText={setAdjustQty}
           keyboardType="number-pad"
         />
+        <Input
+          label={t('stock.reason')}
+          value={adjustReason}
+          onChangeText={setAdjustReason}
+        />
         <Button
           variant="primary"
           fullWidth
@@ -299,12 +305,17 @@ export default function ProductDetailScreen() {
           onPress={() => {
             if (!id) return;
             const quantity = Number(adjustQty);
+            if (!adjustReason.trim()) {
+              showToast(t('stock.reasonRequired'), 'error');
+              return;
+            }
             adjustStock.mutate(
-              { productId: id, kind: adjustKind, quantity },
+              { productId: id, kind: adjustKind, quantity, reason: adjustReason.trim() },
               {
                 onSuccess: () => {
                   setShowAdjust(false);
                   setAdjustQty('1');
+                  setAdjustReason('');
                   showToast(t('stock.stockAdjusted'), 'success');
                 },
                 onError: (error) => {

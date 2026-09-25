@@ -101,6 +101,27 @@ export class ProductRepository extends BaseRepository<Product> {
     return rows.reduce((sum, row) => sum + (row.average_cost * row.balance), 0);
   }
 
+  async getTrackedBalances(businessId: string): Promise<Array<{
+    product_id: string;
+    name: string;
+    unit: string;
+    average_cost: number;
+    balance: number;
+  }>> {
+    const db = await this.getDb();
+    return db.getAllAsync(
+      `SELECT p.id as product_id, p.name, p.unit, p.average_cost,
+        COALESCE(SUM(CASE WHEN sm.type IN ('opening', 'purchase', 'return_in', 'adjustment_in') THEN sm.quantity ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN sm.type IN ('sale', 'return_out', 'adjustment_out', 'damaged') THEN sm.quantity ELSE 0 END), 0) as balance
+       FROM products p
+       LEFT JOIN stock_movements sm ON p.id = sm.product_id AND sm.business_id = p.business_id
+       WHERE p.business_id = ? AND p.active = 1 AND p.track_inventory = 1
+       GROUP BY p.id, p.name, p.unit, p.average_cost
+       ORDER BY p.name ASC`,
+      [businessId]
+    );
+  }
+
   async getStockSnapshot(businessId: string): Promise<{ quantity: number; value: number }> {
     const db = await this.getDb();
     const rows = await db.getAllAsync<{ average_cost: number; balance: number }>(
@@ -169,8 +190,71 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   protected tableName = 'stock_movements';
   protected columns = [
     'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost',
-    'reference_type', 'reference_id', 'occurred_at', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
+    'reference_type', 'reference_id', 'occurred_at', 'created_by', 'device_id',
+    'previous_quantity', 'new_quantity', 'reason', 'reversal_of',
+    'sync_status', 'created_at', 'updated_at'
   ];
+
+  async update(id: string, businessId: string, updates: Partial<Omit<StockMovement, 'id' | 'business_id' | 'created_at'>>): Promise<StockMovement | null> {
+    const keys = Object.keys(updates);
+    const allowed = keys.every((key) => key === 'sync_status' || key === 'updated_at');
+    if (!allowed) throw new Error('HISTORY_LOCKED');
+    return super.update(id, businessId, updates);
+  }
+
+  async delete(): Promise<boolean> {
+    throw new Error('HISTORY_LOCKED');
+  }
+
+  async search(businessId: string, filters: {
+    startDate?: string;
+    endDate?: string;
+    productId?: string;
+    type?: string;
+    userId?: string;
+    quantity?: number;
+    limit?: number;
+  }): Promise<Array<StockMovement & { product_name: string; user_name: string | null }>> {
+    const db = await this.getDb();
+    const clauses = ['sm.business_id = ?'];
+    const params: unknown[] = [businessId];
+    if (filters.startDate) {
+      clauses.push('substr(sm.occurred_at, 1, 10) >= ?');
+      params.push(filters.startDate.slice(0, 10));
+    }
+    if (filters.endDate) {
+      clauses.push('substr(sm.occurred_at, 1, 10) <= ?');
+      params.push(filters.endDate.slice(0, 10));
+    }
+    if (filters.productId) {
+      clauses.push('sm.product_id = ?');
+      params.push(filters.productId);
+    }
+    if (filters.type) {
+      clauses.push('sm.type = ?');
+      params.push(filters.type);
+    }
+    if (filters.userId) {
+      clauses.push('sm.created_by = ?');
+      params.push(filters.userId);
+    }
+    if (filters.quantity != null && Number.isFinite(filters.quantity)) {
+      clauses.push('sm.quantity = ?');
+      params.push(filters.quantity);
+    }
+    params.push(filters.limit ?? 200);
+    const rows = await db.getAllAsync<Record<string, unknown>>(
+      `SELECT sm.*, p.name as product_name, u.name as user_name
+       FROM stock_movements sm
+       JOIN products p ON p.id = sm.product_id
+       LEFT JOIN users u ON u.id = sm.created_by
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY sm.occurred_at DESC
+       LIMIT ?`,
+      params as (string | number | null)[]
+    );
+    return rows.map((row) => this.mapRow(row)) as Array<StockMovement & { product_name: string; user_name: string | null }>;
+  }
 
   async getInventoryLoss(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();

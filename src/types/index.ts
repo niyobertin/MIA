@@ -87,6 +87,10 @@ export interface StockMovement {
   reference_id: string | null;
   occurred_at: string;
   created_by: string;
+  previous_quantity: number;
+  new_quantity: number;
+  reason: string | null;
+  reversal_of: string | null;
   device_id: string;
   sync_status: SyncStatus;
   created_at: string;
@@ -272,6 +276,8 @@ export interface DailyClosing {
   closing_stock_qty: number;
   closing_stock_value: number;
   notes: string | null;
+  opened_by: string | null;
+  opened_at: string | null;
   closed_by: string | null;
   closed_at: string | null;
   status: DailyClosingStatus;
@@ -280,6 +286,27 @@ export interface DailyClosing {
 }
 
 export type DailyClosingStatus = 'open' | 'closed' | 'reopened';
+
+export interface DailyStockLine {
+  id: string;
+  business_id: string;
+  daily_closing_id: string;
+  business_date: string;
+  product_id: string;
+  opening_qty: number;
+  opening_unit_cost: number;
+  closing_qty: number | null;
+  closing_unit_cost: number | null;
+  created_at: string;
+  updated_at: string;
+  product_name?: string;
+  unit?: string;
+}
+
+export interface StockMovementRow extends StockMovement {
+  product_name: string;
+  user_name: string | null;
+}
 
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
 

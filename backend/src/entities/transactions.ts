@@ -43,6 +43,18 @@ export class StockMovement {
   @Column({ type: 'timestamptz' })
   occurred_at!: Date;
 
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  previous_quantity!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  new_quantity!: number;
+
+  @Column({ type: 'text', nullable: true })
+  reason!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  reversal_of!: string | null;
+
   @Column({ type: 'uuid' })
   created_by!: string;
 
@@ -403,6 +415,12 @@ export class DailyClosing {
   notes!: string | null;
 
   @Column({ type: 'uuid', nullable: true })
+  opened_by!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  opened_at!: Date | null;
+
+  @Column({ type: 'uuid', nullable: true })
   closed_by!: string | null;
 
   @Column({ type: 'timestamptz', nullable: true })
@@ -410,6 +428,50 @@ export class DailyClosing {
 
   @Column({ type: 'text', default: 'open' })
   status!: string;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updated_at!: Date;
+}
+
+@Entity('daily_stock_lines')
+@Unique(['business_id', 'business_date', 'product_id'])
+export class DailyStockLine {
+  @PrimaryColumn('uuid')
+  id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  business_id!: string;
+
+  @Column({ type: 'uuid' })
+  daily_closing_id!: string;
+
+  @Column({ type: 'date' })
+  business_date!: string;
+
+  @Column({ type: 'uuid' })
+  product_id!: string;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  opening_qty!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  opening_unit_cost!: number;
+
+  @Column({ type: 'bigint', nullable: true, transformer: {
+    to: (v: number | null | undefined) => (v == null ? null : String(v)),
+    from: (v: string | null) => (v == null ? null : Number(v)),
+  } })
+  closing_qty!: number | null;
+
+  @Column({ type: 'bigint', nullable: true, transformer: {
+    to: (v: number | null | undefined) => (v == null ? null : String(v)),
+    from: (v: string | null) => (v == null ? null : Number(v)),
+  } })
+  closing_unit_cost!: number | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

@@ -16,7 +16,8 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mia.app"
+      "bundleIdentifier": "com.mia.app",
+      "requireFullScreen": false
     },
     "android": {
       "adaptiveIcon": {
@@ -47,9 +48,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "c44ccf9b-0884-4aa6-9254-6f8a3e66036f"
+        "projectId": "5992e7b2-76d4-4af9-9d1e-4eb0a7d458f5"
       }
     },
-    "owner": "niyobertin"
+    "owner": "tangahub"
   }
 }

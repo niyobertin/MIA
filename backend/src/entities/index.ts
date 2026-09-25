@@ -16,4 +16,5 @@ export {
   Expense,
   Payment,
   DailyClosing,
+  DailyStockLine,
 } from './transactions';

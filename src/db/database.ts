@@ -79,6 +79,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     if (fromVersion < 7) {
       await migrateSalesLedgerColumns(database);
     }
+    if (fromVersion < 8) {
+      await migrateStockDayAudit(database);
+    }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -231,6 +234,53 @@ async function settleLedgerIfNeeded(database: SQLite.SQLiteDatabase): Promise<vo
   } catch (error) {
     console.error('Ledger settlement backfill failed', error);
   }
+}
+
+async function migrateStockDayAudit(database: SQLite.SQLiteDatabase): Promise<void> {
+  const movementCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(stock_movements)');
+  if (movementCols.length > 0) {
+    const names = new Set(movementCols.map((column) => column.name));
+    const additions: Array<[string, string]> = [
+      ['previous_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+      ['new_quantity', 'INTEGER NOT NULL DEFAULT 0'],
+      ['reason', 'TEXT'],
+      ['reversal_of', 'TEXT'],
+    ];
+    for (const [name, ddl] of additions) {
+      if (names.has(name)) continue;
+      await database.execAsync(`ALTER TABLE stock_movements ADD COLUMN ${name} ${ddl}`);
+    }
+  }
+
+  const closingCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(daily_closings)');
+  if (closingCols.length > 0) {
+    const names = new Set(closingCols.map((column) => column.name));
+    if (!names.has('opened_by')) {
+      await database.execAsync(`ALTER TABLE daily_closings ADD COLUMN opened_by TEXT`);
+    }
+    if (!names.has('opened_at')) {
+      await database.execAsync(`ALTER TABLE daily_closings ADD COLUMN opened_at TEXT`);
+    }
+  }
+
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS daily_stock_lines (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      daily_closing_id TEXT NOT NULL REFERENCES daily_closings(id) ON DELETE CASCADE,
+      business_date TEXT NOT NULL,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      opening_qty INTEGER NOT NULL DEFAULT 0,
+      opening_unit_cost INTEGER NOT NULL DEFAULT 0,
+      closing_qty INTEGER,
+      closing_unit_cost INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(business_id, business_date, product_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
+    CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
+  `);
 }
 
 async function migrateDailyClosingStockColumns(database: SQLite.SQLiteDatabase): Promise<void> {

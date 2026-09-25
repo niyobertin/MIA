@@ -8,8 +8,7 @@ import {
   Alert,
   Modal,
   Switch,
-  KeyboardAvoidingView,
-  Platform,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
@@ -24,15 +23,15 @@ import { showToast } from '@/stores/toastStore';
 import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
 
-const createUserSchema = z.object({
+const userFormSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
   phone: z.string().optional(),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  password: z.string().optional(),
   role: z.enum(['MANAGER', 'CASHIER', 'STAFF']),
 });
 
-type CreateUserForm = z.infer<typeof createUserSchema>;
+type UserFormValues = z.infer<typeof userFormSchema>;
 
 const ROLES: { value: UserRole; label: string }[] = [
   { value: 'MANAGER', label: 'Manager' },
@@ -42,9 +41,10 @@ const ROLES: { value: UserRole; label: string }[] = [
 
 export default function UserManagementScreen() {
   const { t } = useTranslation();
-  const { business } = useAuthStore();
+  const { business, user: currentUser } = useAuthStore();
   const queryClient = useQueryClient();
-  const [showAddUser, setShowAddUser] = React.useState(false);
+  const [editing, setEditing] = React.useState<User | null>(null);
+  const [showForm, setShowForm] = React.useState(false);
 
   const { data: users = [], refetch } = useQuery({
     queryKey: ['users', business?.id],
@@ -52,14 +52,29 @@ export default function UserManagementScreen() {
     enabled: !!business?.id,
   });
 
-  const handleCreated = async () => {
-    setShowAddUser(false);
+  const handleSaved = async () => {
+    setShowForm(false);
+    setEditing(null);
     await queryClient.invalidateQueries({ queryKey: ['users', business?.id] });
     await refetch();
   };
 
+  const openCreate = () => {
+    setEditing(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (user: User) => {
+    setEditing(user);
+    setShowForm(true);
+  };
+
   const handleToggleActive = async (userId: string, active: boolean) => {
     if (!business) return;
+    if (userId === currentUser?.id) {
+      showToast(t('users.cannotChangeSelf'), 'error');
+      return;
+    }
     try {
       await userRepository.setActive(userId, business.id, active);
       const updated = await userRepository.findByIdInBusiness(userId, business.id);
@@ -72,7 +87,7 @@ export default function UserManagementScreen() {
           business.id
         );
       }
-      showToast(t('users.userUpdated'), 'success');
+      showToast(active ? t('users.userUpdated') : t('users.userDisabled'), 'success');
       await refetch();
     } catch (error) {
       console.error('Failed to toggle user:', error);
@@ -82,6 +97,10 @@ export default function UserManagementScreen() {
 
   const handleDeleteUser = async (userId: string) => {
     if (!business) return;
+    if (userId === currentUser?.id) {
+      showToast(t('users.cannotChangeSelf'), 'error');
+      return;
+    }
     Alert.alert(
       t('users.deleteConfirm'),
       t('users.deleteConfirmMessage'),
@@ -97,8 +116,11 @@ export default function UserManagementScreen() {
               showToast(t('users.userDeleted'), 'success');
               await refetch();
             } catch (error) {
-              console.error('Failed to delete user:', error);
-              showToast(t('users.userFailed'), 'error');
+              const message = error instanceof Error ? error.message : '';
+              showToast(
+                /constraint|foreign key/i.test(message) ? t('users.cannotDeleteHistory') : t('users.userFailed'),
+                'error'
+              );
             }
           },
         },
@@ -107,75 +129,97 @@ export default function UserManagementScreen() {
   };
 
   return (
-    <FormScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.title}>{t('users.users')}</Text>
-          {business?.business_code ? (
-            <Text style={styles.businessCode}>
-              {t('auth.businessCode')}: {business.business_code}
-            </Text>
+    <View style={styles.container}>
+      <FormScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <View style={styles.headerLeft}>
+            <Text style={styles.title}>{t('users.users')}</Text>
+            {business?.business_code ? (
+              <Text style={styles.businessCode}>
+                {t('auth.businessCode')}: {business.business_code}
+              </Text>
+            ) : null}
+          </View>
+          <TouchableOpacity style={styles.addButton} onPress={openCreate}>
+            <Ionicons name="add" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        <Button variant="primary" onPress={openCreate} style={styles.createButton}>
+          {t('users.addUser')}
+        </Button>
+
+        <View style={styles.usersList}>
+          {users.map((user) => (
+            <UserRow
+              key={user.id}
+              user={user}
+              isSelf={user.id === currentUser?.id}
+              onEdit={openEdit}
+              onToggleActive={handleToggleActive}
+              onDelete={handleDeleteUser}
+            />
+          ))}
+          {users.length === 0 ? (
+            <Text style={styles.emptyText}>{t('users.noUsers')}</Text>
           ) : null}
         </View>
-        <TouchableOpacity style={styles.addButton} onPress={() => setShowAddUser(true)}>
-          <Ionicons name="add" size={22} color="#fff" />
-        </TouchableOpacity>
-      </View>
+      </FormScrollView>
 
-      <View style={styles.usersList}>
-        {users.map((user) => (
-          <UserRow
-            key={user.id}
-            user={user}
-            onToggleActive={handleToggleActive}
-            onDelete={handleDeleteUser}
-          />
-        ))}
-        {users.length === 0 ? (
-          <Text style={styles.emptyText}>{t('users.noUsers')}</Text>
-        ) : null}
-      </View>
-
-      <AddUserModal
-        visible={showAddUser}
-        onClose={() => setShowAddUser(false)}
-        onCreated={handleCreated}
+      <UserFormModal
+        visible={showForm}
+        user={editing}
+        onClose={() => {
+          setShowForm(false);
+          setEditing(null);
+        }}
+        onSaved={handleSaved}
       />
-    </FormScrollView>
+    </View>
   );
 }
 
 function UserRow({
   user,
+  isSelf,
+  onEdit,
   onToggleActive,
   onDelete,
 }: {
   user: User;
+  isSelf: boolean;
+  onEdit: (user: User) => void;
   onToggleActive: (id: string, active: boolean) => void;
   onDelete: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const role = user.role ?? 'STAFF';
+  const locked = role === 'OWNER' || isSelf;
 
   return (
-    <View style={styles.userCard}>
+    <View style={[styles.userCard, !user.active && styles.userCardInactive]}>
       <View style={styles.userAvatar}>
         <Text style={styles.userAvatarText}>{getInitials(user.name)}</Text>
       </View>
       <View style={styles.userInfo}>
         <Text style={styles.userName}>{user.name}</Text>
         <Text style={styles.userEmail}>{user.email}</Text>
-      </View>
-      <View style={styles.userActions}>
         <View style={[styles.roleBadge, { backgroundColor: getRoleColor(role) }]}>
           <Text style={styles.roleBadgeText}>{t(`users.${role.toLowerCase()}` as 'users.owner')}</Text>
         </View>
+        {!user.active ? <Text style={styles.inactiveLabel}>{t('users.inactive')}</Text> : null}
+      </View>
+      <View style={styles.userActions}>
+        <TouchableOpacity onPress={() => onEdit(user)} hitSlop={8}>
+          <Ionicons name="create-outline" size={20} color="#0ea5e9" />
+        </TouchableOpacity>
         <Switch
           value={user.active}
+          disabled={locked}
           onValueChange={(value) => onToggleActive(user.id, value)}
           trackColor={{ false: '#e5e7eb', true: '#0ea5e9' }}
         />
-        {role !== 'OWNER' ? (
+        {role !== 'OWNER' && !isSelf ? (
           <TouchableOpacity onPress={() => onDelete(user.id)} hitSlop={8}>
             <Ionicons name="trash-outline" size={18} color="#ef4444" />
           </TouchableOpacity>
@@ -185,73 +229,114 @@ function UserRow({
   );
 }
 
-function AddUserModal({
+function UserFormModal({
   visible,
+  user,
   onClose,
-  onCreated,
+  onSaved,
 }: {
   visible: boolean;
+  user: User | null;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onSaved: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { business } = useAuthStore();
-  const { control, handleSubmit, reset, formState: { isSubmitting } } = useForm<CreateUserForm>({
-    resolver: zodResolver(createUserSchema),
+  const isEdit = !!user;
+  const { control, handleSubmit, reset, setError, formState: { isSubmitting } } = useForm<UserFormValues>({
+    resolver: zodResolver(userFormSchema),
     defaultValues: { name: '', email: '', phone: '', password: '', role: 'STAFF' },
   });
 
   React.useEffect(() => {
-    if (!visible) reset();
-  }, [visible, reset]);
+    if (!visible) return;
+    reset({
+      name: user?.name ?? '',
+      email: user?.email ?? '',
+      phone: user?.phone ?? '',
+      password: '',
+      role: user?.role && user.role !== 'OWNER' ? user.role : 'STAFF',
+    });
+  }, [visible, user, reset]);
 
-  const onSubmit = async (data: CreateUserForm) => {
+  const onSubmit = async (data: UserFormValues) => {
     if (!business) return;
+    const password = data.password?.trim() ?? '';
+    if (!isEdit && password.length < 6) {
+      setError('password', { message: t('auth.passwordTooShort') });
+      return;
+    }
+    if (isEdit && password.length > 0 && password.length < 6) {
+      setError('password', { message: t('auth.passwordTooShort') });
+      return;
+    }
     try {
-      const created = await userRepository.createBusinessUser({
-        name: data.name,
-        email: data.email,
-        phone: data.phone,
-        password: data.password,
-        role: data.role,
-        businessId: business.id,
-      });
-      const creds = await userRepository.findCredentialByEmail(created.email);
-      await queueSync(
-        'users',
-        created.id,
-        'insert',
-        {
-          ...(created as unknown as Record<string, unknown>),
-          ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
-        },
-        business.id
-      );
-      showToast(t('users.userAdded'), 'success');
-      await onCreated();
+      if (isEdit && user) {
+        const updated = await userRepository.updateBusinessUser(user.id, business.id, {
+          name: data.name,
+          email: data.email,
+          phone: data.phone,
+          role: user.role === 'OWNER' ? 'OWNER' : data.role,
+          password: password || undefined,
+          active: user.active,
+        });
+        const creds = await userRepository.findCredentialByEmail(updated.email);
+        await queueSync(
+          'users',
+          updated.id,
+          'update',
+          {
+            ...(updated as unknown as Record<string, unknown>),
+            ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
+          },
+          business.id
+        );
+        showToast(t('users.userUpdated'), 'success');
+      } else {
+        const created = await userRepository.createBusinessUser({
+          name: data.name,
+          email: data.email,
+          phone: data.phone,
+          password,
+          role: data.role,
+          businessId: business.id,
+        });
+        const creds = await userRepository.findCredentialByEmail(created.email);
+        await queueSync(
+          'users',
+          created.id,
+          'insert',
+          {
+            ...(created as unknown as Record<string, unknown>),
+            ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
+          },
+          business.id
+        );
+        showToast(t('users.userAdded'), 'success');
+      }
+      await onSaved();
     } catch (error) {
       const message = error instanceof Error ? error.message : t('users.userFailed');
-      showToast(message, 'error');
+      showToast(message === 'OWNER_LOCKED' ? t('users.userFailed') : message, 'error');
     }
   };
 
-  if (!visible) return null;
-
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={styles.modalOverlay}>
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{t('users.addUser')}</Text>
+            <Text style={styles.modalTitle}>{isEdit ? t('users.editUser') : t('users.addUser')}</Text>
             <TouchableOpacity onPress={onClose}>
               <Ionicons name="close" size={24} color="#6b7280" />
             </TouchableOpacity>
           </View>
 
-          <FormScrollView contentContainerStyle={styles.modalContent} avoidKeyboard={false}>
+          <ScrollView
+            style={styles.formScroll}
+            contentContainerStyle={styles.modalContent}
+            keyboardShouldPersistTaps="handled"
+          >
             <FormInput control={control} name="name" label={t('auth.name')} required />
             <FormInput
               control={control}
@@ -265,20 +350,22 @@ function AddUserModal({
             <FormInput
               control={control}
               name="password"
-              label={t('auth.password')}
+              label={isEdit ? t('users.passwordOptional') : t('auth.password')}
               secureTextEntry
-              required
+              required={!isEdit}
             />
-            <FormPicker control={control} name="role" label={t('users.role')}>
-              {ROLES.map((r) => (
-                <Picker.Item
-                  key={r.value}
-                  label={t(`users.${r.value.toLowerCase()}` as 'users.staff')}
-                  value={r.value}
-                />
-              ))}
-            </FormPicker>
-          </FormScrollView>
+            {user?.role === 'OWNER' ? null : (
+              <FormPicker control={control} name="role" label={t('users.role')}>
+                {ROLES.map((r) => (
+                  <Picker.Item
+                    key={r.value}
+                    label={t(`users.${r.value.toLowerCase()}` as 'users.staff')}
+                    value={r.value}
+                  />
+                ))}
+              </FormPicker>
+            )}
+          </ScrollView>
 
           <View style={styles.modalActions}>
             <Button variant="outline" onPress={onClose} disabled={isSubmitting}>
@@ -293,7 +380,7 @@ function AddUserModal({
             </Button>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -361,6 +448,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  createButton: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
   usersList: {
     gap: 12,
   },
@@ -380,6 +471,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 1,
+  },
+  userCardInactive: {
+    opacity: 0.55,
+  },
+  inactiveLabel: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#b45309',
   },
   userAvatar: {
     width: 44,
@@ -414,6 +514,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   roleBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -432,7 +534,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    height: '88%',
+  },
+  formScroll: {
+    flex: 1,
   },
   modalHeader: {
     flexDirection: 'row',

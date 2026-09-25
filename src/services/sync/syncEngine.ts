@@ -27,6 +27,7 @@ const SYNC_ORDER = [
   'payments',
   'stock_movements',
   'daily_closings',
+  'daily_stock_lines',
 ];
 
 const STRIP_KEYS = new Set([
@@ -50,7 +51,8 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   stock_movements: new Set([
     'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost', 'reference_type', 'reference_id',
-    'occurred_at', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
+    'occurred_at', 'created_by', 'previous_quantity', 'new_quantity', 'reason', 'reversal_of',
+    'device_id', 'sync_status', 'created_at', 'updated_at',
   ]),
   purchases: new Set([
     'id', 'business_id', 'supplier_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
@@ -81,7 +83,12 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
     'net_profit', 'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
-    'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
+    'notes', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
+  ]),
+  daily_stock_lines: new Set([
+    'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
+    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost',
+    'created_at', 'updated_at',
   ]),
 };
 

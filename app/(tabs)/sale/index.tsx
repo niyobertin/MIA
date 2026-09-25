@@ -10,13 +10,13 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
-import { ProductCard } from '@/components/ProductCard';
 import { MoneyText } from '@/components/MoneyText';
 import { SearchBar } from '@/components/SearchBar';
 import { EmptyState } from '@/components/EmptyState';
@@ -35,10 +35,13 @@ import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 
 type PayMethod = 'cash' | 'mobile_money' | 'bank' | 'credit';
+const PRODUCT_PAGE_SIZE = 100;
 
 export default function NewSaleScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const productColumns = width >= 980 ? 4 : width >= 680 ? 3 : 2;
   const { data: products, isLoading } = useProducts({ active: true });
   const { data: customers, refetch: refetchCustomers } = useCustomers();
   const createSaleMutation = useCreateSale();
@@ -64,6 +67,7 @@ export default function NewSaleScreen() {
     getItemCount,
   } = useSalesStore();
 
+  const [visibleCount, setVisibleCount] = React.useState(PRODUCT_PAGE_SIZE);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [liveQuery, setLiveQuery] = React.useState('');
   const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
@@ -91,6 +95,12 @@ export default function NewSaleScreen() {
         p.barcode?.toLowerCase().includes(q)
     );
   }, [products, liveQuery]);
+
+  React.useEffect(() => {
+    setVisibleCount(PRODUCT_PAGE_SIZE);
+  }, [liveQuery]);
+
+  const visibleProducts = filteredProducts.slice(0, visibleCount);
 
   const selectedCustomer: Customer | null =
     customers?.find((c) => c.id === customerId) ?? null;
@@ -263,12 +273,21 @@ export default function NewSaleScreen() {
         </View>
       ) : (
         <FlatList
-          data={filteredProducts}
+          key={productColumns}
+          data={visibleProducts}
           keyExtractor={(item) => item.id}
+          numColumns={productColumns}
+          columnWrapperStyle={styles.productRow}
           style={styles.flex}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
+          onEndReached={() => {
+            if (visibleCount < filteredProducts.length) {
+              setVisibleCount((count) => count + PRODUCT_PAGE_SIZE);
+            }
+          }}
+          onEndReachedThreshold={0.4}
           contentContainerStyle={StyleSheet.flatten([
             styles.list,
             cart.length > 0 ? styles.listWithCart : null,
@@ -319,7 +338,11 @@ export default function NewSaleScreen() {
             />
           }
           renderItem={({ item }) => (
-            <ProductCard product={item} compact onPress={() => addProduct(item)} />
+            <PosProductCard
+              product={item}
+              quantity={cart.find((line) => line.product.id === item.id)?.quantity ?? 0}
+              onPress={() => addProduct(item)}
+            />
           )}
         />
       )}
@@ -527,6 +550,37 @@ export default function NewSaleScreen() {
         </View>
       </Modal>
     </KeyboardAvoidingView>
+  );
+}
+
+function PosProductCard({
+  product,
+  quantity,
+  onPress,
+}: {
+  product: Product;
+  quantity: number;
+  onPress: () => void;
+}) {
+  const selected = quantity > 0;
+  const stock = product.track_inventory ? (product.current_stock ?? null) : null;
+  return (
+    <TouchableOpacity
+      style={[styles.posCard, selected && styles.posCardSelected]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      {selected ? (
+        <View style={styles.posQty}>
+          <Text style={styles.posQtyText}>{quantity}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.posName} numberOfLines={2}>{product.name}</Text>
+      <MoneyText amount={product.selling_price} size={15} weight="800" color={selected ? colors.primaryText : colors.ink} />
+      {stock !== null ? (
+        <Text style={styles.posStock} numberOfLines={1}>{stock}</Text>
+      ) : null}
+    </TouchableOpacity>
   );
 }
 
@@ -945,6 +999,56 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 4,
     minWidth: 72,
+  },
+  productRow: {
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  posCard: {
+    flex: 1,
+    minHeight: 112,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    justifyContent: 'flex-end',
+    ...shadows.card,
+  },
+  posCardSelected: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+    borderWidth: 2,
+  },
+  posQty: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 26,
+    height: 26,
+    borderRadius: 13,
+    paddingHorizontal: 6,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  posQtyText: {
+    color: colors.white,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  posName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: 6,
+    marginRight: 28,
+  },
+  posStock: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
   },
   listHeader: {
     paddingVertical: spacing.sm,

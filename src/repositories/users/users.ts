@@ -291,6 +291,74 @@ export class UserRepository {
     return user;
   }
 
+  async updateBusinessUser(
+    id: string,
+    businessId: string,
+    input: {
+      name: string;
+      email: string;
+      phone?: string | null;
+      role: UserRole;
+      password?: string;
+      active?: boolean;
+    }
+  ): Promise<User> {
+    const existing = await this.findByIdInBusiness(id, businessId);
+    if (!existing) throw new Error('User not found');
+    if (existing.role === 'OWNER' && input.role !== 'OWNER') {
+      throw new Error('OWNER_LOCKED');
+    }
+
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const emailOwner = await this.findByEmail(normalizedEmail);
+    if (emailOwner && emailOwner.id !== id) {
+      throw new Error('An account with this email already exists');
+    }
+
+    const db = await this.getDb();
+    const now = new Date().toISOString();
+    const password = input.password?.trim();
+    if (password) {
+      const password_hash = await hashPassword(password);
+      await db.runAsync(
+        `UPDATE ${this.tableName}
+         SET name = ?, email = ?, phone = ?, role = ?, active = ?, password_hash = ?, updated_at = ?
+         WHERE id = ? AND business_id = ?`,
+        [
+          input.name.trim(),
+          normalizedEmail,
+          input.phone?.trim() || null,
+          existing.role === 'OWNER' ? 'OWNER' : input.role,
+          input.active === false ? 0 : 1,
+          password_hash,
+          now,
+          id,
+          businessId,
+        ]
+      );
+    } else {
+      await db.runAsync(
+        `UPDATE ${this.tableName}
+         SET name = ?, email = ?, phone = ?, role = ?, active = ?, updated_at = ?
+         WHERE id = ? AND business_id = ?`,
+        [
+          input.name.trim(),
+          normalizedEmail,
+          input.phone?.trim() || null,
+          existing.role === 'OWNER' ? 'OWNER' : input.role,
+          input.active === false ? 0 : 1,
+          now,
+          id,
+          businessId,
+        ]
+      );
+    }
+
+    const user = await this.findByIdInBusiness(id, businessId);
+    if (!user) throw new Error('Failed to update user');
+    return user;
+  }
+
   async setActive(id: string, businessId: string, active: boolean): Promise<User | null> {
     const db = await this.getDb();
     const now = new Date().toISOString();

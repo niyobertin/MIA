@@ -10,7 +10,7 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
     'supplier_cash_payments', 'withdrawals', 'expected_cash', 'actual_cash', 'cash_variance',
     'total_sales', 'cogs', 'gross_profit', 'expenses', 'net_profit',
     'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
-    'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at'
+    'notes', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at'
   ];
 
   async findByDate(businessId: string, businessDate: string): Promise<DailyClosing | null> {
@@ -34,6 +34,18 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
       [businessId, startDate, endDate]
     );
     return rows.map(row => this.mapRow(row));
+  }
+
+  async update(id: string, businessId: string, updates: Partial<Omit<DailyClosing, 'id' | 'business_id' | 'created_at'>>): Promise<DailyClosing | null> {
+    const current = await this.findById(id, businessId);
+    if (current?.status === 'closed') {
+      throw new Error('HISTORY_LOCKED');
+    }
+    return super.update(id, businessId, updates);
+  }
+
+  async delete(): Promise<boolean> {
+    throw new Error('HISTORY_LOCKED');
   }
 
   async getLatestClosing(businessId: string): Promise<DailyClosing | null> {

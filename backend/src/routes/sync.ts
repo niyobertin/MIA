@@ -16,6 +16,7 @@ import {
   Expense,
   Payment,
   DailyClosing,
+  DailyStockLine,
 } from '../entities';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 
@@ -36,6 +37,7 @@ const ENTITY_BY_TABLE: Record<string, EntityTarget<ObjectLiteral>> = {
   expenses: Expense,
   payments: Payment,
   daily_closings: DailyClosing,
+  daily_stock_lines: DailyStockLine,
 };
 
 const TABLE_COLUMNS: Record<string, string[]> = {
@@ -56,7 +58,8 @@ const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   stock_movements: [
     'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost', 'reference_type',
-    'reference_id', 'occurred_at', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
+    'reference_id', 'occurred_at', 'created_by', 'previous_quantity', 'new_quantity', 'reason',
+    'reversal_of', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ],
   purchases: [
     'id', 'business_id', 'supplier_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
@@ -88,7 +91,12 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
     'net_profit', 'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
-    'notes', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
+    'notes', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at',
+  ],
+  daily_stock_lines: [
+    'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
+    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost',
+    'created_at', 'updated_at',
   ],
 };
 
@@ -258,6 +266,23 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
     }
 
     const existing = await repo.findOne({ where: { id: payload.id } as ObjectLiteral });
+    if (existing && (table === 'stock_movements' || table === 'daily_closings' || table === 'daily_stock_lines')) {
+      const locked =
+        table === 'stock_movements'
+          ? ['type', 'quantity', 'product_id', 'previous_quantity', 'new_quantity', 'created_by', 'reason', 'reversal_of']
+          : table === 'daily_closings' && (existing as { status?: string }).status === 'closed'
+            ? ['status', 'opening_stock_qty', 'closing_stock_qty', 'closed_by', 'closed_at', 'opened_by', 'opened_at', 'business_date']
+            : table === 'daily_stock_lines' && (existing as { closing_qty?: number | null }).closing_qty != null
+              ? ['opening_qty', 'closing_qty', 'opening_unit_cost', 'closing_unit_cost', 'product_id', 'business_date']
+              : [];
+      for (const key of locked) {
+        if (payload[key] == null) continue;
+        if (String(payload[key]) !== String((existing as Record<string, unknown>)[key] ?? '')) {
+          res.status(409).json({ error: 'Closed history cannot be modified' });
+          return;
+        }
+      }
+    }
     let saved: ObjectLiteral;
     if (existing) {
       if (table === 'users' && payload.password_hash == null) {
@@ -305,7 +330,14 @@ syncRouter.delete('/:table/:id', async (req: AuthedRequest, res) => {
     const id = String(req.params.id ?? '');
     const entity = ENTITY_BY_TABLE[table];
 
-    if (!entity || !id || table === 'businesses') {
+    if (
+      !entity ||
+      !id ||
+      table === 'businesses' ||
+      table === 'stock_movements' ||
+      table === 'daily_closings' ||
+      table === 'daily_stock_lines'
+    ) {
       res.status(400).json({ error: 'Delete not allowed for this table' });
       return;
     }

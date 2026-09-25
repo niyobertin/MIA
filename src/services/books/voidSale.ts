@@ -1,15 +1,18 @@
-import { generateUUID } from '@/utils/uuid';
 import { saleRepository } from '@/repositories/sales/sales';
 import { stockMovementRepository } from '@/repositories/products/products';
 import { queueSync } from '@/services/sync/queue';
 import { assertDayIsOpen } from './guards';
 import { settleCustomerAccount } from './settle';
+import { recordStockMovement } from './recordStockMovement';
+import { UserRole } from '@/types';
 
 export async function voidSale(input: {
   businessId: string;
   saleId: string;
   userId: string;
   deviceId: string;
+  role: UserRole | null;
+  reason?: string;
 }): Promise<void> {
   const sale = await saleRepository.findById(input.saleId, input.businessId);
   if (!sale) throw new Error('SALE_NOT_FOUND');
@@ -22,27 +25,22 @@ export async function voidSale(input: {
 
   for (const item of recorded) {
     if (item.type !== 'sale') continue;
-    const movement = await stockMovementRepository.create({
-      id: generateUUID(),
-      business_id: input.businessId,
-      product_id: item.product_id,
+    await recordStockMovement({
+      businessId: input.businessId,
+      productId: item.product_id,
+      userId: input.userId,
+      deviceId: input.deviceId,
+      role: input.role,
       type: 'return_in',
       quantity: item.quantity,
-      unit_cost: item.unit_cost,
-      reference_type: 'sale_return',
-      reference_id: sale.id,
-      occurred_at: now,
-      created_by: input.userId,
-      device_id: input.deviceId,
-      sync_status: 'pending',
+      unitCost: item.unit_cost,
+      referenceType: 'sale_return',
+      referenceId: sale.id,
+      occurredAt: now,
+      reason: input.reason?.trim() || 'Sale void',
+      reversalOf: item.id,
+      businessDate: sale.sale_date,
     });
-    await queueSync(
-      'stock_movements',
-      movement.id,
-      'insert',
-      movement as unknown as Record<string, unknown>,
-      input.businessId
-    );
   }
 
   const updated = await saleRepository.update(sale.id, input.businessId, {

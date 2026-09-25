@@ -22,6 +22,8 @@ import {
   useLatestClosing,
   useDailyFinancials,
   useStockSnapshot,
+  useDayStockLines,
+  useTrackedStock,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';
@@ -41,6 +43,8 @@ export default function ClosingScreen() {
   const todayClosingQuery = useDailyClosing(today);
   const financialsQuery = useDailyFinancials(today);
   const stockQuery = useStockSnapshot();
+  const linesQuery = useDayStockLines(today);
+  const trackedQuery = useTrackedStock();
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
   const latestClosingQuery = useLatestClosing();
@@ -81,6 +85,20 @@ export default function ClosingScreen() {
   const openingStockValue = activeOpen?.opening_stock_value ?? liveStock?.value ?? 0;
   const availableStockQty = liveStock?.quantity ?? 0;
   const availableStockValue = liveStock?.value ?? 0;
+  const savedLines = linesQuery.data ?? [];
+  const previewLines = savedLines.length
+    ? savedLines.map((line) => ({
+        id: line.product_id,
+        name: line.product_name ?? line.product_id,
+        opening: line.opening_qty,
+        closing: line.closing_qty,
+      }))
+    : (trackedQuery.data ?? []).map((row) => ({
+        id: row.product_id,
+        name: row.name,
+        opening: row.balance,
+        closing: null as number | null,
+      }));
   const openingCash = parseInt(watch('openingCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
   const actualCash = parseInt(watch('actualCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
 
@@ -102,6 +120,8 @@ export default function ClosingScreen() {
       todayClosingQuery.refetch(),
       financialsQuery.refetch(),
       stockQuery.refetch(),
+      linesQuery.refetch(),
+      trackedQuery.refetch(),
     ]);
     setRefreshing(false);
   };
@@ -196,7 +216,21 @@ export default function ClosingScreen() {
                 value={`${(todayClosing.closing_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
               />
               <ClosedRow label={t('cash.stockValue')} value={todayClosing.closing_stock_value ?? 0} />
+              {todayClosing.opened_at ? (
+                <ClosedCountRow label={t('cash.openedAt')} value={todayClosing.opened_at.slice(0, 16).replace('T', ' ')} />
+              ) : null}
+              {todayClosing.closed_at ? (
+                <ClosedCountRow label={t('cash.closedAt')} value={todayClosing.closed_at.slice(0, 16).replace('T', ' ')} />
+              ) : null}
             </View>
+            <ItemQtyList
+              title={t('cash.closingItems')}
+              rows={previewLines}
+              mode="closing"
+              emptyLabel={t('cash.noStockItems')}
+              openingLabel={t('cash.openingStock')}
+              closingLabel={t('cash.availableStock')}
+            />
           </View>
         ) : needsStart ? (
           <>
@@ -213,6 +247,14 @@ export default function ClosingScreen() {
               value={liveStock?.value ?? 0}
               unitsLabel={t('cash.stockUnits')}
               valueLabel={t('cash.stockValue')}
+            />
+            <ItemQtyList
+              title={t('cash.openingItems')}
+              rows={previewLines}
+              mode="opening"
+              emptyLabel={t('cash.noStockItems')}
+              openingLabel={t('cash.openingStock')}
+              closingLabel={t('cash.availableStock')}
             />
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.openingCash')}</Text>
@@ -276,6 +318,22 @@ export default function ClosingScreen() {
               value={availableStockValue}
               unitsLabel={t('cash.stockUnits')}
               valueLabel={t('cash.stockValue')}
+            />
+            <ItemQtyList
+              title={t('cash.closingItems')}
+              rows={(trackedQuery.data ?? []).map((row) => {
+                const saved = savedLines.find((line) => line.product_id === row.product_id);
+                return {
+                  id: row.product_id,
+                  name: row.name,
+                  opening: saved?.opening_qty ?? row.balance,
+                  closing: row.balance,
+                };
+              })}
+              mode="both"
+              emptyLabel={t('cash.noStockItems')}
+              openingLabel={t('cash.openingStock')}
+              closingLabel={t('cash.availableStock')}
             />
 
             <View style={styles.card}>
@@ -350,6 +408,40 @@ export default function ClosingScreen() {
         confirmText={t('cash.closeDay')}
         variant="danger"
       />
+    </View>
+  );
+}
+
+function ItemQtyList({
+  title,
+  rows,
+  mode,
+  emptyLabel,
+  openingLabel,
+  closingLabel,
+}: {
+  title: string;
+  rows: Array<{ id: string; name: string; opening: number; closing: number | null }>;
+  mode: 'opening' | 'closing' | 'both';
+  emptyLabel: string;
+  openingLabel: string;
+  closingLabel: string;
+}) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      {rows.length === 0 ? <Text style={styles.flowLabel}>{emptyLabel}</Text> : null}
+      {rows.map((row) => (
+        <View key={row.id} style={styles.itemRow}>
+          <Text style={styles.itemName} numberOfLines={1}>{row.name}</Text>
+          {mode !== 'closing' ? (
+            <Text style={styles.itemQty}>{openingLabel}: {row.opening.toLocaleString()}</Text>
+          ) : null}
+          {mode !== 'opening' ? (
+            <Text style={styles.itemQty}>{closingLabel}: {(row.closing ?? row.opening).toLocaleString()}</Text>
+          ) : null}
+        </View>
+      ))}
     </View>
   );
 }
@@ -479,6 +571,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 5,
+  },
+  itemRow: {
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  itemName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  itemQty: {
+    fontSize: 12,
+    color: colors.body,
+    marginTop: 2,
   },
   flowLabel: {
     fontSize: 14,

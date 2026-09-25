@@ -16,6 +16,7 @@ import {
   Expense,
   Payment,
   DailyClosing,
+  DailyStockLine,
 } from './entities';
 
 dotenv.config();
@@ -41,6 +42,7 @@ export const AppDataSource = new DataSource({
     Expense,
     Payment,
     DailyClosing,
+    DailyStockLine,
   ],
   synchronize: false,
   logging: process.env.TYPEORM_LOGGING === 'true',

@@ -9,6 +9,7 @@ import { saleRepository, saleItemRepository } from '@/repositories/sales/sales';
 import { expenseRepository } from '@/repositories/expenses/expenses';
 import { paymentRepository } from '@/repositories/payments/payments';
 import { dailyClosingRepository } from '@/repositories/reports/dailyClosing';
+import { userRepository } from '@/repositories/users/users';
 import { financialService } from '@/services/financial';
 import { queueSync } from '@/services/sync/queue';
 import { getDatabase } from '@/db/database';
@@ -17,6 +18,9 @@ import { settleCustomerAccount, settleSupplierAccount } from '@/services/books/s
 import { voidSale } from '@/services/books/voidSale';
 import { voidPurchase } from '@/services/books/voidPurchase';
 import { adjustStock, StockAdjustmentKind } from '@/services/books/adjustStock';
+import { recordStockMovement } from '@/services/books/recordStockMovement';
+import { captureOpeningStock, sealClosingStock } from '@/services/books/dailyStock';
+import { dailyStockLineRepository } from '@/repositories/reports/dailyStock';
 import { reconcileProductCost } from '@/services/books/averageCost';
 import { Product, Category, Supplier, Customer, Purchase, Sale, Expense, Payment, PaymentMethod, DailyClosing, StockMovement } from '@/types';
 import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
@@ -24,6 +28,7 @@ import { toLocalDateString } from '@/utils/periodBounds';
 
 const getBusinessId = () => useAuthStore.getState().business?.id ?? '';
 const getUserId = () => useAuthStore.getState().user?.id ?? '';
+const getRole = () => useAuthStore.getState().user?.role ?? null;
 const getDeviceId = () => 'local-device';
 
 function requireAuthContext() {
@@ -301,6 +306,49 @@ export function useDailyFinancials(businessDate: string) {
     queryKey: ['dailyFinancials', businessId, businessDate],
     queryFn: () => financialService.calculateDailyFinancials(businessId, businessDate),
     enabled: !!businessId && !!businessDate,
+  });
+}
+
+export function useDayStockLines(businessDate: string | null) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['dayStockLines', businessId, businessDate],
+    queryFn: () => dailyStockLineRepository.findByDate(businessId, businessDate!),
+    enabled: !!businessId && !!businessDate,
+  });
+}
+
+export function useStockMovementHistory(filters: {
+  startDate?: string;
+  endDate?: string;
+  productId?: string;
+  type?: string;
+  userId?: string;
+  quantity?: number;
+}) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['stockMovementHistory', businessId, filters],
+    queryFn: () => stockMovementRepository.search(businessId, filters),
+    enabled: !!businessId,
+  });
+}
+
+export function useBusinessUsers() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['businessUsers', businessId],
+    queryFn: () => userRepository.findActiveUsers(businessId),
+    enabled: !!businessId,
+  });
+}
+
+export function useTrackedStock() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['trackedStock', businessId],
+    queryFn: () => productRepository.getTrackedBalances(businessId),
+    enabled: !!businessId,
   });
 }
 
@@ -745,27 +793,19 @@ export function useImportProducts() {
           }
 
           if (!existing && row.opening_stock > 0) {
-            const movement = await stockMovementRepository.create({
-              id: generateUUID(),
-              business_id: bid,
-              product_id: productId,
+            await recordStockMovement({
+              businessId: bid,
+              productId,
+              userId,
+              deviceId,
+              role: getRole(),
               type: 'opening',
               quantity: row.opening_stock,
-              unit_cost: row.average_cost,
-              reference_type: null,
-              reference_id: null,
-              occurred_at: new Date().toISOString(),
-              created_by: userId,
-              device_id: deviceId,
-              sync_status: 'pending',
+              unitCost: row.average_cost,
+              referenceType: 'opening_balance',
+              referenceId: null,
+              reason: 'Opening stock',
             });
-            await queueSync(
-              'stock_movements',
-              movement.id,
-              'insert',
-              movement as unknown as Record<string, unknown>,
-              bid
-            );
             stocked++;
           }
         } catch (error) {
@@ -851,21 +891,20 @@ export function useCreateSale() {
 
           const product = await productRepository.findById(item.product_id, bid);
           if (product?.track_inventory) {
-            const movement = await stockMovementRepository.create({
-              id: generateUUID(),
-              business_id: bid,
-              product_id: item.product_id,
+            await recordStockMovement({
+              businessId: bid,
+              productId: item.product_id,
+              userId,
+              deviceId,
+              role: getRole(),
               type: 'sale',
               quantity: item.quantity,
-              unit_cost: item.unit_cost,
-              reference_type: 'sale',
-              reference_id: saleId,
-              occurred_at: now,
-              created_by: userId,
-              device_id: deviceId,
-              sync_status: 'pending',
+              unitCost: item.unit_cost,
+              referenceType: 'sale',
+              referenceId: saleId,
+              occurredAt: now,
+              businessDate: today,
             });
-            await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
           }
         }
 
@@ -969,21 +1008,20 @@ export function useCreatePurchase() {
 
           const productBefore = await productRepository.findById(item.product_id, bid);
           if (productBefore?.track_inventory) {
-            const movement = await stockMovementRepository.create({
-              id: generateUUID(),
-              business_id: bid,
-              product_id: item.product_id,
+            await recordStockMovement({
+              businessId: bid,
+              productId: item.product_id,
+              userId,
+              deviceId,
+              role: getRole(),
               type: 'purchase',
               quantity: item.quantity,
-              unit_cost: item.unit_cost,
-              reference_type: 'purchase',
-              reference_id: purchaseId,
-              occurred_at: now,
-              created_by: userId,
-              device_id: deviceId,
-              sync_status: 'pending',
+              unitCost: item.unit_cost,
+              referenceType: 'purchase',
+              referenceId: purchaseId,
+              occurredAt: now,
+              businessDate: today,
             });
-            await queueSync('stock_movements', movement.id, 'insert', movement as unknown as Record<string, unknown>, bid);
             await reconcileProductCost(bid, item.product_id);
             const product = await productRepository.findById(item.product_id, bid);
             if (product) {
@@ -1282,9 +1320,16 @@ export function useStartDay() {
         closing_stock_qty: 0,
         closing_stock_value: 0,
         notes: data.notes ?? null,
+        opened_by: userId,
+        opened_at: new Date().toISOString(),
         closed_by: null,
         closed_at: null,
         status: 'open',
+      });
+      await captureOpeningStock({
+        businessId,
+        dailyClosingId: closing.id,
+        businessDate: data.businessDate,
       });
       await queueSync(
         'daily_closings',
@@ -1299,6 +1344,8 @@ export function useStartDay() {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dayStockLines', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['trackedStock', businessId] });
     },
   });
 }
@@ -1354,6 +1401,8 @@ export function useCloseDay() {
         closing_stock_qty: snapshot.quantity,
         closing_stock_value: snapshot.value,
         notes: data.notes ?? null,
+        opened_by: existing?.opened_by ?? userId,
+        opened_at: existing?.opened_at ?? new Date().toISOString(),
         closed_by: userId,
         closed_at: new Date().toISOString(),
         status: 'closed' as const,
@@ -1372,6 +1421,11 @@ export function useCloseDay() {
       }
 
       if (closing) {
+        await sealClosingStock({
+          businessId,
+          dailyClosingId: closing.id,
+          businessDate: data.businessDate,
+        });
         await queueSync(
           'daily_closings',
           closing.id,
@@ -1387,6 +1441,8 @@ export function useCloseDay() {
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dayStockLines', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['trackedStock', businessId] });
     },
   });
 }
@@ -1409,7 +1465,7 @@ export function useVoidSale() {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
       const db = await getDatabase();
       await db.withTransactionAsync(async () => {
-        await voidSale({ businessId: bid, saleId, userId, deviceId });
+        await voidSale({ businessId: bid, saleId, userId, deviceId, role: getRole() });
       });
     },
     onSuccess: () => {
@@ -1435,7 +1491,7 @@ export function useVoidPurchase() {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
       const db = await getDatabase();
       await db.withTransactionAsync(async () => {
-        await voidPurchase({ businessId: bid, purchaseId, userId, deviceId });
+        await voidPurchase({ businessId: bid, purchaseId, userId, deviceId, role: getRole() });
       });
     },
     onSuccess: () => {
@@ -1457,7 +1513,7 @@ export function useAdjustStock() {
   const businessId = getBusinessId();
 
   return useMutation({
-    mutationFn: async (input: { productId: string; kind: StockAdjustmentKind; quantity: number }) => {
+    mutationFn: async (input: { productId: string; kind: StockAdjustmentKind; quantity: number; reason: string }) => {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
       const db = await getDatabase();
       await db.withTransactionAsync(async () => {
@@ -1466,8 +1522,10 @@ export function useAdjustStock() {
           productId: input.productId,
           userId,
           deviceId,
+          role: getRole(),
           kind: input.kind,
           quantity: input.quantity,
+          reason: input.reason,
         });
       });
     },
