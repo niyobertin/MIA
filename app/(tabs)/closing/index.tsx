@@ -16,7 +16,6 @@ import { canCloseDay } from '@/utils/permissions';
 import { useForm } from 'react-hook-form';
 import {
   useOpenDailyClosing,
-  useDailyClosing,
   useCloseDay,
   useStartDay,
   useLatestClosing,
@@ -40,20 +39,21 @@ export default function ClosingScreen() {
   const today = getTodayDateString();
 
   const openClosingQuery = useOpenDailyClosing();
-  const todayClosingQuery = useDailyClosing(today);
-  const financialsQuery = useDailyFinancials(today);
+  const activeOpen = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
+  const sessionStart = activeOpen?.business_date?.slice(0, 10) ?? today;
+  const financialsQuery = useDailyFinancials(sessionStart, today);
   const stockQuery = useStockSnapshot();
-  const linesQuery = useDayStockLines(today);
+  const linesQuery = useDayStockLines({
+    closingId: activeOpen?.id ?? null,
+    businessDate: activeOpen ? null : today,
+  });
   const trackedQuery = useTrackedStock();
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
   const latestClosingQuery = useLatestClosing();
 
-  const todayClosing = todayClosingQuery.data;
-  const openClosing = openClosingQuery.data;
-  const activeOpen = todayClosing?.status === 'open' ? todayClosing : openClosing?.status === 'open' ? openClosing : null;
-  const isClosed = todayClosing?.status === 'closed';
-  const needsStart = !isClosed && !activeOpen;
+  const needsStart = !activeOpen;
+  const lastClosed = latestClosingQuery.data;
 
   const { control, handleSubmit, watch, setValue } = useForm<DayForm>({
     defaultValues: {
@@ -70,11 +70,11 @@ export default function ClosingScreen() {
       return;
     }
     if (didPrefillOpening.current || !needsStart) return;
-    const counted = latestClosingQuery.data?.actual_cash;
+    const counted = lastClosed?.actual_cash;
     if (counted == null) return;
     setValue('openingCash', String(counted));
     didPrefillOpening.current = true;
-  }, [activeOpen, needsStart, latestClosingQuery.data?.actual_cash, setValue]);
+  }, [activeOpen, needsStart, lastClosed?.actual_cash, setValue]);
 
   const [showConfirm, setShowConfirm] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -86,19 +86,21 @@ export default function ClosingScreen() {
   const availableStockQty = liveStock?.quantity ?? 0;
   const availableStockValue = liveStock?.value ?? 0;
   const savedLines = linesQuery.data ?? [];
-  const previewLines = savedLines.length
-    ? savedLines.map((line) => ({
-        id: line.product_id,
-        name: line.product_name ?? line.product_id,
-        opening: line.opening_qty,
-        closing: line.closing_qty,
-      }))
-    : (trackedQuery.data ?? []).map((row) => ({
-        id: row.product_id,
-        name: row.name,
-        opening: row.balance,
-        closing: null as number | null,
-      }));
+  const openingRows = (trackedQuery.data ?? []).map((row) => ({
+    id: row.product_id,
+    name: row.name,
+    qty: row.balance,
+  }));
+  const closingRows = (trackedQuery.data ?? []).map((row) => {
+    const saved = savedLines.find((line) => line.product_id === row.product_id);
+    return {
+      id: row.product_id,
+      name: row.name,
+      qty: row.balance,
+      opening: saved?.opening_qty ?? null,
+    };
+  });
+
   const openingCash = parseInt(watch('openingCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
   const actualCash = parseInt(watch('actualCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
 
@@ -117,11 +119,11 @@ export default function ClosingScreen() {
     setRefreshing(true);
     await Promise.all([
       openClosingQuery.refetch(),
-      todayClosingQuery.refetch(),
       financialsQuery.refetch(),
       stockQuery.refetch(),
       linesQuery.refetch(),
       trackedQuery.refetch(),
+      latestClosingQuery.refetch(),
     ]);
     setRefreshing(false);
   };
@@ -134,13 +136,14 @@ export default function ClosingScreen() {
         openingCash: cash,
         notes: values.notes || undefined,
       });
+      didPrefillOpening.current = false;
+      setValue('actualCash', '');
+      setValue('notes', '');
       showToast(t('cash.dayStarted'), 'success');
-      await Promise.all([openClosingQuery.refetch(), todayClosingQuery.refetch()]);
+      await Promise.all([openClosingQuery.refetch(), linesQuery.refetch()]);
     } catch (error: any) {
       if (error?.message === 'DAY_ALREADY_OPEN') {
         showToast(t('cash.dayAlreadyOpen'), 'info');
-      } else if (error?.message === 'DAY_ALREADY_CLOSED') {
-        showToast(t('cash.dayAlreadyClosed'), 'error');
       } else {
         showToast(t('common.error'), 'error');
       }
@@ -150,15 +153,18 @@ export default function ClosingScreen() {
   const doClose = async () => {
     try {
       await closeDayMutation.mutateAsync({
-        businessDate: today,
+        closingId: activeOpen?.id,
+        businessDate: sessionStart,
         openingCash,
         actualCash,
         notes: watch('notes') || undefined,
       });
       setShowConfirm(false);
+      didPrefillOpening.current = false;
+      setValue('actualCash', '');
+      setValue('notes', '');
       showToast(t('cash.dayClosed'), 'success');
-      openClosingQuery.refetch();
-      todayClosingQuery.refetch();
+      await Promise.all([openClosingQuery.refetch(), latestClosingQuery.refetch()]);
     } catch {
       setShowConfirm(false);
       showToast(t('common.error'), 'error');
@@ -185,62 +191,31 @@ export default function ClosingScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {openClosingQuery.isLoading || todayClosingQuery.isLoading || financialsQuery.isLoading || stockQuery.isLoading ? (
+        {openClosingQuery.isLoading || financialsQuery.isLoading || stockQuery.isLoading ? (
           <Skeleton height={220} style={styles.skel} />
-        ) : isClosed && todayClosing ? (
-          <View style={styles.closedCard}>
-            <View style={styles.closedIcon}>
-              <Ionicons name="checkmark" size={30} color="#fff" />
-            </View>
-            <Text style={styles.closedTitle}>{t('cash.dayAlreadyClosed')}</Text>
-            <View style={styles.closedRows}>
-              <ClosedRow label={t('cash.openingCash')} value={todayClosing.opening_cash} />
-              <ClosedRow label={t('dashboard.sales')} value={todayClosing.total_sales} />
-              <ClosedRow label={t('cash.expectedCash')} value={todayClosing.expected_cash} />
-              <ClosedRow label={t('cash.actualCash')} value={todayClosing.actual_cash} />
-              <ClosedRow
-                label={t('cash.cashVariance')}
-                value={todayClosing.cash_variance}
-                color={todayClosing.cash_variance >= 0 ? colors.success : colors.danger}
-              />
-              <ClosedRow label={t('dashboard.grossProfit')} value={todayClosing.gross_profit} />
-              <ClosedRow label={t('dashboard.netProfit')} value={todayClosing.net_profit} />
-              <View style={styles.divider} />
-              <ClosedCountRow
-                label={t('cash.openingStock')}
-                value={`${(todayClosing.opening_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
-              />
-              <ClosedRow label={t('cash.stockValue')} value={todayClosing.opening_stock_value ?? 0} />
-              <ClosedCountRow
-                label={t('cash.availableStock')}
-                value={`${(todayClosing.closing_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
-              />
-              <ClosedRow label={t('cash.stockValue')} value={todayClosing.closing_stock_value ?? 0} />
-              {todayClosing.opened_at ? (
-                <ClosedCountRow label={t('cash.openedAt')} value={todayClosing.opened_at.slice(0, 16).replace('T', ' ')} />
-              ) : null}
-              {todayClosing.closed_at ? (
-                <ClosedCountRow label={t('cash.closedAt')} value={todayClosing.closed_at.slice(0, 16).replace('T', ' ')} />
-              ) : null}
-            </View>
-            <ItemQtyList
-              title={t('cash.closingItems')}
-              rows={previewLines}
-              mode="closing"
-              emptyLabel={t('cash.noStockItems')}
-              openingLabel={t('cash.openingStock')}
-              closingLabel={t('cash.availableStock')}
-            />
-          </View>
         ) : needsStart ? (
           <>
             <View style={styles.infoCard}>
               <Ionicons name="sunny-outline" size={28} color={colors.primary} />
               <View style={styles.infoText}>
                 <Text style={styles.infoTitle}>{t('cash.startDayTitle')}</Text>
-                <Text style={styles.infoBody}>{t('cash.startDayHint')}</Text>
+                <Text style={styles.infoBody}>{t('cash.startDayAnyTime')}</Text>
               </View>
             </View>
+            {lastClosed ? (
+              <View style={styles.lastClosedCard}>
+                <Text style={styles.lastClosedTitle}>{t('cash.lastClosedSession')}</Text>
+                <ClosedCountRow
+                  label={t('cash.businessDate')}
+                  value={lastClosed.business_date}
+                />
+                <ClosedRow label={t('cash.actualCash')} value={lastClosed.actual_cash} />
+                <ClosedCountRow
+                  label={t('cash.availableStock')}
+                  value={`${(lastClosed.closing_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
+                />
+              </View>
+            ) : null}
             <StockCard
               title={t('cash.openingStock')}
               quantity={liveStock?.quantity ?? 0}
@@ -250,11 +225,9 @@ export default function ClosingScreen() {
             />
             <ItemQtyList
               title={t('cash.openingItems')}
-              rows={previewLines}
-              mode="opening"
+              rows={openingRows}
               emptyLabel={t('cash.noStockItems')}
-              openingLabel={t('cash.openingStock')}
-              closingLabel={t('cash.availableStock')}
+              qtyLabel={t('cash.openingStock')}
             />
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.openingCash')}</Text>
@@ -290,7 +263,10 @@ export default function ClosingScreen() {
           <>
             <View style={styles.openBadge}>
               <Ionicons name="ellipse" size={10} color={colors.success} />
-              <Text style={styles.openBadgeText}>{t('cash.dayIsOpen')}</Text>
+              <Text style={styles.openBadgeText}>
+                {t('cash.dayIsOpen')} · {sessionStart}
+                {sessionStart !== today ? ` → ${today}` : ''}
+              </Text>
             </View>
 
             <View style={styles.card}>
@@ -312,6 +288,18 @@ export default function ClosingScreen() {
               unitsLabel={t('cash.stockUnits')}
               valueLabel={t('cash.stockValue')}
             />
+            <ItemQtyList
+              title={t('cash.openingItems')}
+              rows={savedLines.length
+                ? savedLines.map((line) => ({
+                    id: line.product_id,
+                    name: line.product_name ?? line.product_id,
+                    qty: line.opening_qty,
+                  }))
+                : openingRows}
+              emptyLabel={t('cash.noStockItems')}
+              qtyLabel={t('cash.openingStock')}
+            />
             <StockCard
               title={t('cash.availableStock')}
               quantity={availableStockQty}
@@ -321,19 +309,11 @@ export default function ClosingScreen() {
             />
             <ItemQtyList
               title={t('cash.closingItems')}
-              rows={(trackedQuery.data ?? []).map((row) => {
-                const saved = savedLines.find((line) => line.product_id === row.product_id);
-                return {
-                  id: row.product_id,
-                  name: row.name,
-                  opening: saved?.opening_qty ?? row.balance,
-                  closing: row.balance,
-                };
-              })}
-              mode="both"
+              rows={closingRows}
               emptyLabel={t('cash.noStockItems')}
+              qtyLabel={t('cash.availableStock')}
+              showOpening
               openingLabel={t('cash.openingStock')}
-              closingLabel={t('cash.availableStock')}
             />
 
             <View style={styles.card}>
@@ -415,31 +395,36 @@ export default function ClosingScreen() {
 function ItemQtyList({
   title,
   rows,
-  mode,
   emptyLabel,
+  qtyLabel,
+  showOpening,
   openingLabel,
-  closingLabel,
 }: {
   title: string;
-  rows: Array<{ id: string; name: string; opening: number; closing: number | null }>;
-  mode: 'opening' | 'closing' | 'both';
+  rows: Array<{ id: string; name: string; qty: number; opening?: number | null }>;
   emptyLabel: string;
-  openingLabel: string;
-  closingLabel: string;
+  qtyLabel: string;
+  showOpening?: boolean;
+  openingLabel?: string;
 }) {
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.itemHeader}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.itemHeaderQty}>{qtyLabel}</Text>
+      </View>
       {rows.length === 0 ? <Text style={styles.flowLabel}>{emptyLabel}</Text> : null}
       {rows.map((row) => (
         <View key={row.id} style={styles.itemRow}>
-          <Text style={styles.itemName} numberOfLines={1}>{row.name}</Text>
-          {mode !== 'closing' ? (
-            <Text style={styles.itemQty}>{openingLabel}: {row.opening.toLocaleString()}</Text>
-          ) : null}
-          {mode !== 'opening' ? (
-            <Text style={styles.itemQty}>{closingLabel}: {(row.closing ?? row.opening).toLocaleString()}</Text>
-          ) : null}
+          <View style={styles.itemInfo}>
+            <Text style={styles.itemName} numberOfLines={1}>{row.name}</Text>
+            {showOpening && row.opening != null ? (
+              <Text style={styles.itemMeta}>
+                {openingLabel}: {row.opening.toLocaleString()}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={styles.itemQtyValue}>{row.qty.toLocaleString()}</Text>
         </View>
       ))}
     </View>
@@ -496,45 +481,40 @@ function ClosedRow({ label, value, color }: { label: string; value: number; colo
   return (
     <View style={styles.flowRow}>
       <Text style={styles.flowLabel}>{label}</Text>
-      <MoneyText amount={value} size={15} weight="700" color={color ?? colors.ink} />
+      <MoneyText amount={value} size={14} weight="600" color={color} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: 110,
-    gap: spacing.md,
-  },
-  skel: {
-    borderRadius: radius.lg,
-  },
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { padding: spacing.lg, paddingBottom: 48 },
+  skel: { borderRadius: radius.lg, marginBottom: spacing.md },
   infoCard: {
     flexDirection: 'row',
     gap: spacing.md,
     backgroundColor: colors.primarySoft,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    alignItems: 'flex-start',
+    marginBottom: spacing.md,
   },
-  infoText: {
-    flex: 1,
+  infoText: { flex: 1 },
+  infoTitle: { fontSize: 16, fontWeight: '700', color: colors.ink },
+  infoBody: { fontSize: 13, color: colors.body, marginTop: 4, lineHeight: 18 },
+  lastClosedCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.card,
   },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.primaryText,
-  },
-  infoBody: {
-    fontSize: 13,
-    color: colors.primaryText,
-    marginTop: 4,
-    lineHeight: 18,
+  lastClosedTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.muted,
+    marginBottom: spacing.sm,
   },
   openBadge: {
     flexDirection: 'row',
@@ -543,111 +523,62 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: colors.successSoft,
     paddingHorizontal: spacing.md,
-    paddingVertical: 6,
+    paddingVertical: spacing.sm,
     borderRadius: radius.full,
+    marginBottom: spacing.md,
   },
-  openBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.successText,
-  },
+  openBadgeText: { fontSize: 13, fontWeight: '700', color: colors.successText },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.lg,
+    marginBottom: spacing.md,
     ...shadows.card,
   },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    color: colors.muted,
-    marginBottom: spacing.sm,
-  },
+  resultCard: { marginBottom: spacing.lg },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: colors.ink, marginBottom: spacing.sm },
   flowRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 5,
+    paddingVertical: 6,
   },
-  itemRow: {
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
-  },
-  itemName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  itemQty: {
-    fontSize: 12,
-    color: colors.body,
-    marginTop: 2,
-  },
-  flowLabel: {
-    fontSize: 14,
-    color: colors.body,
-  },
-  flowLabelStrong: {
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  qtyValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.borderSoft,
-    marginVertical: spacing.sm,
-  },
-  resultCard: {
-    backgroundColor: colors.inputBg,
-  },
+  flowLabel: { fontSize: 14, color: colors.body, flex: 1, paddingRight: spacing.sm },
+  flowLabelStrong: { fontWeight: '700', color: colors.ink },
+  qtyValue: { fontSize: 15, fontWeight: '800', color: colors.ink },
+  divider: { height: 1, backgroundColor: colors.borderSoft, marginVertical: spacing.sm },
   varianceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  varianceLabel: {
+  varianceLabel: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  varianceHint: { marginTop: spacing.sm, fontSize: 13, color: colors.muted },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  itemHeaderQty: { fontSize: 12, fontWeight: '700', color: colors.muted },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    gap: spacing.md,
+  },
+  itemInfo: { flex: 1, minWidth: 0 },
+  itemName: { fontSize: 14, fontWeight: '700', color: colors.ink },
+  itemMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  itemQtyValue: {
     fontSize: 16,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  varianceHint: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: spacing.sm,
-  },
-  closedCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.xl,
-    alignItems: 'center',
-    ...shadows.card,
-  },
-  closedIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  closedTitle: {
-    fontSize: 17,
     fontWeight: '800',
     color: colors.ink,
-    marginBottom: spacing.lg,
-  },
-  closedRows: {
-    width: '100%',
+    minWidth: 48,
+    textAlign: 'right',
   },
 });

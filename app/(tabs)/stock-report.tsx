@@ -13,7 +13,7 @@ export default function StockReportScreen() {
   const { t } = useTranslation();
   const [date, setDate] = React.useState(getTodayDateString());
   const day = date.length >= 10 ? date.slice(0, 10) : '';
-  const linesQuery = useDayStockLines(day || null);
+  const linesQuery = useDayStockLines({ businessDate: day || null });
   const closingQuery = useDailyClosing(day);
   const liveQuery = useTrackedStock();
   const [refreshing, setRefreshing] = React.useState(false);

@@ -82,6 +82,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     if (fromVersion < 8) {
       await migrateStockDayAudit(database);
     }
+    if (fromVersion < 9) {
+      await migrateFlexibleDaySessions(database);
+    }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -281,6 +284,100 @@ async function migrateStockDayAudit(database: SQLite.SQLiteDatabase): Promise<vo
     CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
     CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
   `);
+}
+
+async function migrateFlexibleDaySessions(database: SQLite.SQLiteDatabase): Promise<void> {
+  const closingsExist = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'daily_closings'`
+  );
+  if (closingsExist) {
+    await database.execAsync('PRAGMA foreign_keys = OFF;');
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS daily_closings_v9 (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        business_date TEXT NOT NULL,
+        opening_cash INTEGER NOT NULL DEFAULT 0,
+        cash_sales INTEGER NOT NULL DEFAULT 0,
+        customer_cash_payments INTEGER NOT NULL DEFAULT 0,
+        other_cash_income INTEGER NOT NULL DEFAULT 0,
+        cash_purchases INTEGER NOT NULL DEFAULT 0,
+        cash_expenses INTEGER NOT NULL DEFAULT 0,
+        supplier_cash_payments INTEGER NOT NULL DEFAULT 0,
+        withdrawals INTEGER NOT NULL DEFAULT 0,
+        expected_cash INTEGER NOT NULL DEFAULT 0,
+        actual_cash INTEGER NOT NULL DEFAULT 0,
+        cash_variance INTEGER NOT NULL DEFAULT 0,
+        total_sales INTEGER NOT NULL DEFAULT 0,
+        cogs INTEGER NOT NULL DEFAULT 0,
+        gross_profit INTEGER NOT NULL DEFAULT 0,
+        expenses INTEGER NOT NULL DEFAULT 0,
+        net_profit INTEGER NOT NULL DEFAULT 0,
+        opening_stock_qty INTEGER NOT NULL DEFAULT 0,
+        opening_stock_value INTEGER NOT NULL DEFAULT 0,
+        closing_stock_qty INTEGER NOT NULL DEFAULT 0,
+        closing_stock_value INTEGER NOT NULL DEFAULT 0,
+        notes TEXT,
+        opened_by TEXT,
+        opened_at TEXT,
+        closed_by TEXT,
+        closed_at TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'reopened')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO daily_closings_v9
+        (id, business_id, business_date, opening_cash, cash_sales, customer_cash_payments, other_cash_income,
+         cash_purchases, cash_expenses, supplier_cash_payments, withdrawals, expected_cash, actual_cash, cash_variance,
+         total_sales, cogs, gross_profit, expenses, net_profit, opening_stock_qty, opening_stock_value,
+         closing_stock_qty, closing_stock_value, notes, opened_by, opened_at, closed_by, closed_at, status, created_at, updated_at)
+      SELECT id, business_id, business_date, opening_cash, cash_sales, customer_cash_payments, other_cash_income,
+         cash_purchases, cash_expenses, supplier_cash_payments, withdrawals, expected_cash, actual_cash, cash_variance,
+         total_sales, cogs, gross_profit, expenses, net_profit, opening_stock_qty, opening_stock_value,
+         closing_stock_qty, closing_stock_value, notes, opened_by, opened_at, closed_by, closed_at, status, created_at, updated_at
+      FROM daily_closings;
+      DROP TABLE daily_closings;
+      ALTER TABLE daily_closings_v9 RENAME TO daily_closings;
+      CREATE INDEX IF NOT EXISTS idx_daily_closings_business_id ON daily_closings(business_id);
+      CREATE INDEX IF NOT EXISTS idx_daily_closings_business_date ON daily_closings(business_date);
+      CREATE INDEX IF NOT EXISTS idx_daily_closings_status ON daily_closings(business_id, status);
+    `);
+    await database.execAsync('PRAGMA foreign_keys = ON;');
+  }
+
+  const linesExist = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'daily_stock_lines'`
+  );
+  if (linesExist) {
+    await database.execAsync('PRAGMA foreign_keys = OFF;');
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS daily_stock_lines_v9 (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+        daily_closing_id TEXT NOT NULL REFERENCES daily_closings(id) ON DELETE CASCADE,
+        business_date TEXT NOT NULL,
+        product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        opening_qty INTEGER NOT NULL DEFAULT 0,
+        opening_unit_cost INTEGER NOT NULL DEFAULT 0,
+        closing_qty INTEGER,
+        closing_unit_cost INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(daily_closing_id, product_id)
+      );
+      INSERT OR IGNORE INTO daily_stock_lines_v9
+        (id, business_id, daily_closing_id, business_date, product_id, opening_qty, opening_unit_cost,
+         closing_qty, closing_unit_cost, created_at, updated_at)
+      SELECT id, business_id, daily_closing_id, business_date, product_id, opening_qty, opening_unit_cost,
+         closing_qty, closing_unit_cost, created_at, updated_at
+      FROM daily_stock_lines;
+      DROP TABLE daily_stock_lines;
+      ALTER TABLE daily_stock_lines_v9 RENAME TO daily_stock_lines;
+      CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
+      CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
+    `);
+    await database.execAsync('PRAGMA foreign_keys = ON;');
+  }
 }
 
 async function migrateDailyClosingStockColumns(database: SQLite.SQLiteDatabase): Promise<void> {

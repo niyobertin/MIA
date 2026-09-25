@@ -339,7 +339,6 @@ export class Payment {
 }
 
 @Entity('daily_closings')
-@Unique(['business_id', 'business_date'])
 export class DailyClosing {
   @PrimaryColumn('uuid')
   id!: string;
@@ -437,7 +436,7 @@ export class DailyClosing {
 }
 
 @Entity('daily_stock_lines')
-@Unique(['business_id', 'business_date', 'product_id'])
+@Unique(['daily_closing_id', 'product_id'])
 export class DailyStockLine {
   @PrimaryColumn('uuid')
   id!: string;

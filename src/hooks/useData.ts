@@ -300,21 +300,27 @@ export function useStockMovements(productId: string | null, limit = 50) {
   });
 }
 
-export function useDailyFinancials(businessDate: string) {
+export function useDailyFinancials(businessDate: string, endDate?: string) {
   const businessId = getBusinessId();
+  const end = endDate ?? businessDate;
   return useQuery({
-    queryKey: ['dailyFinancials', businessId, businessDate],
-    queryFn: () => financialService.calculateDailyFinancials(businessId, businessDate),
+    queryKey: ['dailyFinancials', businessId, businessDate, end],
+    queryFn: () => financialService.calculateDailyFinancials(businessId, businessDate, end),
     enabled: !!businessId && !!businessDate,
   });
 }
 
-export function useDayStockLines(businessDate: string | null) {
+export function useDayStockLines(options: { businessDate?: string | null; closingId?: string | null }) {
   const businessId = getBusinessId();
+  const closingId = options.closingId ?? null;
+  const businessDate = options.businessDate ?? null;
   return useQuery({
-    queryKey: ['dayStockLines', businessId, businessDate],
-    queryFn: () => dailyStockLineRepository.findByDate(businessId, businessDate!),
-    enabled: !!businessId && !!businessDate,
+    queryKey: ['dayStockLines', businessId, closingId, businessDate],
+    queryFn: () =>
+      closingId
+        ? dailyStockLineRepository.findByClosingId(businessId, closingId)
+        : dailyStockLineRepository.findByDate(businessId, businessDate!),
+    enabled: !!businessId && (!!closingId || !!businessDate),
   });
 }
 
@@ -1286,11 +1292,8 @@ export function useStartDay() {
   return useMutation({
     mutationFn: async (data: { businessDate: string; openingCash: number; notes?: string }) => {
       const { userId } = requireAuthContext();
-      const existing = await dailyClosingRepository.findByDate(businessId, data.businessDate);
-      if (existing?.status === 'closed') {
-        throw new Error('DAY_ALREADY_CLOSED');
-      }
-      if (existing?.status === 'open') {
+      const open = await dailyClosingRepository.findOpenDay(businessId);
+      if (open) {
         throw new Error('DAY_ALREADY_OPEN');
       }
 
@@ -1356,29 +1359,41 @@ export function useCloseDay() {
   
   return useMutation({
     mutationFn: async (data: {
-      businessDate: string;
+      businessDate?: string;
+      closingId?: string;
       openingCash: number;
       actualCash: number;
       notes?: string;
     }) => {
       const { userId } = requireAuthContext();
+      const today = getTodayDateString();
+      const existing =
+        (data.closingId
+          ? await dailyClosingRepository.findById(data.closingId, businessId)
+          : null) ??
+        (await dailyClosingRepository.findOpenDay(businessId)) ??
+        (data.businessDate
+          ? await dailyClosingRepository.findByDate(businessId, data.businessDate)
+          : null);
+
+      if (!existing) throw new Error('DAY_NOT_OPEN');
+      if (existing.status === 'closed') throw new Error('DAY_ALREADY_CLOSED');
+
+      const startDate = existing.business_date.slice(0, 10);
+      const endDate = today;
       const reconciliation = await financialService.calculateCashReconciliation(
         businessId,
-        data.businessDate,
+        startDate,
         data.openingCash,
-        data.actualCash
+        data.actualCash,
+        endDate
       );
-      const financials = await financialService.calculateDailyFinancials(businessId, data.businessDate);
+      const financials = await financialService.calculateDailyFinancials(
+        businessId,
+        startDate,
+        endDate
+      );
       const snapshot = await productRepository.getStockSnapshot(businessId);
-
-      const existing = await dailyClosingRepository.findByDate(businessId, data.businessDate);
-      let openingStockQty = existing?.opening_stock_qty ?? snapshot.quantity;
-      let openingStockValue = existing?.opening_stock_value ?? snapshot.value;
-      if (!existing) {
-        const net = await productRepository.getNetMovementForDate(businessId, data.businessDate);
-        openingStockQty = snapshot.quantity - net.quantity;
-        openingStockValue = snapshot.value - net.value;
-      }
       const payload = {
         opening_cash: data.openingCash,
         cash_sales: reconciliation.breakdown.cashSales,
@@ -1396,40 +1411,29 @@ export function useCloseDay() {
         gross_profit: financials.grossProfit,
         expenses: financials.expenses,
         net_profit: financials.netProfit,
-        opening_stock_qty: openingStockQty,
-        opening_stock_value: openingStockValue,
+        opening_stock_qty: existing.opening_stock_qty ?? snapshot.quantity,
+        opening_stock_value: existing.opening_stock_value ?? snapshot.value,
         closing_stock_qty: snapshot.quantity,
         closing_stock_value: snapshot.value,
         notes: data.notes ?? null,
-        opened_by: existing?.opened_by ?? userId,
-        opened_at: existing?.opened_at ?? new Date().toISOString(),
+        opened_by: existing.opened_by ?? userId,
+        opened_at: existing.opened_at ?? new Date().toISOString(),
         closed_by: userId,
         closed_at: new Date().toISOString(),
         status: 'closed' as const,
       };
 
-      let closing;
-      if (existing) {
-        closing = await dailyClosingRepository.update(existing.id, businessId, payload);
-      } else {
-        closing = await dailyClosingRepository.create({
-          id: generateUUID(),
-          business_id: businessId,
-          business_date: data.businessDate,
-          ...payload,
-        });
-      }
-
+      const closing = await dailyClosingRepository.update(existing.id, businessId, payload);
       if (closing) {
         await sealClosingStock({
           businessId,
           dailyClosingId: closing.id,
-          businessDate: data.businessDate,
+          businessDate: closing.business_date,
         });
-        await queueSync(
+        await enqueueSync(
           'daily_closings',
           closing.id,
-          existing ? 'update' : 'insert',
+          'update',
           closing as unknown as Record<string, unknown>,
           businessId
         );

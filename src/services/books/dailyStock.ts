@@ -9,7 +9,10 @@ export async function captureOpeningStock(input: {
   dailyClosingId: string;
   businessDate: string;
 }): Promise<DailyStockLine[]> {
-  const existing = await dailyStockLineRepository.findByDate(input.businessId, input.businessDate);
+  const existing = await dailyStockLineRepository.findByClosingId(
+    input.businessId,
+    input.dailyClosingId
+  );
   if (existing.length > 0) return existing;
 
   const balances = await productRepository.getTrackedBalances(input.businessId);
@@ -45,7 +48,10 @@ export async function sealClosingStock(input: {
 }): Promise<DailyStockLine[]> {
   const balances = await productRepository.getTrackedBalances(input.businessId);
   const byProduct = new Map(balances.map((row) => [row.product_id, row]));
-  let lines = await dailyStockLineRepository.findByDate(input.businessId, input.businessDate);
+  let lines = await dailyStockLineRepository.findByClosingId(
+    input.businessId,
+    input.dailyClosingId
+  );
 
   if (lines.length === 0) {
     lines = await captureOpeningStock(input);

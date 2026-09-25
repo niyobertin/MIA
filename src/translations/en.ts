@@ -408,6 +408,8 @@ export const en = {
     startDayTitle: 'Open today’s business',
     startDayDesc: 'Record opening cash and review opening stock before you begin selling.',
     startDayHint: 'Count the cash in the drawer and check stock on hand, then start the day. You will close and reconcile at end of day.',
+    startDayAnyTime: 'Start a business day anytime. You can close later today, tomorrow, or after the next shift. After closing, you can start another day.',
+    lastClosedSession: 'Last closed session',
     startNotesPlaceholder: 'Optional note for opening cash',
     dayStarted: 'Day started successfully',
     dayAlreadyOpen: 'Today is already started',

@@ -9,6 +9,19 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
     'created_at', 'updated_at',
   ];
 
+  async findByClosingId(businessId: string, dailyClosingId: string): Promise<DailyStockLine[]> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<Record<string, unknown>>(
+      `SELECT l.*, p.name as product_name, p.unit as unit
+       FROM daily_stock_lines l
+       JOIN products p ON p.id = l.product_id
+       WHERE l.business_id = ? AND l.daily_closing_id = ?
+       ORDER BY p.name ASC`,
+      [businessId, dailyClosingId]
+    );
+    return rows.map((row) => this.mapRow(row));
+  }
+
   async findByDate(businessId: string, businessDate: string): Promise<DailyStockLine[]> {
     const db = await this.getDb();
     const rows = await db.getAllAsync<Record<string, unknown>>(

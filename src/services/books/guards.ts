@@ -3,9 +3,10 @@ import { productRepository } from '@/repositories/products/products';
 import { customerRepository } from '@/repositories/sales/customers';
 import { saleRepository } from '@/repositories/sales/sales';
 
-export async function assertDayIsOpen(businessId: string, businessDate: string): Promise<void> {
-  const closing = await dailyClosingRepository.findByDate(businessId, businessDate.slice(0, 10));
-  if (closing?.status === 'closed') {
+/** Business activity requires an open cash-day session (may span calendar days). */
+export async function assertDayIsOpen(businessId: string, _businessDate?: string): Promise<void> {
+  const open = await dailyClosingRepository.findOpenDay(businessId);
+  if (!open) {
     throw new Error('DAY_CLOSED');
   }
 }

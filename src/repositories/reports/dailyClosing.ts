@@ -14,15 +14,27 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
   ];
 
   async findByDate(businessId: string, businessDate: string): Promise<DailyClosing | null> {
-    return this.findOne(businessId, { business_date: businessDate });
-  }
-
-  async findByStatus(businessId: string, status: DailyClosingStatus): Promise<DailyClosing[]> {
-    return this.findAll(businessId, { where: { status } });
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<Record<string, unknown>>(
+      `SELECT * FROM ${this.tableName}
+       WHERE business_id = ? AND business_date = ?
+       ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, COALESCE(opened_at, created_at) DESC
+       LIMIT 1`,
+      [businessId, businessDate.slice(0, 10)]
+    );
+    return row ? this.mapRow(row) : null;
   }
 
   async findOpenDay(businessId: string): Promise<DailyClosing | null> {
-    return this.findOne(businessId, { status: 'open' });
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<Record<string, unknown>>(
+      `SELECT * FROM ${this.tableName}
+       WHERE business_id = ? AND status = 'open'
+       ORDER BY COALESCE(opened_at, created_at) DESC
+       LIMIT 1`,
+      [businessId]
+    );
+    return row ? this.mapRow(row) : null;
   }
 
   async findByDateRange(businessId: string, startDate: string, endDate: string): Promise<DailyClosing[]> {
@@ -53,7 +65,7 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
     const row = await db.getFirstAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
        WHERE business_id = ? AND status = 'closed'
-       ORDER BY business_date DESC
+       ORDER BY COALESCE(closed_at, business_date) DESC
        LIMIT 1`,
       [businessId]
     );

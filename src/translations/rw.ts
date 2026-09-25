@@ -408,6 +408,8 @@ export const rw = {
     startDayTitle: 'Fungura ubucuruzi bwa none',
     startDayDesc: 'Andika amafaranga yo mu gitondo kandi reba ububiko mbere yo gutangira kugurisha.',
     startDayHint: 'Bara amafaranga ari mu karito kandi reba ibicuruzwa bihari, utangire umunsi. Uzasubiza no gufunga umunsi mu mugoroba.',
+    startDayAnyTime: 'Tangira umunsi w’ubucuruzi igihe cyose. Ushobora gufunga uyu munsi, ejo, cyangwa nyuma y’indi shift. Nyuma yo gufunga ushobora gutangira undi munsi.',
+    lastClosedSession: 'Isaha yanyuma yafunzwe',
     startNotesPlaceholder: 'Inyandiko (si ngombwa)',
     dayStarted: 'Umunsi watangiye neza',
     dayAlreadyOpen: 'Uyu munsi wamaze gutangira',

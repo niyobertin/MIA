@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 8;
+export const DATABASE_VERSION = 9;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -250,8 +250,7 @@ CREATE TABLE IF NOT EXISTS daily_closings (
   closed_at TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'reopened')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(business_id, business_date)
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Frozen per-item opening and closing quantities for each business day
@@ -267,7 +266,7 @@ CREATE TABLE IF NOT EXISTS daily_stock_lines (
   closing_unit_cost INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(business_id, business_date, product_id)
+  UNIQUE(daily_closing_id, product_id)
 );
 
 -- Sync records table

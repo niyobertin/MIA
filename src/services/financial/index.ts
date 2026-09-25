@@ -101,7 +101,11 @@ export class FinancialService {
     return newAverageCost;
   }
 
-  async calculateDailyFinancials(businessId: string, businessDate: string): Promise<{
+  async calculateDailyFinancials(
+    businessId: string,
+    businessDate: string,
+    endDate?: string
+  ): Promise<{
     totalSales: number;
     cogs: number;
     grossProfit: number;
@@ -115,10 +119,8 @@ export class FinancialService {
     supplierCashPayments: number;
     withdrawals: number;
   }> {
-    // Date columns are stored as YYYY-MM-DD, so compare on date-only bounds.
-    const day = businessDate.slice(0, 10);
-    const startOfDay = day;
-    const endOfDay = day;
+    const startOfDay = businessDate.slice(0, 10);
+    const endOfDay = (endDate ?? businessDate).slice(0, 10);
 
     const [
       totalSales,
@@ -189,7 +191,8 @@ export class FinancialService {
     businessId: string,
     businessDate: string,
     openingCash: number,
-    actualCash: number
+    actualCash: number,
+    endDate?: string
   ): Promise<{
     expectedCash: number;
     cashVariance: number;
@@ -203,10 +206,8 @@ export class FinancialService {
       withdrawals: number;
     };
   }> {
-    // Date columns are stored as YYYY-MM-DD, so compare on date-only bounds.
-    const day = businessDate.slice(0, 10);
-    const startOfDay = day;
-    const endOfDay = day;
+    const startOfDay = businessDate.slice(0, 10);
+    const endOfDay = (endDate ?? businessDate).slice(0, 10);
 
     const [
       cashSales,
