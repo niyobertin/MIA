@@ -165,9 +165,18 @@ export default function ClosingScreen() {
       setValue('notes', '');
       showToast(t('cash.dayClosed'), 'success');
       await Promise.all([openClosingQuery.refetch(), latestClosingQuery.refetch()]);
-    } catch {
+    } catch (error: unknown) {
       setShowConfirm(false);
-      showToast(t('common.error'), 'error');
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'DAY_NOT_OPEN') {
+        showToast(t('cash.dayNotOpen'), 'error');
+      } else if (code === 'DAY_ALREADY_CLOSED' || code === 'HISTORY_LOCKED') {
+        showToast(t('cash.dayAlreadyClosed'), 'error');
+        await openClosingQuery.refetch();
+      } else {
+        console.error('Close day failed:', error);
+        showToast(t('common.error'), 'error');
+      }
     }
   };
 

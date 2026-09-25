@@ -418,6 +418,7 @@ export const rw = {
     closeDay: 'Funga Umunsi',
     closeDayDesc: 'Bara amafaranga, reba ububiko buhari, ufunge ibikorwa bya none.',
     dayAlreadyClosed: 'Uyu munsi wamaze gufungwa.',
+    dayNotOpen: 'Nta munsi ufunguwe wo gufunga. Tangira umunsi mbere.',
     businessDate: 'Itariki y’ubucuruzi',
     openingCashPlaceholder: 'Amafaranga yo mu gitondo',
     actualCashPlaceholder: 'Amafaranga wabaruye',

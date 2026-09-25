@@ -25,7 +25,7 @@ import { BottomSheet, SegmentedControl } from '@/components/SegmentedControl';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale } from '@/hooks/useData';
+import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale, useOpenDailyClosing } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
 import { debounce, getTodayDateString } from '@/utils/formatters';
@@ -187,7 +187,10 @@ export default function NewSaleScreen() {
   const closeSuccess = () => setSuccess(null);
 
   const today = getTodayDateString();
-  const historyQuery = useSales({ start: today, end: today });
+  const openClosingQuery = useOpenDailyClosing();
+  const activeOpen = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
+  const historyStart = activeOpen?.business_date?.slice(0, 10) ?? today;
+  const historyQuery = useSales({ start: historyStart, end: today });
   const { business } = useAuthStore();
   const todaysSales = [...(historyQuery.data ?? [])].sort((a, b) =>
     (b.created_at > a.created_at ? 1 : -1)
@@ -225,7 +228,11 @@ export default function NewSaleScreen() {
         <View>
           <Text style={styles.title}>{t('sales.newSale')}</Text>
           <Text style={styles.subtitle}>
-            {tab === 'new' ? `${getItemCount()} ${t('sales.items')}` : t('sales.todaysSales')}
+            {tab === 'new'
+              ? `${getItemCount()} ${t('sales.items')}`
+              : historyStart !== today
+                ? `${t('sales.todaysSales')} · ${historyStart} → ${today}`
+                : t('sales.todaysSales')}
           </Text>
         </View>
         {tab === 'new' && cart.length > 0 ? (

@@ -154,19 +154,25 @@ export function useOpenDailyClosing() {
 export function useDashboardStats() {
   const businessId = getBusinessId();
   const today = getTodayDateString();
-  
+
   return useQuery({
     queryKey: ['dashboardStats', businessId, today],
     queryFn: async () => {
-      const financials = await financialService.calculateDailyFinancials(businessId, today);
+      const openDay = await dailyClosingRepository.findOpenDay(businessId);
+      const sessionStart = openDay?.business_date?.slice(0, 10) ?? today;
+      const financials = await financialService.calculateDailyFinancials(
+        businessId,
+        sessionStart,
+        today
+      );
       const yesterdayIso = getYesterdayDateString();
-      const [itemsSold, stockValue, yesterdaySales, day] = await Promise.all([
-        financialService.getTotalItemsSold(businessId, today, today),
+      const [itemsSold, stockValue, yesterdaySales, dayForToday] = await Promise.all([
+        financialService.getTotalItemsSold(businessId, sessionStart, today),
         productRepository.getStockValue(businessId),
         saleRepository.getTotalSales(businessId, yesterdayIso, yesterdayIso),
-        dailyClosingRepository.findByDate(businessId, today),
+        openDay ? Promise.resolve(openDay) : dailyClosingRepository.findByDate(businessId, today),
       ]);
-      const openingCash = day?.opening_cash ?? 0;
+      const openingCash = dayForToday?.opening_cash ?? 0;
 
       return {
         todaySales: financials.totalSales,
@@ -1394,6 +1400,7 @@ export function useCloseDay() {
         endDate
       );
       const snapshot = await productRepository.getStockSnapshot(businessId);
+      const businessDate = existing.business_date.slice(0, 10);
       const payload = {
         opening_cash: data.openingCash,
         cash_sales: reconciliation.breakdown.cashSales,
@@ -1423,13 +1430,15 @@ export function useCloseDay() {
         status: 'closed' as const,
       };
 
+      // Seal stock while the day is still open, then mark closed.
+      // If seal fails, the day stays open and the user can retry.
+      await sealClosingStock({
+        businessId,
+        dailyClosingId: existing.id,
+        businessDate,
+      });
       const closing = await dailyClosingRepository.update(existing.id, businessId, payload);
       if (closing) {
-        await sealClosingStock({
-          businessId,
-          dailyClosingId: closing.id,
-          businessDate: closing.business_date,
-        });
         await enqueueSync(
           'daily_closings',
           closing.id,
@@ -1438,7 +1447,7 @@ export function useCloseDay() {
           businessId
         );
       }
-      
+
       return { closing, reconciliation };
     },
     onSuccess: () => {

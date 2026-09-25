@@ -409,6 +409,7 @@ async function normalizeBusinessDateColumns(database: SQLite.SQLiteDatabase): Pr
     { table: 'expenses', column: 'expense_date' },
     { table: 'payments', column: 'payment_date' },
     { table: 'daily_closings', column: 'business_date' },
+    { table: 'daily_stock_lines', column: 'business_date' },
   ];
 
   for (const { table, column } of updates) {

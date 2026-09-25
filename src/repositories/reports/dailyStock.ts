@@ -14,9 +14,9 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT l.*, p.name as product_name, p.unit as unit
        FROM daily_stock_lines l
-       JOIN products p ON p.id = l.product_id
+       LEFT JOIN products p ON p.id = l.product_id
        WHERE l.business_id = ? AND l.daily_closing_id = ?
-       ORDER BY p.name ASC`,
+       ORDER BY COALESCE(p.name, l.product_id) ASC`,
       [businessId, dailyClosingId]
     );
     return rows.map((row) => this.mapRow(row));
@@ -27,9 +27,9 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
     const rows = await db.getAllAsync<Record<string, unknown>>(
       `SELECT l.*, p.name as product_name, p.unit as unit
        FROM daily_stock_lines l
-       JOIN products p ON p.id = l.product_id
-       WHERE l.business_id = ? AND l.business_date = ?
-       ORDER BY p.name ASC`,
+       LEFT JOIN products p ON p.id = l.product_id
+       WHERE l.business_id = ? AND substr(l.business_date, 1, 10) = ?
+       ORDER BY COALESCE(p.name, l.product_id) ASC`,
       [businessId, businessDate.slice(0, 10)]
     );
     return rows.map((row) => this.mapRow(row));
@@ -42,8 +42,9 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
   ): Promise<DailyStockLine | null> {
     const current = await this.findById(id, businessId);
     if (!current) return null;
+    // Idempotent: a previous failed close may have sealed some lines already.
     if (current.closing_qty != null) {
-      throw new Error('HISTORY_LOCKED');
+      return current;
     }
     return this.update(id, businessId, values);
   }

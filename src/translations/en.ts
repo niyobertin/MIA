@@ -418,6 +418,7 @@ export const en = {
     closeDay: 'Close Day',
     closeDayDesc: 'Count your cash, review available stock, and close today’s business.',
     dayAlreadyClosed: 'This day is already closed.',
+    dayNotOpen: 'No open day to close. Start the day first.',
     businessDate: 'Business date',
     openingCashPlaceholder: 'Cash at start of day',
     actualCashPlaceholder: 'Cash counted in drawer',

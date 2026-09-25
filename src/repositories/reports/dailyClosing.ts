@@ -17,7 +17,7 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
     const db = await this.getDb();
     const row = await db.getFirstAsync<Record<string, unknown>>(
       `SELECT * FROM ${this.tableName}
-       WHERE business_id = ? AND business_date = ?
+       WHERE business_id = ? AND substr(business_date, 1, 10) = ?
        ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, COALESCE(opened_at, created_at) DESC
        LIMIT 1`,
       [businessId, businessDate.slice(0, 10)]
