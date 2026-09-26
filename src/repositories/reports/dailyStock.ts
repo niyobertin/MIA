@@ -35,6 +35,21 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async findByClosingAndProduct(
+    businessId: string,
+    dailyClosingId: string,
+    productId: string
+  ): Promise<DailyStockLine | null> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<Record<string, unknown>>(
+      `SELECT * FROM ${this.tableName}
+       WHERE business_id = ? AND daily_closing_id = ? AND product_id = ?
+       LIMIT 1`,
+      [businessId, dailyClosingId, productId]
+    );
+    return row ? this.mapRow(row) : null;
+  }
+
   async seal(
     id: string,
     businessId: string,

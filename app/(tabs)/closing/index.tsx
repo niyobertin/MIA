@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
@@ -11,6 +11,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { Skeleton } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { StatusBadge } from '@/components/StatusBadge';
 import { showToast } from '@/stores/toastStore';
 import { canCloseDay } from '@/utils/permissions';
 import { useForm } from 'react-hook-form';
@@ -23,9 +24,12 @@ import {
   useStockSnapshot,
   useDayStockLines,
   useTrackedStock,
+  useDailyClosingHistory,
+  useDailyClosingById,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';
+import { DailyClosing } from '@/types';
 
 interface DayForm {
   openingCash: string;
@@ -37,6 +41,7 @@ export default function ClosingScreen() {
   const { t } = useTranslation();
   const { user } = useAuthStore();
   const today = getTodayDateString();
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   const openClosingQuery = useOpenDailyClosing();
   const activeOpen = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
@@ -51,9 +56,16 @@ export default function ClosingScreen() {
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
   const latestClosingQuery = useLatestClosing();
+  const historyQuery = useDailyClosingHistory();
+  const detailQuery = useDailyClosingById(selectedId);
+  const detailLinesQuery = useDayStockLines({
+    closingId: selectedId,
+    businessDate: null,
+  });
 
   const needsStart = !activeOpen;
   const lastClosed = latestClosingQuery.data;
+  const history = historyQuery.data ?? [];
 
   const { control, handleSubmit, watch, setValue } = useForm<DayForm>({
     defaultValues: {
@@ -124,6 +136,9 @@ export default function ClosingScreen() {
       linesQuery.refetch(),
       trackedQuery.refetch(),
       latestClosingQuery.refetch(),
+      historyQuery.refetch(),
+      selectedId ? detailQuery.refetch() : Promise.resolve(),
+      selectedId ? detailLinesQuery.refetch() : Promise.resolve(),
     ]);
     setRefreshing(false);
   };
@@ -140,11 +155,12 @@ export default function ClosingScreen() {
       setValue('actualCash', '');
       setValue('notes', '');
       showToast(t('cash.dayStarted'), 'success');
-      await Promise.all([openClosingQuery.refetch(), linesQuery.refetch()]);
+      await Promise.all([openClosingQuery.refetch(), linesQuery.refetch(), historyQuery.refetch()]);
     } catch (error: any) {
       if (error?.message === 'DAY_ALREADY_OPEN') {
         showToast(t('cash.dayAlreadyOpen'), 'info');
       } else {
+        console.error('Start day failed:', error);
         showToast(t('common.error'), 'error');
       }
     }
@@ -164,7 +180,11 @@ export default function ClosingScreen() {
       setValue('actualCash', '');
       setValue('notes', '');
       showToast(t('cash.dayClosed'), 'success');
-      await Promise.all([openClosingQuery.refetch(), latestClosingQuery.refetch()]);
+      await Promise.all([
+        openClosingQuery.refetch(),
+        latestClosingQuery.refetch(),
+        historyQuery.refetch(),
+      ]);
     } catch (error: unknown) {
       setShowConfirm(false);
       const code = error instanceof Error ? error.message : '';
@@ -172,7 +192,9 @@ export default function ClosingScreen() {
         showToast(t('cash.dayNotOpen'), 'error');
       } else if (code === 'DAY_ALREADY_CLOSED' || code === 'HISTORY_LOCKED') {
         showToast(t('cash.dayAlreadyClosed'), 'error');
-        await openClosingQuery.refetch();
+        await Promise.all([openClosingQuery.refetch(), historyQuery.refetch()]);
+      } else if (code === 'STOCK_SEAL_FAILED') {
+        showToast(t('cash.stockSealFailed'), 'error');
       } else {
         console.error('Close day failed:', error);
         showToast(t('common.error'), 'error');
@@ -185,6 +207,31 @@ export default function ClosingScreen() {
       <View style={styles.screen}>
         <ScreenHeader title={t('cash.cashDay')} />
         <EmptyState icon="lock-closed" title={t('cash.noPermission')} />
+      </View>
+    );
+  }
+
+  if (selectedId) {
+    const day = detailQuery.data;
+    const detailLines = detailLinesQuery.data ?? [];
+    return (
+      <View style={styles.screen}>
+        <ScreenHeader
+          title={t('cash.dayDetails')}
+          subtitle={day?.business_date?.slice(0, 10) ?? '—'}
+          onBack={() => setSelectedId(null)}
+        />
+        <FormScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          showsVerticalScrollIndicator={false}
+        >
+          {detailQuery.isLoading || !day ? (
+            <Skeleton height={220} style={styles.skel} />
+          ) : (
+            <DayDetails day={day} lines={detailLines} />
+          )}
+        </FormScrollView>
       </View>
     );
   }
@@ -211,20 +258,6 @@ export default function ClosingScreen() {
                 <Text style={styles.infoBody}>{t('cash.startDayAnyTime')}</Text>
               </View>
             </View>
-            {lastClosed ? (
-              <View style={styles.lastClosedCard}>
-                <Text style={styles.lastClosedTitle}>{t('cash.lastClosedSession')}</Text>
-                <ClosedCountRow
-                  label={t('cash.businessDate')}
-                  value={lastClosed.business_date}
-                />
-                <ClosedRow label={t('cash.actualCash')} value={lastClosed.actual_cash} />
-                <ClosedCountRow
-                  label={t('cash.availableStock')}
-                  value={`${(lastClosed.closing_stock_qty ?? 0).toLocaleString()} ${t('cash.stockUnits')}`}
-                />
-              </View>
-            ) : null}
             <StockCard
               title={t('cash.openingStock')}
               quantity={liveStock?.quantity ?? 0}
@@ -382,6 +415,48 @@ export default function ClosingScreen() {
             </Button>
           </>
         )}
+
+        <View style={styles.historySection}>
+          <Text style={styles.historyTitle}>{t('cash.previousDays')}</Text>
+          <Text style={styles.historyHint}>{t('cash.previousDaysHint')}</Text>
+          {historyQuery.isLoading ? (
+            <Skeleton height={72} style={styles.skel} />
+          ) : history.length === 0 ? (
+            <Text style={styles.flowLabel}>{t('cash.noPreviousDays')}</Text>
+          ) : (
+            history.map((day) => (
+              <TouchableOpacity
+                key={day.id}
+                style={styles.historyCard}
+                onPress={() => setSelectedId(day.id)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.historyInfo}>
+                  <Text style={styles.historyDate}>{day.business_date?.slice(0, 10)}</Text>
+                  <Text style={styles.historyMeta}>
+                    {day.status === 'open'
+                      ? t('cash.dayIsOpen')
+                      : day.closed_at
+                        ? `${t('cash.closedAt')}: ${day.closed_at.slice(0, 16).replace('T', ' ')}`
+                        : t('cash.dayAlreadyClosed')}
+                  </Text>
+                </View>
+                <View style={styles.historyRight}>
+                  <MoneyText
+                    amount={day.status === 'open' ? day.opening_cash : day.actual_cash}
+                    size={15}
+                    weight="800"
+                  />
+                  <StatusBadge
+                    label={day.status === 'open' ? t('cash.openStatus') : t('cash.closedStatus')}
+                    tone={day.status === 'open' ? 'success' : 'neutral'}
+                  />
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.faint} />
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
       </FormScrollView>
 
       <ConfirmModal
@@ -398,6 +473,110 @@ export default function ClosingScreen() {
         variant="danger"
       />
     </View>
+  );
+}
+
+function DayDetails({
+  day,
+  lines,
+}: {
+  day: DailyClosing;
+  lines: Array<{
+    product_id: string;
+    product_name?: string;
+    opening_qty: number;
+    closing_qty: number | null;
+  }>;
+}) {
+  const { t } = useTranslation();
+  const isOpen = day.status === 'open';
+  return (
+    <>
+      <View style={styles.openBadge}>
+        <Ionicons
+          name={isOpen ? 'ellipse' : 'checkmark-circle'}
+          size={10}
+          color={isOpen ? colors.success : colors.muted}
+        />
+        <Text style={styles.openBadgeText}>
+          {isOpen ? t('cash.openStatus') : t('cash.closedStatus')} · {day.business_date?.slice(0, 10)}
+        </Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>{t('cash.cashReconciliation')}</Text>
+        <FlowRow label={t('cash.openingCash')} value={day.opening_cash} />
+        <FlowRow label={t('dashboard.sales')} value={day.total_sales} />
+        <FlowRow label={t('cash.cashSales')} value={day.cash_sales} />
+        <FlowRow label={t('cash.cashExpenses')} value={-day.cash_expenses} negative />
+        <FlowRow label={t('cash.cashPurchases')} value={-day.cash_purchases} negative />
+        <FlowRow label={t('cash.expectedCash')} value={day.expected_cash} strong />
+        {!isOpen ? <FlowRow label={t('cash.actualCash')} value={day.actual_cash} strong /> : null}
+        {!isOpen ? <FlowRow label={t('cash.cashVariance')} value={day.cash_variance} strong /> : null}
+        <View style={styles.divider} />
+        <FlowRow label={t('dashboard.grossProfit')} value={day.gross_profit} strong />
+        <FlowRow label={t('dashboard.netProfit')} value={day.net_profit} strong />
+      </View>
+
+      <StockCard
+        title={t('cash.openingStock')}
+        quantity={day.opening_stock_qty ?? 0}
+        value={day.opening_stock_value ?? 0}
+        unitsLabel={t('cash.stockUnits')}
+        valueLabel={t('cash.stockValue')}
+      />
+      {!isOpen ? (
+        <StockCard
+          title={t('cash.availableStock')}
+          quantity={day.closing_stock_qty ?? 0}
+          value={day.closing_stock_value ?? 0}
+          unitsLabel={t('cash.stockUnits')}
+          valueLabel={t('cash.stockValue')}
+        />
+      ) : null}
+
+      <ItemQtyList
+        title={t('cash.openingItems')}
+        rows={lines.map((line) => ({
+          id: line.product_id,
+          name: line.product_name ?? line.product_id,
+          qty: line.opening_qty,
+        }))}
+        emptyLabel={t('cash.noStockItems')}
+        qtyLabel={t('cash.openingStock')}
+      />
+      <ItemQtyList
+        title={t('cash.closingItems')}
+        rows={lines.map((line) => ({
+          id: line.product_id,
+          name: line.product_name ?? line.product_id,
+          qty: line.closing_qty ?? line.opening_qty,
+          opening: line.opening_qty,
+        }))}
+        emptyLabel={t('cash.noStockItems')}
+        qtyLabel={isOpen ? t('cash.availableStock') : t('cash.availableStock')}
+        showOpening
+        openingLabel={t('cash.openingStock')}
+      />
+
+      {day.notes ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{t('cash.varianceNote')}</Text>
+          <Text style={styles.flowLabel}>{day.notes}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.card}>
+        <ClosedCountRow
+          label={t('cash.openedAt')}
+          value={day.opened_at ? day.opened_at.slice(0, 16).replace('T', ' ') : '—'}
+        />
+        <ClosedCountRow
+          label={t('cash.closedAt')}
+          value={day.closed_at ? day.closed_at.slice(0, 16).replace('T', ' ') : '—'}
+        />
+      </View>
+    </>
   );
 }
 
@@ -486,15 +665,6 @@ function ClosedCountRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ClosedRow({ label, value, color }: { label: string; value: number; color?: string }) {
-  return (
-    <View style={styles.flowRow}>
-      <Text style={styles.flowLabel}>{label}</Text>
-      <MoneyText amount={value} size={14} weight="600" color={color} />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: 48 },
@@ -510,21 +680,6 @@ const styles = StyleSheet.create({
   infoText: { flex: 1 },
   infoTitle: { fontSize: 16, fontWeight: '700', color: colors.ink },
   infoBody: { fontSize: 13, color: colors.body, marginTop: 4, lineHeight: 18 },
-  lastClosedCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    ...shadows.card,
-  },
-  lastClosedTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.muted,
-    marginBottom: spacing.sm,
-  },
   openBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -590,4 +745,23 @@ const styles = StyleSheet.create({
     minWidth: 48,
     textAlign: 'right',
   },
+  historySection: { marginTop: spacing.xl },
+  historyTitle: { fontSize: 17, fontWeight: '800', color: colors.ink, marginBottom: 4 },
+  historyHint: { fontSize: 13, color: colors.muted, marginBottom: spacing.md },
+  historyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    ...shadows.card,
+  },
+  historyInfo: { flex: 1, minWidth: 0 },
+  historyDate: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  historyMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  historyRight: { alignItems: 'flex-end', gap: 4 },
 });

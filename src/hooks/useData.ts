@@ -1401,45 +1401,71 @@ export function useCloseDay() {
       );
       const snapshot = await productRepository.getStockSnapshot(businessId);
       const businessDate = existing.business_date.slice(0, 10);
-      const payload = {
-        opening_cash: data.openingCash,
-        cash_sales: reconciliation.breakdown.cashSales,
-        customer_cash_payments: reconciliation.breakdown.customerCashPayments,
-        other_cash_income: reconciliation.breakdown.otherCashIncome,
-        cash_purchases: reconciliation.breakdown.cashPurchases,
-        cash_expenses: reconciliation.breakdown.cashExpenses,
-        supplier_cash_payments: reconciliation.breakdown.supplierCashPayments,
-        withdrawals: reconciliation.breakdown.withdrawals,
-        expected_cash: reconciliation.expectedCash,
-        actual_cash: data.actualCash,
-        cash_variance: reconciliation.cashVariance,
-        total_sales: financials.totalSales,
-        cogs: financials.cogs,
-        gross_profit: financials.grossProfit,
-        expenses: financials.expenses,
-        net_profit: financials.netProfit,
-        opening_stock_qty: existing.opening_stock_qty ?? snapshot.quantity,
-        opening_stock_value: existing.opening_stock_value ?? snapshot.value,
-        closing_stock_qty: snapshot.quantity,
-        closing_stock_value: snapshot.value,
+      const asMoney = (n: number) => Math.round(Number.isFinite(n) ? n : 0);
+      const payload: Record<string, unknown> = {
+        opening_cash: asMoney(data.openingCash),
+        cash_sales: asMoney(reconciliation.breakdown.cashSales),
+        customer_cash_payments: asMoney(reconciliation.breakdown.customerCashPayments),
+        other_cash_income: asMoney(reconciliation.breakdown.otherCashIncome),
+        cash_purchases: asMoney(reconciliation.breakdown.cashPurchases),
+        cash_expenses: asMoney(reconciliation.breakdown.cashExpenses),
+        supplier_cash_payments: asMoney(reconciliation.breakdown.supplierCashPayments),
+        withdrawals: asMoney(reconciliation.breakdown.withdrawals),
+        expected_cash: asMoney(reconciliation.expectedCash),
+        actual_cash: asMoney(data.actualCash),
+        cash_variance: asMoney(reconciliation.cashVariance),
+        total_sales: asMoney(financials.totalSales),
+        cogs: asMoney(financials.cogs),
+        gross_profit: asMoney(financials.grossProfit),
+        expenses: asMoney(financials.expenses),
+        net_profit: asMoney(financials.netProfit),
+        opening_stock_qty: asMoney(existing.opening_stock_qty ?? snapshot.quantity),
+        opening_stock_value: asMoney(existing.opening_stock_value ?? snapshot.value),
+        closing_stock_qty: asMoney(snapshot.quantity),
+        closing_stock_value: asMoney(snapshot.value),
         notes: data.notes ?? null,
-        opened_by: existing.opened_by ?? userId,
-        opened_at: existing.opened_at ?? new Date().toISOString(),
-        closed_by: userId,
         closed_at: new Date().toISOString(),
         status: 'closed' as const,
       };
+      // Avoid rewriting opened_by/opened_at (FK can fail if opener user was removed).
+      if (!existing.opened_by) payload.opened_by = userId;
+      if (!existing.opened_at) payload.opened_at = new Date().toISOString();
 
-      // Seal stock while the day is still open, then mark closed.
-      // If seal fails, the day stays open and the user can retry.
-      await sealClosingStock({
-        businessId,
-        dailyClosingId: existing.id,
-        businessDate,
-      });
-      const closing = await dailyClosingRepository.update(existing.id, businessId, payload);
+      try {
+        await sealClosingStock({
+          businessId,
+          dailyClosingId: existing.id,
+          businessDate,
+        });
+      } catch (error) {
+        console.error('Seal closing stock failed:', error);
+        throw new Error('STOCK_SEAL_FAILED');
+      }
+
+      let closing;
+      try {
+        payload.closed_by = userId;
+        closing = await dailyClosingRepository.update(
+          existing.id,
+          businessId,
+          payload as Parameters<typeof dailyClosingRepository.update>[2]
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/foreign key/i.test(message)) {
+          payload.closed_by = null;
+          closing = await dailyClosingRepository.update(
+            existing.id,
+            businessId,
+            payload as Parameters<typeof dailyClosingRepository.update>[2]
+          );
+        } else {
+          console.error('Close day update failed:', error);
+          throw error;
+        }
+      }
       if (closing) {
-        await enqueueSync(
+        await queueSync(
           'daily_closings',
           closing.id,
           'update',
@@ -1466,6 +1492,24 @@ export function useLatestClosing() {
     queryKey: ['dailyClosing', businessId, 'latest'],
     queryFn: () => dailyClosingRepository.getLatestClosing(businessId),
     enabled: !!businessId,
+  });
+}
+
+export function useDailyClosingHistory(limit = 60) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['dailyClosing', businessId, 'history', limit],
+    queryFn: () => dailyClosingRepository.findRecent(businessId, limit),
+    enabled: !!businessId,
+  });
+}
+
+export function useDailyClosingById(closingId: string | null) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['dailyClosing', businessId, 'byId', closingId],
+    queryFn: () => dailyClosingRepository.findById(closingId!, businessId),
+    enabled: !!businessId && !!closingId,
   });
 }
 

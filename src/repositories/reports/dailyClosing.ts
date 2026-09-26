@@ -48,6 +48,18 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
     return rows.map(row => this.mapRow(row));
   }
 
+  async findRecent(businessId: string, limit = 60): Promise<DailyClosing[]> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<Record<string, unknown>>(
+      `SELECT * FROM ${this.tableName}
+       WHERE business_id = ?
+       ORDER BY COALESCE(opened_at, created_at) DESC, business_date DESC
+       LIMIT ?`,
+      [businessId, limit]
+    );
+    return rows.map((row) => this.mapRow(row));
+  }
+
   async update(id: string, businessId: string, updates: Partial<Omit<DailyClosing, 'id' | 'business_id' | 'created_at'>>): Promise<DailyClosing | null> {
     const current = await this.findById(id, businessId);
     if (current?.status === 'closed') {

@@ -48,6 +48,7 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
     await ensureUsersIdentitySchema(database);
     await normalizeBusinessDateColumns(database);
     await migrateDailyClosingStockColumns(database);
+    await migrateDailyStockLinesUnique(database);
   }
 }
 
@@ -84,6 +85,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion < 9) {
       await migrateFlexibleDaySessions(database);
+    }
+    if (fromVersion < 10) {
+      await migrateDailyStockLinesUnique(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -378,6 +382,43 @@ async function migrateFlexibleDaySessions(database: SQLite.SQLiteDatabase): Prom
     `);
     await database.execAsync('PRAGMA foreign_keys = ON;');
   }
+}
+
+/** Ensure multi-session days can store stock lines per closing (not per calendar date). */
+async function migrateDailyStockLinesUnique(database: SQLite.SQLiteDatabase): Promise<void> {
+  const linesExist = await database.getFirstAsync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'daily_stock_lines'`
+  );
+  if (!linesExist) return;
+
+  await database.execAsync('PRAGMA foreign_keys = OFF;');
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS daily_stock_lines_v10 (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      daily_closing_id TEXT NOT NULL REFERENCES daily_closings(id) ON DELETE CASCADE,
+      business_date TEXT NOT NULL,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      opening_qty INTEGER NOT NULL DEFAULT 0,
+      opening_unit_cost INTEGER NOT NULL DEFAULT 0,
+      closing_qty INTEGER,
+      closing_unit_cost INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(daily_closing_id, product_id)
+    );
+    INSERT OR IGNORE INTO daily_stock_lines_v10
+      (id, business_id, daily_closing_id, business_date, product_id, opening_qty, opening_unit_cost,
+       closing_qty, closing_unit_cost, created_at, updated_at)
+    SELECT id, business_id, daily_closing_id, business_date, product_id, opening_qty, opening_unit_cost,
+       closing_qty, closing_unit_cost, created_at, updated_at
+    FROM daily_stock_lines;
+    DROP TABLE daily_stock_lines;
+    ALTER TABLE daily_stock_lines_v10 RENAME TO daily_stock_lines;
+    CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
+    CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
+  `);
+  await database.execAsync('PRAGMA foreign_keys = ON;');
 }
 
 async function migrateDailyClosingStockColumns(database: SQLite.SQLiteDatabase): Promise<void> {
