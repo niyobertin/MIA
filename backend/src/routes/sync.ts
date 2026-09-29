@@ -17,6 +17,7 @@ import {
   Payment,
   DailyClosing,
   DailyStockLine,
+  AuditLog,
 } from '../entities';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 
@@ -38,6 +39,7 @@ const ENTITY_BY_TABLE: Record<string, EntityTarget<ObjectLiteral>> = {
   payments: Payment,
   daily_closings: DailyClosing,
   daily_stock_lines: DailyStockLine,
+  audit_logs: AuditLog,
 };
 
 const TABLE_COLUMNS: Record<string, string[]> = {
@@ -48,7 +50,7 @@ const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   categories: ['id', 'business_id', 'name', 'description', 'active', 'created_at', 'updated_at'],
   products: [
-    'id', 'business_id', 'category_id', 'name', 'sku', 'barcode', 'unit', 'selling_price',
+    'id', 'business_id', 'category_id', 'preferred_supplier_id', 'name', 'sku', 'barcode', 'unit', 'selling_price',
     'average_cost', 'reorder_level', 'track_inventory', 'active', 'created_at', 'updated_at',
   ],
   suppliers: ['id', 'business_id', 'name', 'phone', 'email', 'address', 'active', 'created_at', 'updated_at'],
@@ -95,12 +97,16 @@ const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   daily_stock_lines: [
     'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
-    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost',
+    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty',
     'created_at', 'updated_at',
+  ],
+  audit_logs: [
+    'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',
+    'before_state', 'after_state', 'reason', 'device_id', 'created_at',
   ],
 };
 
-const BOOL_KEYS = new Set(['active', 'track_inventory']);
+const BOOL_KEYS = new Set(['active', 'track_inventory', 'voided']);
 
 type Actor = {
   id: string;
@@ -124,6 +130,69 @@ function pickColumns(table: string, payload: Record<string, unknown>) {
 
 function canManageUsers(actor: Actor): boolean {
   return actor.role === 'OWNER' || actor.role === 'MANAGER';
+}
+
+const NON_NEGATIVE_MONEY: Record<string, string[]> = {
+  products: ['selling_price', 'average_cost', 'reorder_level'],
+  purchases: ['total_amount', 'paid_amount'],
+  purchase_items: ['quantity', 'unit_cost', 'total_cost'],
+  sales: ['subtotal', 'discount_amount', 'tax_amount', 'total_amount', 'paid_amount'],
+  sale_items: ['quantity', 'selling_price', 'unit_cost', 'discount_amount', 'tax_amount', 'total_amount'],
+  expenses: ['amount'],
+  payments: ['amount'],
+  stock_movements: ['quantity', 'unit_cost', 'previous_quantity', 'new_quantity'],
+  customers: ['credit_limit'],
+  daily_closings: ['opening_cash', 'actual_cash', 'expected_cash'],
+  daily_stock_lines: ['opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty'],
+};
+
+const POSITIVE_REQUIRED: Record<string, string[]> = {
+  sales: ['total_amount'],
+  purchases: ['total_amount'],
+  expenses: ['amount'],
+  payments: ['amount'],
+};
+
+/** Never trust client-computed money: reject impossible values before they poison the ledger. */
+function validateSyncPayload(table: string, payload: Record<string, unknown>): string | null {
+  for (const key of NON_NEGATIVE_MONEY[table] ?? []) {
+    const v = payload[key];
+    if (v == null) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || Math.round(v) !== v || v < 0) {
+      return `${key} must be a whole non-negative number`;
+    }
+  }
+  for (const key of POSITIVE_REQUIRED[table] ?? []) {
+    const v = payload[key];
+    if (v == null) continue;
+    if (typeof v !== 'number' || v < 1) {
+      return `${key} must be positive`;
+    }
+  }
+  if ((table === 'purchase_items' || table === 'sale_items' || table === 'stock_movements') && payload.quantity != null) {
+    if (typeof payload.quantity !== 'number' || payload.quantity < 1) {
+      return 'quantity must be at least 1';
+    }
+  }
+  if (table === 'sales' && payload.payment_status != null) {
+    if (!['paid', 'partial', 'unpaid', 'credit'].includes(String(payload.payment_status))) {
+      return 'invalid payment_status';
+    }
+  }
+  if (table === 'audit_logs') {
+    for (const key of ['action', 'entity']) {
+      const v = payload[key];
+      if (v == null || String(v).trim() === '' || String(v).length > 64) {
+        return `invalid ${key}`;
+      }
+    }
+  }
+  if (table === 'payments' && payload.payment_method != null) {
+    if (!['cash', 'mobile_money', 'bank', 'credit'].includes(String(payload.payment_method))) {
+      return 'invalid payment_method';
+    }
+  }
+  return null;
 }
 
 async function getActor(userId: string): Promise<Actor | null> {
@@ -185,6 +254,53 @@ syncRouter.get('/pull', async (req: AuthedRequest, res) => {
   }
 });
 
+syncRouter.get('/:table/:id', async (req: AuthedRequest, res) => {
+  try {
+    const table = String(req.params.table ?? '');
+    const id = String(req.params.id ?? '');
+    const entity = ENTITY_BY_TABLE[table];
+    if (!entity || !id) {
+      res.status(400).json({ error: 'Unknown table' });
+      return;
+    }
+
+    const actor = await getActor(req.auth!.sub);
+    if (!actor?.business_id) {
+      res.status(403).json({ error: 'No business' });
+      return;
+    }
+
+    const repo = AppDataSource.getRepository(entity);
+    const row = await repo.findOne({ where: { id } as ObjectLiteral });
+    if (!row) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    if (table === 'users') {
+      const target = row as unknown as { business_id: string | null; id: string };
+      if (target.business_id !== actor.business_id && target.id !== req.auth!.sub) {
+        res.status(403).json({ error: 'Business access denied' });
+        return;
+      }
+      res.json({ data: publicUser(row as unknown as User) });
+      return;
+    }
+    if (table === 'businesses') {
+      if ((row as unknown as { id: string }).id !== actor.business_id) {
+        res.status(403).json({ error: 'Business access denied' });
+        return;
+      }
+    } else if ((row as unknown as { business_id?: string }).business_id !== actor.business_id) {
+      res.status(403).json({ error: 'Business access denied' });
+      return;
+    }
+    res.json({ data: row });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Fetch failed' });
+  }
+});
+
 syncRouter.post('/:table', async (req: AuthedRequest, res) => {
   try {
     const table = String(req.params.table ?? '');
@@ -197,6 +313,12 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
     const payload = pickColumns(table, req.body as Record<string, unknown>);
     if (!payload.id) {
       res.status(400).json({ error: 'id is required' });
+      return;
+    }
+
+    const invalid = validateSyncPayload(table, payload);
+    if (invalid) {
+      res.status(400).json({ error: invalid });
       return;
     }
 
@@ -272,9 +394,19 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
           ? ['type', 'quantity', 'product_id', 'previous_quantity', 'new_quantity', 'created_by', 'reason', 'reversal_of']
           : table === 'daily_closings' && (existing as { status?: string }).status === 'closed'
             ? ['status', 'opening_stock_qty', 'closing_stock_qty', 'closed_by', 'closed_at', 'opened_by', 'opened_at', 'business_date']
-            : table === 'daily_stock_lines' && (existing as { closing_qty?: number | null }).closing_qty != null
-              ? ['opening_qty', 'closing_qty', 'opening_unit_cost', 'closing_unit_cost', 'product_id', 'business_date']
-              : [];
+            : table === 'daily_stock_lines' &&
+        ((existing as { closing_qty?: number | null }).closing_qty != null ||
+          (existing as { counted_qty?: number | null }).counted_qty != null)
+        ? [
+            'opening_qty',
+            'closing_qty',
+            'opening_unit_cost',
+            'closing_unit_cost',
+            'counted_qty',
+            'product_id',
+            'business_date',
+          ]
+        : [];
       for (const key of locked) {
         if (payload[key] == null) continue;
         if (String(payload[key]) !== String((existing as Record<string, unknown>)[key] ?? '')) {
@@ -336,7 +468,8 @@ syncRouter.delete('/:table/:id', async (req: AuthedRequest, res) => {
       table === 'businesses' ||
       table === 'stock_movements' ||
       table === 'daily_closings' ||
-      table === 'daily_stock_lines'
+      table === 'daily_stock_lines' ||
+      table === 'audit_logs'
     ) {
       res.status(400).json({ error: 'Delete not allowed for this table' });
       return;

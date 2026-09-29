@@ -5,6 +5,7 @@ import { assertDayIsOpen } from './guards';
 import { settleSupplierAccount } from './settle';
 import { reconcileProductCost } from './averageCost';
 import { recordStockMovement } from './recordStockMovement';
+import { audit } from './audit';
 import { UserRole } from '@/types';
 
 export async function voidPurchase(input: {
@@ -68,4 +69,15 @@ export async function voidPurchase(input: {
   for (const productId of productIds) {
     await reconcileProductCost(input.businessId, productId);
   }
+  await audit({
+    businessId: input.businessId,
+    userId: input.userId,
+    role: input.role,
+    action: 'purchase.void',
+    entity: 'purchase',
+    entityId: purchase.id,
+    before: { total_amount: purchase.total_amount },
+    reason: input.reason?.trim() || 'Purchase void',
+    deviceId: input.deviceId,
+  });
 }

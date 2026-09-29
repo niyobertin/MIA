@@ -107,6 +107,9 @@ export class Product {
   @Column({ type: 'uuid', nullable: true })
   category_id!: string | null;
 
+  @Column({ type: 'uuid', nullable: true })
+  preferred_supplier_id!: string | null;
+
   @Column({ type: 'text' })
   name!: string;
 

@@ -14,6 +14,7 @@ import { financialService } from '@/services/financial';
 import { queueSync } from '@/services/sync/queue';
 import { getDatabase } from '@/db/database';
 import { assertDayIsOpen, assertSaleAllowed } from '@/services/books/guards';
+import { calculateExpectedCash } from '@/services/financial/calculations';
 import { settleCustomerAccount, settleSupplierAccount } from '@/services/books/settle';
 import { voidSale } from '@/services/books/voidSale';
 import { voidPurchase } from '@/services/books/voidPurchase';
@@ -184,15 +185,16 @@ export function useDashboardStats() {
         cashSales: financials.cashSales,
         yesterdaySales,
         salesDelta: yesterdaySales > 0 ? (financials.totalSales - yesterdaySales) / yesterdaySales : null,
-        cashBalance:
-          openingCash +
-          financials.cashSales +
-          financials.customerCashPayments +
-          financials.otherCashIncome -
-          financials.cashPurchases -
-          financials.cashExpenses -
-          financials.supplierCashPayments -
-          financials.withdrawals,
+        cashBalance: calculateExpectedCash(
+          openingCash,
+          financials.cashSales,
+          financials.customerCashPayments,
+          financials.otherCashIncome,
+          financials.cashPurchases,
+          financials.cashExpenses,
+          financials.supplierCashPayments,
+          financials.withdrawals
+        ),
       };
     },
     enabled: !!businessId,
@@ -378,35 +380,45 @@ export interface PeriodRange {
   end: string;
 }
 
-export function usePeriodStats(range: PeriodRange | null) {
+/**
+ * Authoritative period figures. All reports, charts and exports read from here,
+ * so headline numbers always match the chart and the PDF.
+ */
+export function usePeriodBooks(range: PeriodRange | null, openingCash = 0) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['periodStats', businessId, range?.start, range?.end],
-    queryFn: async () => {
-      const { start, end } = range!;
-      const [totalSales, tax, cogs, expenses, inventoryLoss, itemsSold, stockValue] = await Promise.all([
-        saleRepository.getTotalSales(businessId, start, end),
-        saleRepository.getTotalTax(businessId, start, end),
-        financialService.calculateCOGSForPeriod(businessId, start, end),
-        expenseRepository.getTotalExpenses(businessId, start, end),
-        stockMovementRepository.getInventoryLoss(businessId, start, end),
-        financialService.getTotalItemsSold(businessId, start, end),
-        productRepository.getStockValue(businessId),
-      ]);
-      const revenue = totalSales - tax;
-      const grossProfit = revenue - cogs;
-      return {
-        totalSales,
-        cogs,
-        grossProfit,
-        expenses,
-        netProfit: grossProfit - expenses - inventoryLoss,
-        itemsSold,
-        stockValue,
-      };
-    },
+    queryKey: ['periodBooks', businessId, range?.start, range?.end, openingCash],
+    queryFn: () => financialService.buildPeriodBooks(businessId, range!.start, range!.end, { openingCash }),
     enabled: !!businessId && !!range,
   });
+}
+
+export function useBusinessHealth() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['businessHealth', businessId],
+    queryFn: () => financialService.getBusinessHealth(businessId),
+    enabled: !!businessId,
+    refetchInterval: 60000,
+  });
+}
+
+export function usePeriodStats(range: PeriodRange | null) {
+  const books = usePeriodBooks(range);
+  return {
+    ...books,
+    data: books.data
+      ? {
+          totalSales: books.data.totalSales,
+          cogs: books.data.cogs,
+          grossProfit: books.data.grossProfit,
+          expenses: books.data.expenses,
+          netProfit: books.data.netProfit,
+          itemsSold: books.data.itemsSold,
+          stockValue: books.data.stockValue,
+        }
+      : undefined,
+  };
 }
 
 export function useTopProducts(range: PeriodRange | null, limit = 5) {
@@ -418,22 +430,26 @@ export function useTopProducts(range: PeriodRange | null, limit = 5) {
   });
 }
 
+/**
+ * Separated money flows: checkout receipts vs later debt collections vs other
+ * income vs outflows. Never a single blended "payment mix".
+ */
 export function usePaymentBreakdown(range: PeriodRange | null) {
-  const businessId = getBusinessId();
-  return useQuery({
-    queryKey: ['paymentBreakdown', businessId, range?.start, range?.end],
-    queryFn: async () => {
-      const { start, end } = range!;
-      const [cash, mobileMoney, bank, credit] = await Promise.all([
-        paymentRepository.getInflowByMethod(businessId, start, end, 'cash'),
-        paymentRepository.getInflowByMethod(businessId, start, end, 'mobile_money'),
-        paymentRepository.getInflowByMethod(businessId, start, end, 'bank'),
-        saleRepository.getReceivableInPeriod(businessId, start, end),
-      ]);
-      return { cash, mobileMoney, bank, credit };
-    },
-    enabled: !!businessId && !!range,
-  });
+  const books = usePeriodBooks(range);
+  return {
+    ...books,
+    data: books.data
+      ? {
+          cash: books.data.checkout.cash,
+          mobileMoney: books.data.checkout.mobileMoney,
+          bank: books.data.checkout.bank,
+          credit: books.data.creditSales,
+          collections: books.data.collections,
+          otherIncome: books.data.otherIncome,
+          supplierPayments: books.data.supplierPayments,
+        }
+      : undefined,
+  };
 }
 
 export function useCustomerBalance(customerId: string | null) {
@@ -756,12 +772,19 @@ export function useImportProducts() {
 
           let productId: string;
           if (existing) {
+            const priorMovements = await stockMovementRepository.findByProduct(existing.id, bid, 1);
+            const hasHistory = priorMovements.length > 0;
+            if (hasHistory && row.opening_stock > 0) {
+              errors.push(
+                `Row ${row.rowNumber}: "${row.name}" already has stock history; opening stock not changed. Use a stock adjustment instead.`
+              );
+            }
             const updatedProduct = await productRepository.update(existing.id, bid, {
               name: row.name,
               category_id: categoryId ?? existing.category_id,
               unit: row.unit || existing.unit,
               selling_price: row.selling_price,
-              average_cost: row.average_cost || existing.average_cost,
+              ...(hasHistory ? {} : { average_cost: row.average_cost || existing.average_cost }),
               reorder_level: row.reorder_level,
               track_inventory: row.track_inventory,
               active: true,
@@ -783,6 +806,7 @@ export function useImportProducts() {
             const createdProduct = await productRepository.create({
               business_id: bid,
               category_id: categoryId,
+              preferred_supplier_id: null,
               name: row.name,
               sku: row.sku || null,
               barcode: row.barcode || null,
@@ -846,6 +870,7 @@ export function useCreateSale() {
       items: Array<{ productId: string; quantity: number; sellingPrice: number; discountAmount?: number; taxAmount?: number }>;
       paymentMethod: 'cash' | 'mobile_money' | 'bank' | 'credit';
       notes?: string;
+      allowBelowCost?: boolean;
     }) => {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
       const db = await getDatabase();
@@ -863,7 +888,10 @@ export function useCreateSale() {
           })),
           bid
         );
-        await assertSaleAllowed(bid, data.items, data.paymentMethod, data.customerId, totals.totalAmount);
+        await assertSaleAllowed(bid, data.items, data.paymentMethod, data.customerId, totals.totalAmount, {
+          role: getRole(),
+          allowBelowCost: data.allowBelowCost,
+        });
 
         const saleId = generateUUID();
         const now = new Date().toISOString();
@@ -941,6 +969,17 @@ export function useCreateSale() {
 
         await queueSync('sales', created.id, 'insert', created as unknown as Record<string, unknown>, bid);
         await settleCustomerAccount(bid, data.customerId);
+        const { audit } = await import('@/services/books/audit');
+        await audit({
+          businessId: bid,
+          userId,
+          role: getRole(),
+          action: data.allowBelowCost ? 'price.below_cost_override' : 'sale.create',
+          entity: 'sale',
+          entityId: saleId,
+          after: { total_amount: totals.totalAmount, payment_method: data.paymentMethod },
+          deviceId,
+        });
         sale = (await saleRepository.findById(saleId, bid)) ?? created;
       });
       if (!sale) throw new Error('SALE_NOT_FOUND');
@@ -1064,6 +1103,17 @@ export function useCreatePurchase() {
         }
 
         await settleSupplierAccount(bid, data.supplierId);
+        const { audit } = await import('@/services/books/audit');
+        await audit({
+          businessId: bid,
+          userId,
+          role: getRole(),
+          action: 'purchase.create',
+          entity: 'purchase',
+          entityId: purchaseId,
+          after: { total_amount: totals.totalAmount, payment_method: data.paymentMethod },
+          deviceId,
+        });
         purchase = (await purchaseRepository.findById(purchaseId, bid)) ?? created;
       });
       if (!purchase) throw new Error('PURCHASE_NOT_FOUND');
@@ -1094,39 +1144,57 @@ export function useCreateExpense() {
       referenceNumber?: string;
     }) => {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
+      if (!Number.isInteger(data.amount) || data.amount < 1) throw new Error('INVALID_PRICE');
       await assertDayIsOpen(bid, data.expenseDate);
-      const expense = await expenseRepository.create({
-        id: generateUUID(),
-        business_id: bid,
-        category: data.category,
-        amount: data.amount,
-        payment_method: data.paymentMethod,
-        description: data.description ?? null,
-        expense_date: data.expenseDate,
-        reference_number: data.referenceNumber ?? null,
-        created_by: userId,
-        device_id: deviceId,
-        sync_status: 'pending',
-      });
-      
-      const payment = await paymentRepository.create({
-        id: generateUUID(),
-        business_id: businessId,
-        type: 'expense_payment',
-        payment_method: data.paymentMethod,
-        amount: data.amount,
-        reference_type: 'expense',
-        reference_id: expense.id,
-        party_id: null,
-        payment_date: data.expenseDate,
-        notes: null,
-        created_by: getUserId(),
-        device_id: getDeviceId(),
-        sync_status: 'pending',
-      });
+      const db = await getDatabase();
+      let expense: Expense | null = null;
+      await db.withTransactionAsync(async () => {
+        const created = await expenseRepository.create({
+          id: generateUUID(),
+          business_id: bid,
+          category: data.category,
+          amount: data.amount,
+          payment_method: data.paymentMethod,
+          description: data.description ?? null,
+          expense_date: data.expenseDate,
+          reference_number: data.referenceNumber ?? null,
+          created_by: userId,
+          device_id: deviceId,
+          sync_status: 'pending',
+        });
 
-      await queueSync('expenses', expense.id, 'insert', expense as unknown as Record<string, unknown>, businessId);
-      await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, businessId);
+        const payment = await paymentRepository.create({
+          id: generateUUID(),
+          business_id: bid,
+          type: 'expense_payment',
+          payment_method: data.paymentMethod,
+          amount: data.amount,
+          reference_type: 'expense',
+          reference_id: created.id,
+          party_id: null,
+          payment_date: data.expenseDate,
+          notes: null,
+          created_by: userId,
+          device_id: deviceId,
+          sync_status: 'pending',
+        });
+
+        await queueSync('expenses', created.id, 'insert', created as unknown as Record<string, unknown>, bid);
+        await queueSync('payments', payment.id, 'insert', payment as unknown as Record<string, unknown>, bid);
+        const { audit } = await import('@/services/books/audit');
+        await audit({
+          businessId: bid,
+          userId,
+          role: getRole(),
+          action: 'expense.create',
+          entity: 'expense',
+          entityId: created.id,
+          after: { amount: data.amount, category: data.category },
+          deviceId,
+        });
+        expense = created;
+      });
+      if (!expense) throw new Error('EXPENSE_NOT_FOUND');
       return expense;
     },
     onSuccess: () => {
@@ -1247,7 +1315,16 @@ export function useCreatePayment() {
       notes?: string | null;
     }) => {
       const { businessId: bid } = requireAuthContext();
+      if (!Number.isInteger(data.amount) || data.amount < 1) throw new Error('INVALID_PRICE');
       await assertDayIsOpen(bid, data.paymentDate);
+      if (data.type === 'customer_payment') {
+        const { assertCustomerPaymentAllowed } = await import('@/services/books/guards');
+        await assertCustomerPaymentAllowed(bid, data.partyId, data.amount, data.paymentDate);
+      }
+      if (data.type === 'supplier_payment') {
+        const { assertSupplierPaymentAllowed } = await import('@/services/books/guards');
+        await assertSupplierPaymentAllowed(bid, data.partyId, data.amount, data.paymentDate);
+      }
       const db = await getDatabase();
       let payment: Payment | null = null;
       await db.withTransactionAsync(async () => {
@@ -1273,6 +1350,20 @@ export function useCreatePayment() {
       }
       if (data.type === 'supplier_payment') {
         await settleSupplierAccount(bid, data.partyId);
+      }
+      if (data.type === 'customer_payment' || data.type === 'supplier_payment') {
+        const { audit } = await import('@/services/books/audit');
+        await audit({
+          businessId: bid,
+          userId: getUserId(),
+          role: getRole(),
+          action: data.type === 'customer_payment' ? 'payment.customer' : 'payment.supplier',
+          entity: 'payment',
+          entityId: created.id,
+          after: { amount: data.amount, party_id: data.partyId },
+          reason: data.notes ?? null,
+          deviceId: getDeviceId(),
+        });
       }
       payment = created;
       });
@@ -1339,6 +1430,17 @@ export function useStartDay() {
         businessId,
         dailyClosingId: closing.id,
         businessDate: data.businessDate,
+      });
+      const { audit } = await import('@/services/books/audit');
+      await audit({
+        businessId,
+        userId,
+        role: getRole(),
+        action: 'day.open',
+        entity: 'daily_closing',
+        entityId: closing.id,
+        after: { business_date: data.businessDate, opening_cash: data.openingCash },
+        deviceId: getDeviceId(),
       });
       await queueSync(
         'daily_closings',
@@ -1472,6 +1574,23 @@ export function useCloseDay() {
           closing as unknown as Record<string, unknown>,
           businessId
         );
+        const { audit } = await import('@/services/books/audit');
+        await audit({
+          businessId,
+          userId,
+          role: getRole(),
+          action: 'day.close',
+          entity: 'daily_closing',
+          entityId: closing.id,
+          after: {
+            business_date: businessDate,
+            expected_cash: reconciliation.expectedCash,
+            actual_cash: data.actualCash,
+            cash_variance: reconciliation.cashVariance,
+          },
+          reason: data.notes ?? null,
+          deviceId: getDeviceId(),
+        });
       }
 
       return { closing, reconciliation };
@@ -1560,6 +1679,43 @@ export function useVoidPurchase() {
       queryClient.invalidateQueries({ queryKey: ['supplierBalance', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function useRecentAudit(limit = 30) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['recentAudit', businessId, limit],
+    queryFn: async () => {
+      const { getAuditHistory } = await import('@/services/books/audit');
+      return getAuditHistory(businessId, { limit });
+    },
+    enabled: !!businessId,
+  });
+}
+
+export function useRecordCount() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (input: { closingId: string; productId: string; countedQty: number }) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const { recordPhysicalCount } = await import('@/services/books/dailyStock');
+      return recordPhysicalCount({
+        businessId: bid,
+        dailyClosingId: input.closingId,
+        productId: input.productId,
+        countedQty: input.countedQty,
+        userId,
+        deviceId,
+        role: getRole(),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dayStockLines', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
     },
   });

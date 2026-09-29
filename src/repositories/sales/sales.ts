@@ -20,7 +20,12 @@ export class SaleRepository extends BaseRepository<Sale> {
   }
 
   async findByCustomer(customerId: string, businessId: string): Promise<Sale[]> {
-    return this.findAll(businessId, { where: { customer_id: customerId } });
+    return this.findAll(businessId, {
+      where: { customer_id: customerId },
+      limit: 10000,
+      orderBy: 'sale_date',
+      orderDirection: 'DESC',
+    });
   }
 
   async findByStatus(businessId: string, status: PaymentStatus): Promise<Sale[]> {
@@ -177,6 +182,47 @@ export class SaleRepository extends BaseRepository<Sale> {
       [businessId, ...period.params]
     );
     return row?.total ?? 0;
+  }
+
+  /** Checkout money for sales in the period, split by method. Credit is the part of those sales not paid at checkout. */
+  async getCheckoutSplit(
+    businessId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<{ cash: number; mobileMoney: number; bank: number; creditSales: number }> {
+    const db = await this.getDb();
+    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
+    const rows = await db.getAllAsync<{
+      total_amount: number;
+      cash: number;
+      mobile_money: number;
+      bank: number;
+    }>(
+      `SELECT s.total_amount,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'cash' THEN p.amount ELSE 0 END), 0) as cash,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'mobile_money' THEN p.amount ELSE 0 END), 0) as mobile_money,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'bank' THEN p.amount ELSE 0 END), 0) as bank
+       FROM ${this.tableName} s
+       LEFT JOIN payments p
+         ON p.business_id = s.business_id
+        AND p.type = 'sale_payment'
+        AND p.reference_type = 'sale'
+        AND p.reference_id = s.id
+       WHERE s.business_id = ? AND s.voided = 0 AND ${period.clause}
+       GROUP BY s.id`,
+      [businessId, ...period.params]
+    );
+    return rows.reduce(
+      (acc, row) => {
+        const paid = row.cash + row.mobile_money + row.bank;
+        acc.cash += row.cash;
+        acc.mobileMoney += row.mobile_money;
+        acc.bank += row.bank;
+        acc.creditSales += Math.max(0, row.total_amount - paid);
+        return acc;
+      },
+      { cash: 0, mobileMoney: 0, bank: 0, creditSales: 0 }
+    );
   }
 
   async getSalesWithItems(businessId: string, startDate: string, endDate: string): Promise<(Sale & { items: SaleItem[] })[]> {

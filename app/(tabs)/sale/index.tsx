@@ -78,6 +78,7 @@ export default function NewSaleScreen() {
     profit: number;
     lines: Array<{ name: string; qty: number; price: number; before: number | null; after: number | null }>;
   } | null>(null);
+  const [belowCostWarning, setBelowCostWarning] = React.useState<{ shortfall: number; product?: string } | null>(null);
 
   const debouncedSearch = React.useMemo(
     () => debounce((...args: unknown[]) => setLiveQuery(args[0] as string), 250),
@@ -131,6 +132,25 @@ export default function NewSaleScreen() {
     setShowPaymentSheet(true);
   };
 
+  const { user } = useAuthStore();
+  const canOverridePrice = user?.role === 'OWNER' || user?.role === 'MANAGER';
+
+  const submitSale = async (allowBelowCost = false) => {
+    await createSaleMutation.mutateAsync({
+      customerId,
+      items: cart.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+        sellingPrice: item.sellingPrice,
+        discountAmount: item.discountAmount,
+        taxAmount: item.taxAmount,
+      })),
+      paymentMethod: paymentMethod as PayMethod,
+      notes: undefined,
+      allowBelowCost,
+    });
+  };
+
   const confirmSale = async () => {
     if (paymentMethod === 'credit' && !customerId) {
       showToast(t('sales.customerRequired'), 'error');
@@ -138,18 +158,7 @@ export default function NewSaleScreen() {
       return;
     }
     try {
-      await createSaleMutation.mutateAsync({
-        customerId,
-        items: cart.map((item) => ({
-          productId: item.product.id,
-          quantity: item.quantity,
-          sellingPrice: item.sellingPrice,
-          discountAmount: item.discountAmount,
-          taxAmount: item.taxAmount,
-        })),
-        paymentMethod: paymentMethod as PayMethod,
-        notes: undefined,
-      });
+      await submitSale(false);
       setSuccess({
         total: getTotal(),
         profit: cartProfit,
@@ -178,6 +187,16 @@ export default function NewSaleScreen() {
         showToast(t('sales.creditLimit'), 'error');
       } else if (code === 'INVALID_PRICE') {
         showToast(t('sales.priceRequired'), 'error');
+      } else if (code === 'CUSTOMER_REQUIRED') {
+        showToast(t('sales.customerRequired'), 'error');
+        setShowCustomerSheet(true);
+      } else if (code === 'BELOW_COST') {
+        const shortfall = (error as Error & { shortfall?: number }).shortfall ?? 0;
+        if (canOverridePrice) {
+          setBelowCostWarning({ shortfall, product: productName });
+        } else {
+          showToast(t('sales.belowCostBlocked', { amount: `${shortfall.toLocaleString()} RWF` }), 'error');
+        }
       } else {
         showToast(t('sales.saleFailed'), 'error');
       }
@@ -389,6 +408,13 @@ export default function NewSaleScreen() {
               <Text style={styles.profitLabel}>{t('sales.profitOnSale')}</Text>
               <MoneyText amount={cartProfit} size={14} weight="700" />
             </View>
+            {cart.some((item) => {
+              const cost = item.product.track_inventory ? (item.product.average_cost ?? 0) : 0;
+              if (cost <= 0 || item.quantity <= 0) return false;
+              return Math.round((item.quantity * item.sellingPrice - item.discountAmount) / item.quantity) < cost;
+            }) ? (
+              <Text style={styles.belowCostHint}>{t('sales.belowCostHint')}</Text>
+            ) : null}
           </View>
 
           <Text style={styles.sheetLabel}>{t('sales.paymentMethod')}</Text>
@@ -492,6 +518,44 @@ export default function NewSaleScreen() {
         />
         <View style={styles.sheetSpacer} />
       </BottomSheet>
+
+      <ConfirmModal
+        visible={belowCostWarning !== null}
+        onClose={() => setBelowCostWarning(null)}
+        onConfirm={async () => {
+          const warn = belowCostWarning;
+          setBelowCostWarning(null);
+          if (!warn) return;
+          try {
+            await submitSale(true);
+            setSuccess({
+              total: getTotal(),
+              profit: cartProfit,
+              lines: cart.map((item) => {
+                const before = item.product.current_stock ?? null;
+                return {
+                  name: item.product.name,
+                  qty: item.quantity,
+                  price: item.sellingPrice,
+                  before,
+                  after: before !== null ? before - item.quantity : null,
+                };
+              }),
+            });
+            clearCart();
+            setShowPaymentSheet(false);
+          } catch {
+            showToast(t('sales.saleFailed'), 'error');
+          }
+        }}
+        title={t('sales.belowCostTitle')}
+        message={t('sales.belowCostMessage', {
+          product: belowCostWarning?.product ?? '',
+          amount: `${(belowCostWarning?.shortfall ?? 0).toLocaleString()} RWF`,
+        })}
+        confirmText={t('sales.sellBelowCost')}
+        loading={createSaleMutation.isPending}
+      />
 
       <PartyFormSheet
         visible={showAddCustomer}
@@ -1205,6 +1269,12 @@ const styles = StyleSheet.create({
   profitLabel: {
     fontSize: 13,
     color: colors.muted,
+  },
+  belowCostHint: {
+    fontSize: 13,
+    color: colors.danger,
+    fontWeight: '600',
+    marginTop: 6,
   },
   sheetLabel: {
     fontSize: 13,

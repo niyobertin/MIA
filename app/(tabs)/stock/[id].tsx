@@ -25,6 +25,7 @@ import {
   useStockBalance,
   useStockMovements,
   useCategories,
+  useSuppliers,
   useUpdateProduct,
   useDeleteProduct,
   useCreateCategory,
@@ -60,6 +61,21 @@ export default function ProductDetailScreen() {
   const stock = balanceQuery.data ?? product?.current_stock ?? null;
   const movements = movementsQuery.data ?? [];
   const category = categories?.find((c) => c.id === product?.category_id);
+  const { data: suppliers } = useSuppliers();
+  const preferredSupplier = suppliers?.find((s) => s.id === product?.preferred_supplier_id) ?? null;
+  const [showSupplier, setShowSupplier] = React.useState(false);
+
+  const handleSupplier = async (supplierId: string | null) => {
+    if (!id) return;
+    try {
+      await updateProduct.mutateAsync({ id, updates: { preferred_supplier_id: supplierId } });
+      setShowSupplier(false);
+      showToast(t('stock.supplierSaved'), 'success');
+      await productQuery.refetch();
+    } catch {
+      showToast(t('stock.productFailed'), 'error');
+    }
+  };
   const loading = productQuery.isLoading;
   const canEdit = canManageInventory(user?.role);
 
@@ -197,6 +213,19 @@ export default function ProductDetailScreen() {
                 <Text style={styles.priceLabel}>{t('stock.reorderLevel')}</Text>
                 <Text style={styles.stockNumber}>{product.reorder_level}</Text>
               </View>
+              <TouchableOpacity
+                style={styles.priceRow}
+                onPress={canEdit ? () => setShowSupplier(true) : undefined}
+                activeOpacity={canEdit ? 0.7 : 1}
+              >
+                <Text style={styles.priceLabel}>{t('stock.preferredSupplier')}</Text>
+                <View style={styles.supplierValue}>
+                  <Text style={styles.stockNumber} numberOfLines={1}>
+                    {preferredSupplier ? preferredSupplier.name : '—'}
+                  </Text>
+                  {canEdit ? <Ionicons name="chevron-forward" size={16} color={colors.faint} /> : null}
+                </View>
+              </TouchableOpacity>
               <View style={styles.priceRow}>
                 <Text style={styles.priceLabel}>{t('stock.stockValue')}</Text>
                 <MoneyText amount={stockValue ?? 0} size={15} weight="700" color={colors.ink} />
@@ -331,6 +360,36 @@ export default function ProductDetailScreen() {
           {t('common.save')}
         </Button>
       </BottomSheet>
+
+      <BottomSheet visible={showSupplier} onClose={() => setShowSupplier(false)} title={t('stock.preferredSupplier')}>
+        <TouchableOpacity
+          style={styles.supplierOption}
+          onPress={() => void handleSupplier(null)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.supplierName}>{t('stock.noSupplier')}</Text>
+          {product?.preferred_supplier_id == null ? (
+            <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
+          ) : null}
+        </TouchableOpacity>
+        {(suppliers ?? []).map((s) => {
+          const active = product?.preferred_supplier_id === s.id;
+          return (
+            <TouchableOpacity
+              key={s.id}
+              style={styles.supplierOption}
+              onPress={() => void handleSupplier(s.id)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.supplierInfo}>
+                <Text style={styles.supplierName}>{s.name}</Text>
+                {s.phone ? <Text style={styles.supplierPhone}>{s.phone}</Text> : null}
+              </View>
+              {active ? <Ionicons name="checkmark-circle" size={22} color={colors.primary} /> : null}
+            </TouchableOpacity>
+          );
+        })}
+      </BottomSheet>
     </View>
   );
 }
@@ -445,6 +504,35 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 6,
+  },
+  supplierValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    justifyContent: 'flex-end',
+    marginLeft: spacing.md,
+  },
+  supplierOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+    gap: spacing.md,
+    minHeight: 56,
+  },
+  supplierInfo: {
+    flex: 1,
+  },
+  supplierName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  supplierPhone: {
+    fontSize: 13,
+    color: colors.muted,
   },
   priceLabel: {
     fontSize: 14,

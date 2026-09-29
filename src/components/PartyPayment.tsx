@@ -97,8 +97,11 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
     } catch (error) {
       setShowConfirm(false);
       const code = error instanceof Error ? error.message : '';
+      const excess = (error as Error & { excess?: number }).excess ?? 0;
       if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
-      else showToast(t('payments.paymentFailed'), 'error');
+      else if (code === 'OVERPAYMENT') {
+        showToast(t('payments.overpaymentBlocked', { amount: `${excess.toLocaleString()} RWF` }), 'error');
+      } else showToast(t('payments.paymentFailed'), 'error');
     }
   };
 
@@ -118,7 +121,12 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
           <View style={styles.balanceCard}>
             <Text style={styles.balanceLabel}>{t('payments.outstandingBalance')}</Text>
             <MoneyText amount={balance.outstanding} size={30} weight="800" color={colors.ink} />
-            <Text style={styles.balanceSub}>{selected.name}</Text>
+            <Text style={styles.balanceSub}>
+              {selected.name}
+              {balance.outstanding < 0
+                ? ` · ${t('payments.hasCredit', { amount: `${Math.abs(balance.outstanding).toLocaleString()} RWF` })}`
+                : ` · ${t('payments.howCalculated', { owed: balance.owed.toLocaleString(), paid: balance.paid.toLocaleString() })}`}
+            </Text>
           </View>
         ) : null}
 

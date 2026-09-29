@@ -22,15 +22,15 @@ export class CustomerRepository extends BaseRepository<Customer> {
     return rows.map(row => this.mapRow(row));
   }
 
+  /**
+   * Single source of truth for customer debt lives in SaleRepository.getCustomerPosition
+   * (credit sales - checkout payments - later collections). This delegates there so
+   * the balance can never drift between screens.
+   */
   async getTotalOutstanding(businessId: string, customerId: string): Promise<number> {
-    const db = await this.getDb();
-    const row = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(CASE WHEN type = 'sale_payment' THEN -amount ELSE amount END), 0) as total
-       FROM payments
-       WHERE business_id = ? AND party_id = ? AND type IN ('sale_payment', 'customer_payment')`,
-      [businessId, customerId]
-    );
-    return row?.total ?? 0;
+    const { saleRepository } = await import('./sales');
+    const position = await saleRepository.getCustomerPosition(customerId, businessId);
+    return position.outstanding;
   }
 }
 

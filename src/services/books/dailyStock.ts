@@ -2,7 +2,9 @@ import { generateUUID } from '@/utils/uuid';
 import { productRepository } from '@/repositories/products/products';
 import { dailyStockLineRepository } from '@/repositories/reports/dailyStock';
 import { queueSync } from '@/services/sync/queue';
-import { DailyStockLine } from '@/types';
+import { audit } from './audit';
+import { stockVariance } from '@/services/financial/calculations';
+import { DailyStockLine, UserRole } from '@/types';
 
 function asInt(value: unknown, fallback = 0): number {
   const n = typeof value === 'number' ? value : Number(value);
@@ -55,6 +57,7 @@ async function upsertOpeningLine(input: {
       opening_unit_cost: asInt(input.openingUnitCost),
       closing_qty: input.closingQty == null ? null : asInt(input.closingQty),
       closing_unit_cost: input.closingUnitCost == null ? null : asInt(input.closingUnitCost),
+      counted_qty: null,
     });
     await queueSync(
       'daily_stock_lines',
@@ -102,6 +105,76 @@ export async function captureOpeningStock(input: {
     lines.push(line);
   }
   return lines;
+}
+
+export interface CountVariance {
+  productId: string;
+  bookQty: number;
+  countedQty: number | null;
+  variance: number | null;
+  unitCost: number;
+  varianceValue: number | null;
+}
+
+/** Physical count entered by owner/manager. Never touches the movement ledger by itself. */
+export async function recordPhysicalCount(input: {
+  businessId: string;
+  dailyClosingId: string;
+  productId: string;
+  countedQty: number;
+  userId: string;
+  deviceId: string;
+  role: UserRole | null;
+}): Promise<DailyStockLine | null> {
+  if (!Number.isInteger(input.countedQty) || input.countedQty < 0) {
+    throw new Error('INVALID_QUANTITY');
+  }
+  const line = await dailyStockLineRepository.findByClosingAndProduct(
+    input.businessId,
+    input.dailyClosingId,
+    input.productId
+  );
+  if (!line) throw new Error('DAY_LINE_NOT_FOUND');
+  const updated = await dailyStockLineRepository.update(line.id, input.businessId, {
+    counted_qty: Math.round(input.countedQty),
+  });
+  if (updated) {
+    await queueSync(
+      'daily_stock_lines',
+      updated.id,
+      'update',
+      updated as unknown as Record<string, unknown>,
+      input.businessId
+    );
+    await audit({
+      businessId: input.businessId,
+      userId: input.userId,
+      role: input.role,
+      action: 'stock.count',
+      entity: 'daily_stock_line',
+      entityId: line.id,
+      before: { book_qty: line.closing_qty ?? line.opening_qty },
+      after: { counted_qty: Math.round(input.countedQty) },
+      deviceId: input.deviceId,
+    });
+  }
+  return updated;
+}
+
+export function closingVariances(lines: DailyStockLine[]): CountVariance[] {
+  return lines.map((line) => {
+    const book = line.closing_qty ?? line.opening_qty ?? 0;
+    const variance = stockVariance(line.counted_qty ?? null, book);
+    const unitCost = line.closing_unit_cost ?? line.opening_unit_cost ?? 0;
+    return {
+      productId: line.product_id,
+      bookQty: book,
+      countedQty: line.counted_qty ?? null,
+      variance,
+      unitCost,
+      varianceValue: variance == null ? null : variance * unitCost,
+    };
+  });
 }
 
 export async function sealClosingStock(input: {

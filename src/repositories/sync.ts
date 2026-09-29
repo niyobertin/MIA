@@ -9,7 +9,7 @@ export class SyncRepository extends BaseRepository<SyncRecord> {
     'payload', 'device_id', 'status', 'error_message', 'retry_count', 'created_at', 'updated_at'
   ];
 
-  async findPending(businessId: string, limit = 50): Promise<SyncRecord[]> {
+  async findPending(businessId: string, limit = 5000): Promise<SyncRecord[]> {
     return this.findAll(businessId, {
       where: { status: 'pending' },
       limit,
@@ -18,7 +18,7 @@ export class SyncRepository extends BaseRepository<SyncRecord> {
     });
   }
 
-  async findFailed(businessId: string, limit = 50): Promise<SyncRecord[]> {
+  async findFailed(businessId: string, limit = 5000): Promise<SyncRecord[]> {
     return this.findAll(businessId, {
       where: { status: 'failed' },
       limit,
@@ -56,6 +56,10 @@ export class SyncRepository extends BaseRepository<SyncRecord> {
 
   async getPendingCount(businessId: string): Promise<number> {
     return this.count(businessId, { status: 'pending' });
+  }
+
+  async getFailedCount(businessId: string): Promise<number> {
+    return this.count(businessId, { status: 'failed' });
   }
 
   async requeueSynced(businessId: string): Promise<number> {

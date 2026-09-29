@@ -9,7 +9,7 @@ import { Button } from '@/components/Button';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { getInitials } from '@/utils/formatters';
-import { canManageUsers, canCloseDay } from '@/utils/permissions';
+import { canManageUsers, canCloseDay, canSeeProfit } from '@/utils/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { APP_VERSION } from '@/constants';
@@ -49,6 +49,9 @@ export default function MoreScreen() {
       : []),
     { title: t('settings.language'), icon: 'globe', screen: 'language' },
     { title: t('settings.sync'), icon: 'sync', screen: 'sync' },
+    ...(canSeeProfit(user?.role)
+      ? [{ title: t('settings.auditLog'), icon: 'list', screen: 'audit' }]
+      : []),
     { title: t('settings.about'), icon: 'information-circle', screen: 'about' },
     { title: t('settings.help'), icon: 'help-circle', screen: 'help' },
   ];

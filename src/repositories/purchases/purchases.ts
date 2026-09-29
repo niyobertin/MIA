@@ -10,7 +10,12 @@ export class PurchaseRepository extends BaseRepository<Purchase> {
   ];
 
   async findBySupplier(supplierId: string, businessId: string): Promise<Purchase[]> {
-    return this.findAll(businessId, { where: { supplier_id: supplierId } });
+    return this.findAll(businessId, {
+      where: { supplier_id: supplierId },
+      limit: 10000,
+      orderBy: 'purchase_date',
+      orderDirection: 'DESC',
+    });
   }
 
   async findByStatus(businessId: string, status: PurchaseStatus): Promise<Purchase[]> {
@@ -87,6 +92,31 @@ export class PurchaseRepository extends BaseRepository<Purchase> {
     const laterPaid = later?.total ?? 0;
     const owed = purchaseTotal - checkoutPaid;
     return { owed, paid: laterPaid, outstanding: owed - laterPaid };
+  }
+
+  async getTotalOutstanding(businessId: string): Promise<number> {
+    const db = await this.getDb();
+    const purchases = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total_amount), 0) as total
+       FROM purchases
+       WHERE business_id = ? AND status != 'cancelled'`,
+      [businessId]
+    );
+    const checkout = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(pay.amount), 0) as total
+       FROM payments pay
+       JOIN purchases p ON p.id = pay.reference_id AND p.business_id = pay.business_id
+       WHERE pay.business_id = ? AND pay.type = 'purchase_payment' AND pay.reference_type = 'purchase'
+         AND p.status != 'cancelled'`,
+      [businessId]
+    );
+    const later = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM payments
+       WHERE business_id = ? AND type = 'supplier_payment'`,
+      [businessId]
+    );
+    return (purchases?.total ?? 0) - (checkout?.total ?? 0) - (later?.total ?? 0);
   }
 }
 

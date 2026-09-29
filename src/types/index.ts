@@ -37,6 +37,7 @@ export interface Product {
   id: string;
   business_id: string;
   category_id: string | null;
+  preferred_supplier_id: string | null;
   name: string;
   sku: string | null;
   barcode: string | null;
@@ -297,6 +298,7 @@ export interface DailyStockLine {
   opening_unit_cost: number;
   closing_qty: number | null;
   closing_unit_cost: number | null;
+  counted_qty: number | null;
   created_at: string;
   updated_at: string;
   product_name?: string;
@@ -306,6 +308,21 @@ export interface DailyStockLine {
 export interface StockMovementRow extends StockMovement {
   product_name: string;
   user_name: string | null;
+}
+
+export interface AuditLog {
+  id: string;
+  business_id: string;
+  user_id: string | null;
+  role: string | null;
+  action: string;
+  entity: string;
+  entity_id: string | null;
+  before_state: string | null;
+  after_state: string | null;
+  reason: string | null;
+  device_id: string | null;
+  created_at: string;
 }
 
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';

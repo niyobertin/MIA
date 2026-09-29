@@ -91,6 +91,26 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
     business = remoteBusiness;
   }
 
+  // Never let a pull overwrite rows this device changed but hasn't pushed yet.
+  // Local dirty rows win until the server acknowledges them; otherwise two
+  // offline devices editing the same product price would flap back and forth.
+  const dirty = new Set<string>();
+  try {
+    const pullBusinessId =
+      (pull.business?.id as string | undefined) ?? (remoteUser?.business_id as string | null | undefined) ?? null;
+    const queued = pullBusinessId
+      ? await db.getAllAsync<{ table_name: string; record_id: string }>(
+          `SELECT table_name, record_id FROM sync_records WHERE business_id = ? AND status IN ('pending', 'syncing', 'failed')`,
+          [pullBusinessId]
+        )
+      : await db.getAllAsync<{ table_name: string; record_id: string }>(
+          `SELECT table_name, record_id FROM sync_records WHERE status IN ('pending', 'syncing', 'failed')`
+        );
+    for (const q of queued ?? []) dirty.add(`${q.table_name}:${q.record_id}`);
+  } catch {
+    // sync_records may not exist on very old installs; fall through to plain pull.
+  }
+
   for (const [table, rows] of Object.entries(pull.tables ?? {})) {
     if (!Array.isArray(rows)) continue;
     for (const record of rows) {
@@ -98,6 +118,7 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
       const keys = Object.keys(record);
       if (!keys.length || record.id == null) continue;
       if (!/^[a-z_]+$/.test(table)) continue;
+      if (dirty.has(`${table}:${String(record.id)}`)) continue;
       try {
         if (table === 'users') {
           const safeKeys = keys.filter((k) => k !== 'password_hash');

@@ -5,7 +5,7 @@ export class DailyStockLineRepository extends BaseRepository<DailyStockLine> {
   protected tableName = 'daily_stock_lines';
   protected columns = [
     'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
-    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost',
+    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty',
     'created_at', 'updated_at',
   ];
 

@@ -49,6 +49,8 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
     await normalizeBusinessDateColumns(database);
     await migrateDailyClosingStockColumns(database);
     await migrateDailyStockLinesUnique(database);
+    await migrateAuditAndCountedQty(database);
+    await migratePreferredSupplier(database);
   }
 }
 
@@ -88,6 +90,12 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion < 10) {
       await migrateDailyStockLinesUnique(database);
+    }
+    if (fromVersion < 11) {
+      await migrateAuditAndCountedQty(database);
+    }
+    if (fromVersion < 12) {
+      await migratePreferredSupplier(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -469,6 +477,41 @@ async function normalizeBusinessDateColumns(database: SQLite.SQLiteDatabase): Pr
       // ignore missing columns on partial schemas
     }
   }
+}
+
+async function migrateAuditAndCountedQty(database: SQLite.SQLiteDatabase): Promise<void> {
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      user_id TEXT,
+      role TEXT,
+      action TEXT NOT NULL,
+      entity TEXT NOT NULL,
+      entity_id TEXT,
+      before_state TEXT,
+      after_state TEXT,
+      reason TEXT,
+      device_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_business_id ON audit_logs(business_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity, entity_id);
+  `);
+  const lineCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(daily_stock_lines)');
+  if (lineCols.length > 0 && !lineCols.some((c) => c.name === 'counted_qty')) {
+    await database.execAsync(`ALTER TABLE daily_stock_lines ADD COLUMN counted_qty INTEGER`);
+  }
+}
+
+async function migratePreferredSupplier(database: SQLite.SQLiteDatabase): Promise<void> {
+  const productCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(products)');
+  if (productCols.length > 0 && !productCols.some((c) => c.name === 'preferred_supplier_id')) {
+    await database.execAsync(`ALTER TABLE products ADD COLUMN preferred_supplier_id TEXT`);
+  }
+  await database.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_products_preferred_supplier ON products(preferred_supplier_id)`
+  );
 }
 
 export async function resetDatabase(): Promise<void> {

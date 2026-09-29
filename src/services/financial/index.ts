@@ -16,6 +16,7 @@ import {
   roundToMinorUnits,
   calculateAverageTransactionValue,
 } from './calculations';
+import { emptyMethods, assembleBooks, PeriodBooks, MethodTotals } from './books';
 import { productRepository, stockMovementRepository } from '@/repositories/products/products';
 import { purchaseRepository } from '@/repositories/purchases/purchases';
 import { saleRepository } from '@/repositories/sales/sales';
@@ -323,6 +324,139 @@ export class FinancialService {
       stockValue,
       topProducts,
       paymentBreakdown,
+    };
+  }
+
+  /**
+   * Single authoritative period calculation. Every report, dashboard card and PDF
+   * must derive its numbers from here so headline figures, charts and exports agree.
+   *
+   * Sales by payment method = money received AT CHECKOUT for sales in the period.
+   * Collections = money received LATER for older credit sales. Never mixed.
+   */
+  async buildPeriodBooks(
+    businessId: string,
+    startDate: string,
+    endDate: string,
+    options?: { openingCash?: number; topLimit?: number }
+  ): Promise<PeriodBooks> {
+    const start = startDate.slice(0, 10);
+    const end = endDate.slice(0, 10);
+    const [
+      totalSales,
+      tax,
+      cogs,
+      expenses,
+      loss,
+      itemsSold,
+      transactionCount,
+      checkout,
+      sums,
+      purchasesTotal,
+      cashPurchases,
+      cashExpenses,
+      stockNow,
+      positionAtEnd,
+      topProducts,
+    ] = await Promise.all([
+      saleRepository.getTotalSales(businessId, start, end),
+      saleRepository.getTotalTax(businessId, start, end),
+      this.calculateCOGSForPeriod(businessId, start, end),
+      expenseRepository.getTotalExpenses(businessId, start, end),
+      stockMovementRepository.getInventoryLossBreakdown(businessId, start, end),
+      this.getTotalItemsSold(businessId, start, end),
+      saleRepository.countInPeriod(businessId, start, end),
+      saleRepository.getCheckoutSplit(businessId, start, end),
+      paymentRepository.sumByTypeAndMethod(businessId, start, end),
+      purchaseRepository.getTotalPurchases(businessId, start, end),
+      purchaseRepository.getCashPurchases(businessId, start, end),
+      expenseRepository.getCashExpenses(businessId, start, end),
+      productRepository.getStockValue(businessId),
+      productRepository.getPositionAsOf(businessId, end),
+      this.getTopProducts(businessId, start, end, options?.topLimit ?? 5),
+    ]);
+
+    const byType = (type: string): MethodTotals => {
+      const out = emptyMethods();
+      for (const row of sums) {
+        if (row.type !== type) continue;
+        const v = row.total ?? 0;
+        if (row.payment_method === 'cash') out.cash += v;
+        else if (row.payment_method === 'mobile_money') out.mobileMoney += v;
+        else if (row.payment_method === 'bank') out.bank += v;
+      }
+      return out;
+    };
+    const collections = byType('customer_payment');
+    const otherIncome = byType('other_income');
+    const supplierPayments = byType('supplier_payment');
+    const withdrawalsRow = byType('withdrawal');
+
+    const stockValueAtEnd = positionAtEnd.reduce((sum, p) => sum + p.value, 0);
+
+    return assembleBooks({
+      totalSales,
+      tax,
+      cogs,
+      expenses,
+      damagedValue: loss.damaged,
+      adjustmentOutValue: loss.adjustmentOut,
+      adjustmentInValue: loss.adjustmentIn,
+      itemsSold,
+      transactionCount,
+      checkout: { cash: checkout.cash, mobileMoney: checkout.mobileMoney, bank: checkout.bank },
+      creditSales: checkout.creditSales,
+      collections,
+      otherIncome,
+      supplierPayments,
+      cashPurchases,
+      cashExpenses,
+      withdrawals: withdrawalsRow.cash + withdrawalsRow.mobileMoney + withdrawalsRow.bank,
+      openingCash: options?.openingCash ?? 0,
+      topProducts: topProducts.map((p) => ({
+        productId: p.productId,
+        productName: p.productName,
+        quantitySold: p.quantitySold,
+        revenue: p.totalSales,
+        cost: p.totalSales - p.totalProfit,
+        grossProfit: p.totalProfit,
+        margin: p.margin,
+      })),
+      stockValueNow: stockNow,
+      stockValueAtEnd,
+    });
+  }
+
+  async getBusinessHealth(
+    businessId: string
+  ): Promise<{
+    openDay: boolean;
+    pendingSync: number;
+    failedSync: number;
+    customerDebt: number;
+    supplierDebt: number;
+    lowStockCount: number;
+    outOfStockCount: number;
+  }> {
+    const { syncRepository } = await import('@/repositories/sync');
+    const [openDay, pending, failed, lowStock] = await Promise.all([
+      dailyClosingRepository.findOpenDay(businessId),
+      syncRepository.getPendingCount(businessId),
+      syncRepository.getFailedCount(businessId),
+      productRepository.findLowStock(businessId),
+    ]);
+    const [positions, supplierOutstanding] = await Promise.all([
+      saleRepository.listCustomerPositions(businessId),
+      purchaseRepository.getTotalOutstanding(businessId),
+    ]);
+    return {
+      openDay: !!openDay,
+      pendingSync: pending,
+      failedSync: failed,
+      customerDebt: positions.reduce((s, p) => s + Math.max(0, p.outstanding), 0),
+      supplierDebt: Math.max(0, supplierOutstanding),
+      lowStockCount: lowStock.length,
+      outOfStockCount: lowStock.filter((p) => (p.current_stock ?? 0) <= 0).length,
     };
   }
 

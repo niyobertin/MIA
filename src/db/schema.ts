@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 10;
+export const DATABASE_VERSION = 12;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+  preferred_supplier_id TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   sku TEXT,
   barcode TEXT,
@@ -264,9 +265,26 @@ CREATE TABLE IF NOT EXISTS daily_stock_lines (
   opening_unit_cost INTEGER NOT NULL DEFAULT 0,
   closing_qty INTEGER,
   closing_unit_cost INTEGER,
+  counted_qty INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(daily_closing_id, product_id)
+);
+
+-- Audit log: who did what to the books, and why
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  user_id TEXT,
+  role TEXT,
+  action TEXT NOT NULL,
+  entity TEXT NOT NULL,
+  entity_id TEXT,
+  before_state TEXT,
+  after_state TEXT,
+  reason TEXT,
+  device_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Sync records table
@@ -291,6 +309,7 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_categories_business_id ON categories(business_id);
 CREATE INDEX IF NOT EXISTS idx_products_business_id ON products(business_id);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_preferred_supplier ON products(preferred_supplier_id);
 CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
 CREATE INDEX IF NOT EXISTS idx_suppliers_business_id ON suppliers(business_id);
@@ -325,10 +344,13 @@ CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(pr
 CREATE INDEX IF NOT EXISTS idx_sync_records_business_id ON sync_records(business_id);
 CREATE INDEX IF NOT EXISTS idx_sync_records_status ON sync_records(status);
 CREATE INDEX IF NOT EXISTS idx_sync_records_table_record ON sync_records(table_name, record_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_business_id ON audit_logs(business_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity, entity_id);
 `;
 
 export const DROP_TABLES_SQL = `
 DROP TABLE IF EXISTS app_settings;
+DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS sync_records;
 DROP TABLE IF EXISTS daily_stock_lines;
 DROP TABLE IF EXISTS daily_closings;

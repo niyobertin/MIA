@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
@@ -26,6 +26,8 @@ import {
   useTrackedStock,
   useDailyClosingHistory,
   useDailyClosingById,
+  useRecordCount,
+  useAdjustStock,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';
@@ -55,6 +57,8 @@ export default function ClosingScreen() {
   const trackedQuery = useTrackedStock();
   const closeDayMutation = useCloseDay();
   const startDayMutation = useStartDay();
+  const recordCountMutation = useRecordCount();
+  const adjustStockMutation = useAdjustStock();
   const latestClosingQuery = useLatestClosing();
   const historyQuery = useDailyClosingHistory();
   const detailQuery = useDailyClosingById(selectedId);
@@ -90,6 +94,8 @@ export default function ClosingScreen() {
 
   const [showConfirm, setShowConfirm] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
+  const [counts, setCounts] = React.useState<Record<string, string>>({});
+  const [savingCounts, setSavingCounts] = React.useState(false);
 
   const fin = financialsQuery.data;
   const liveStock = stockQuery.data;
@@ -112,6 +118,66 @@ export default function ClosingScreen() {
       opening: saved?.opening_qty ?? null,
     };
   });
+
+  const countRows = (trackedQuery.data ?? []).map((row) => {
+    const saved = savedLines.find((line) => line.product_id === row.product_id);
+    const raw = counts[row.product_id] ?? (saved?.counted_qty != null ? String(saved.counted_qty) : '');
+    const counted = raw.trim() === '' ? null : parseInt(raw.replace(/[^\d]/g, ''), 10);
+    const variance = counted == null || Number.isNaN(counted) ? null : counted - row.balance;
+    return {
+      id: row.product_id,
+      name: row.name,
+      book: row.balance,
+      unitCost: row.average_cost,
+      counted,
+      variance,
+      savedCounted: saved?.counted_qty ?? null,
+    };
+  });
+  const countedEntries = countRows.filter((r) => r.variance != null);
+  const missingUnits = countedEntries.filter((r) => (r.variance ?? 0) < 0).reduce((s, r) => s + (r.variance ?? 0), 0);
+  const extraUnits = countedEntries.filter((r) => (r.variance ?? 0) > 0).reduce((s, r) => s + (r.variance ?? 0), 0);
+  const varianceValue = countedEntries.reduce((s, r) => s + (r.variance ?? 0) * r.unitCost, 0);
+
+  const saveCounts = async () => {
+    if (!activeOpen) return;
+    setSavingCounts(true);
+    try {
+      for (const row of countRows) {
+        if (row.counted == null || Number.isNaN(row.counted)) continue;
+        if (row.savedCounted === row.counted) continue;
+        await recordCountMutation.mutateAsync({
+          closingId: activeOpen.id,
+          productId: row.id,
+          countedQty: row.counted,
+        });
+      }
+      await linesQuery.refetch();
+      showToast(t('cash.countSaved'), 'success');
+    } catch {
+      showToast(t('common.error'), 'error');
+    } finally {
+      setSavingCounts(false);
+    }
+  };
+
+  const adjustVariance = async (productId: string, variance: number, productName: string) => {
+    if (!variance) return;
+    try {
+      await adjustStockMutation.mutateAsync({
+        productId,
+        kind: variance < 0 ? 'adjustment_out' : 'adjustment_in',
+        quantity: Math.abs(variance),
+        reason: `Count variance at close (${productName})`,
+      });
+      await Promise.all([trackedQuery.refetch(), stockQuery.refetch(), linesQuery.refetch()]);
+      showToast(t('cash.adjustmentCreated'), 'success');
+    } catch (error: unknown) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'FORBIDDEN') showToast(t('cash.noPermission'), 'error');
+      else showToast(t('common.error'), 'error');
+    }
+  };
 
   const openingCash = parseInt(watch('openingCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
   const actualCash = parseInt(watch('actualCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
@@ -273,6 +339,18 @@ export default function ClosingScreen() {
             />
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.openingCash')}</Text>
+              {lastClosed?.actual_cash != null ? (
+                <Text style={styles.flowLabel}>
+                  {t('cash.lastClosedCash', { amount: `${lastClosed.actual_cash.toLocaleString()} RWF` })}
+                </Text>
+              ) : null}
+              {lastClosed?.actual_cash != null && openingCash !== lastClosed.actual_cash ? (
+                <Text style={styles.warnText}>
+                  {t('cash.openingDiffers', {
+                    diff: `${Math.abs(openingCash - (lastClosed.actual_cash ?? 0)).toLocaleString()} RWF`,
+                  })}
+                </Text>
+              ) : null}
               <FormInput
                 control={control}
                 name="openingCash"
@@ -357,6 +435,68 @@ export default function ClosingScreen() {
               showOpening
               openingLabel={t('cash.openingStock')}
             />
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>{t('cash.physicalCount')}</Text>
+              <Text style={styles.flowLabel}>{t('cash.physicalCountHint')}</Text>
+              {countRows.length === 0 ? (
+                <Text style={styles.flowLabel}>{t('cash.noStockItems')}</Text>
+              ) : (
+                countRows.map((row) => (
+                  <View key={row.id} style={styles.countRow}>
+                    <View style={styles.itemInfo}>
+                      <Text style={styles.itemName} numberOfLines={1}>{row.name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {t('cash.bookQty')}: {row.book.toLocaleString()}
+                        {row.variance != null ? (
+                          <Text style={row.variance === 0 ? styles.varOk : styles.varBad}>
+                            {' '}· {row.variance > 0 ? '+' : ''}{row.variance.toLocaleString()}
+                          </Text>
+                        ) : null}
+                      </Text>
+                      {row.variance != null && row.variance !== 0 ? (
+                        <TouchableOpacity
+                          onPress={() => adjustVariance(row.id, row.variance ?? 0, row.name)}
+                          hitSlop={8}
+                        >
+                          <Text style={styles.adjustLink}>{t('cash.createAdjustment')}</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <TextInput
+                      style={styles.countInput}
+                      value={counts[row.id] ?? (row.savedCounted != null ? String(row.savedCounted) : '')}
+                      onChangeText={(v) =>
+                        setCounts((prev) => ({ ...prev, [row.id]: v.replace(/[^\d]/g, '') }))
+                      }
+                      placeholder="—"
+                      keyboardType="numeric"
+                    />
+                  </View>
+                ))
+              )}
+              {countedEntries.length > 0 ? (
+                <View style={styles.varianceBox}>
+                  <Text style={styles.varianceLabel}>
+                    {t('cash.varianceSummary', {
+                      missing: missingUnits.toLocaleString(),
+                      extra: `+${extraUnits.toLocaleString()}`,
+                    })}
+                  </Text>
+                  <MoneyText amount={varianceValue} size={16} weight="800" />
+                  <Text style={styles.varianceHint}>{t('cash.varianceAdjustHint')}</Text>
+                </View>
+              ) : null}
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                loading={savingCounts || recordCountMutation.isPending}
+                onPress={saveCounts}
+              >
+                {t('cash.saveCount')}
+              </Button>
+            </View>
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('cash.cashReconciliation')}</Text>
@@ -763,5 +903,37 @@ const styles = StyleSheet.create({
   historyInfo: { flex: 1, minWidth: 0 },
   historyDate: { fontSize: 15, fontWeight: '700', color: colors.ink },
   historyMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  warnText: { fontSize: 13, color: colors.warning, fontWeight: '600', marginBottom: spacing.sm },
   historyRight: { alignItems: 'flex-end', gap: 4 },
+  countRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    gap: spacing.md,
+  },
+  countInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.ink,
+    backgroundColor: colors.background,
+    minWidth: 76,
+    textAlign: 'right',
+  },
+  varOk: { color: colors.success, fontWeight: '700' },
+  varBad: { color: colors.danger, fontWeight: '700' },
+  adjustLink: { fontSize: 13, color: colors.primary, fontWeight: '700', marginTop: 4 },
+  varianceBox: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginVertical: spacing.sm,
+    gap: 4,
+  },
 });

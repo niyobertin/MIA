@@ -472,9 +472,55 @@ export class DailyStockLine {
   } })
   closing_unit_cost!: number | null;
 
+  @Column({ type: 'bigint', nullable: true, transformer: {
+    to: (v: number | null | undefined) => (v == null ? null : String(v)),
+    from: (v: string | null) => (v == null ? null : Number(v)),
+  } })
+  counted_qty!: number | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at!: Date;
+}
+
+@Entity('audit_logs')
+export class AuditLog {
+  @PrimaryColumn('uuid')
+  id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  business_id!: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  user_id!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  role!: string | null;
+
+  @Column({ type: 'text' })
+  action!: string;
+
+  @Column({ type: 'text' })
+  entity!: string;
+
+  @Column({ type: 'text', nullable: true })
+  entity_id!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  before_state!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  after_state!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  reason!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  device_id!: string | null;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
 }

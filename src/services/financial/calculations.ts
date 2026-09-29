@@ -153,6 +153,72 @@ export function calculateAverageTransactionValue(totalSales: number, transaction
   return Math.round(totalSales / transactionCount);
 }
 
+/** Net unit price after a line discount. Profit and below-cost checks use this, not the list price. */
+export function lineNetUnitPrice(quantity: number, sellingPrice: number, discountAmount: number): number {
+  if (quantity <= 0) return 0;
+  return Math.round((quantity * sellingPrice - discountAmount) / quantity);
+}
+
+/** Units to buy so on-hand reaches the reorder level. Zero when the shelf is already above it. */
+export function suggestedReorderQty(currentQuantity: number, reorderLevel: number): number {
+  if (reorderLevel <= 0 || currentQuantity > reorderLevel) return 0;
+  return reorderLevel - currentQuantity;
+}
+
+export interface PartyPosition {
+  owed: number;
+  paid: number;
+  outstanding: number;
+}
+
+/**
+ * Single authoritative party-balance rule.
+ * outstanding = credit extended - money collected later.
+ * A negative outstanding is an explicit credit (overpayment), never floored to zero.
+ */
+export function outstandingBalance(owed: number, paid: number): number {
+  return Math.round(owed) - Math.round(paid);
+}
+
+/** Excess of a payment over what is owed. Zero when the payment fits the debt. */
+export function overpaymentOf(outstanding: number, paymentAmount: number): number {
+  return Math.max(0, Math.round(paymentAmount) - Math.round(outstanding));
+}
+
+export interface BelowCostLine {
+  productId: string;
+  quantity: number;
+  netUnitPrice: number;
+  unitCost: number;
+  shortfallPerUnit: number;
+}
+
+/** Sale lines priced below their frozen unit cost. Callers decide whether an override is allowed. */
+export function belowCostLines(
+  lines: Array<{ productId: string; quantity: number; sellingPrice: number; discountAmount?: number; unitCost: number }>
+): BelowCostLine[] {
+  const out: BelowCostLine[] = [];
+  for (const line of lines) {
+    const net = lineNetUnitPrice(line.quantity, line.sellingPrice, line.discountAmount ?? 0);
+    const cost = Math.round(line.unitCost);
+    if (net < cost) {
+      out.push({
+        productId: line.productId,
+        quantity: line.quantity,
+        netUnitPrice: net,
+        unitCost: cost,
+        shortfallPerUnit: cost - net,
+      });
+    }
+  }
+  return out;
+}
+
+export function stockVariance(counted: number | null, book: number): number | null {
+  if (counted == null) return null;
+  return counted - book;
+}
+
 export function roundToMinorUnits(amount: number): number {
   return Math.round(amount);
 }

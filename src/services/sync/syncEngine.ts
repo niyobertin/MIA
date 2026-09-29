@@ -28,6 +28,7 @@ const SYNC_ORDER = [
   'stock_movements',
   'daily_closings',
   'daily_stock_lines',
+  'audit_logs',
 ];
 
 const STRIP_KEYS = new Set([
@@ -42,7 +43,7 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   categories: new Set(['id', 'business_id', 'name', 'description', 'active', 'created_at', 'updated_at']),
   products: new Set([
-    'id', 'business_id', 'category_id', 'name', 'sku', 'barcode', 'unit',
+    'id', 'business_id', 'category_id', 'preferred_supplier_id', 'name', 'sku', 'barcode', 'unit',
     'selling_price', 'average_cost', 'reorder_level', 'track_inventory', 'active', 'created_at', 'updated_at',
   ]),
   suppliers: new Set(['id', 'business_id', 'name', 'phone', 'email', 'address', 'active', 'created_at', 'updated_at']),
@@ -87,8 +88,12 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   daily_stock_lines: new Set([
     'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
-    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost',
+    'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty',
     'created_at', 'updated_at',
+  ]),
+  audit_logs: new Set([
+    'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',
+    'before_state', 'after_state', 'reason', 'device_id', 'created_at',
   ]),
 };
 
@@ -112,6 +117,9 @@ function preparePayload(tableName: string, payload: Record<string, unknown>): Re
 
   return out;
 }
+
+export type { SyncConflictKind } from './conflicts';
+export { classifySyncError, tableLabel } from './conflicts';
 
 function sortPending(records: SyncRecord[]): SyncRecord[] {
   return [...records].sort((a, b) => {
@@ -301,13 +309,21 @@ export class SyncEngine {
       }
 
       const pendingRecords = sortPending(await syncRepository.findPending(businessId));
-      this.notify({ status: 'syncing', pendingCount: pendingRecords.length });
+      this.notify({ status: 'syncing', pendingCount: pendingRecords.length, totalCount: pendingRecords.length });
 
       let synced = 0;
       let failed = 0;
       const errors: string[] = [];
 
       for (const record of pendingRecords) {
+        this.notify({
+          status: 'syncing',
+          pendingCount: Math.max(0, pendingRecords.length - synced - failed),
+          syncedCount: synced,
+          failedCount: failed,
+          totalCount: pendingRecords.length,
+          currentTable: record.table_name,
+        });
         try {
           await this.syncRecord(record);
           synced++;
@@ -321,6 +337,8 @@ export class SyncEngine {
           pendingCount: Math.max(0, pendingRecords.length - synced - failed),
           syncedCount: synced,
           failedCount: failed,
+          totalCount: pendingRecords.length,
+          currentTable: record.table_name,
         });
       }
 
@@ -432,6 +450,74 @@ export class SyncEngine {
     await syncRepository.createSyncRecord(syncRecord);
   }
 
+  /** Push one queued record again with its stored payload. */
+  async retryRecord(recordId: string, businessId: string): Promise<SyncResult> {
+    const record = await syncRepository.findById(recordId, businessId);
+    if (!record) {
+      return { success: false, synced: 0, failed: 1, errors: ['Record not found'] };
+    }
+    await syncRepository.update(record.id, businessId, { status: 'pending', error_message: null });
+    return this.syncAll();
+  }
+
+  /**
+   * The queued payload is a snapshot: if the row changed locally after queueing
+   * (e.g. a settlement updated paid_amount), refresh the payload first so the
+   * server sees current data instead of a stale copy.
+   */
+  async keepMineRecord(tableName: string, recordId: string, businessId: string): Promise<SyncResult> {
+    const allowed = TABLE_COLUMNS[tableName];
+    if (!allowed) {
+      return { success: false, synced: 0, failed: 1, errors: ['Unknown table'] };
+    }
+    const { getDatabase } = await import('@/db/database');
+    const db = await getDatabase();
+    const cols = [...allowed].filter((c) => c !== 'password_hash');
+    const scoped = tableName !== 'businesses' && tableName !== 'users';
+    const row = await db.getFirstAsync<Record<string, unknown>>(
+      `SELECT ${cols.join(', ')} FROM ${tableName} WHERE id = ?${scoped ? ' AND business_id = ?' : ''}`,
+      scoped ? [recordId, businessId] : [recordId]
+    );
+    if (!row) {
+      return { success: false, synced: 0, failed: 1, errors: ['Local record not found'] };
+    }
+    await syncRepository.update(recordId, businessId, {
+      payload: JSON.stringify(preparePayload(tableName, row)),
+      status: 'pending',
+      error_message: null,
+    });
+    return this.syncAll();
+  }
+
+  /**
+   * Accept the server copy: fetch it, overwrite the local row, drop the queue
+   * entry. Used when the server sealed history (409) and local edits can never
+   * be pushed. Record a reversal locally instead of editing sealed history.
+   */
+  async keepServerRecord(tableName: string, recordId: string, businessId: string): Promise<SyncResult> {
+    try {
+      const data = await apiFetch<{ data: Record<string, unknown> }>(
+        `/sync/${tableName}/${encodeURIComponent(recordId)}`
+      );
+      if (!data?.data) {
+        return { success: false, synced: 0, failed: 1, errors: ['Server has no copy'] };
+      }
+      const { applyCloudPull } = await import('@/services/auth/hydrateSession');
+      await syncRepository.delete(recordId, businessId);
+      await applyCloudPull({ user: null, business: null, tables: { [tableName]: [data.data] } });
+      await refreshPendingCountLocal(businessId);
+      return { success: true, synced: 1, failed: 0, errors: [] };
+    } catch (error) {
+      return { success: false, synced: 0, failed: 1, errors: [formatCloudError(error)] };
+    }
+  }
+
+  /** Stop trying to push this record. Local data stays on the phone. */
+  async dismissRecord(recordId: string, businessId: string): Promise<void> {
+    await syncRepository.delete(recordId, businessId);
+    await refreshPendingCountLocal(businessId);
+  }
+
   async retryFailed(): Promise<SyncResult> {
     if (this.isSyncing) {
       return { success: false, synced: 0, failed: 0, errors: ['Already syncing'] };
@@ -505,6 +591,9 @@ export interface SyncEngineStatus {
   pendingCount: number;
   syncedCount?: number;
   failedCount?: number;
+  /** Total records in the current run; currentTable names the record being pushed. */
+  totalCount?: number;
+  currentTable?: string | null;
   lastSyncAt?: Date;
 }
 
@@ -513,6 +602,11 @@ export interface SyncResult {
   synced: number;
   failed: number;
   errors: string[];
+}
+
+async function refreshPendingCountLocal(businessId: string): Promise<void> {
+  const { refreshPendingCount } = await import('./queue');
+  await refreshPendingCount(businessId);
 }
 
 let syncEngineInstance: SyncEngine | null = null;

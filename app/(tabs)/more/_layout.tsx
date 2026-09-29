@@ -21,6 +21,7 @@ export default function MoreLayout() {
       <Stack.Screen name="user-management" options={{ title: t('settings.userManagement') }} />
       <Stack.Screen name="language" options={{ title: t('settings.language') }} />
       <Stack.Screen name="sync" options={{ title: t('settings.syncStatus') }} />
+      <Stack.Screen name="audit" options={{ title: t('settings.auditLog') }} />
       <Stack.Screen name="about" options={{ title: t('settings.about') }} />
       <Stack.Screen name="help" options={{ title: t('settings.help') }} />
     </Stack>

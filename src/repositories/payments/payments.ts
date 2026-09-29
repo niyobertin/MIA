@@ -65,6 +65,23 @@ export class PaymentRepository extends BaseRepository<Payment> {
     return row?.total ?? 0;
   }
 
+  async sumByTypeAndMethod(
+    businessId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<Array<{ type: string; payment_method: string; total: number }>> {
+    const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('payment_date', 'created_at', startDate, endDate);
+    return db.getAllAsync(
+      `SELECT type, payment_method, COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND ${period.clause}
+       GROUP BY type, payment_method`,
+      [businessId, ...period.params]
+    );
+  }
+
   async getInflowByMethod(
     businessId: string,
     startDate: string,

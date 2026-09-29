@@ -20,10 +20,11 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { canSeeProfit } from '@/utils/permissions';
 import {
   usePeriodStats,
+  usePeriodBooks,
   useTopProducts,
   usePaymentBreakdown,
-  useWeeklySales,
-  useMonthlySales,
+  useBusinessHealth,
+  useSales,
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,6 +32,7 @@ import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
 import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
 import { shareReportPdf } from '@/utils/reportExport';
 import { showToast } from '@/stores/toastStore';
+import { seriesForPeriod } from '@/services/financial/books';
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
 
@@ -96,16 +98,33 @@ export default function ReportsScreen() {
   );
 
   const statsQuery = usePeriodStats(range);
+  const booksQuery = usePeriodBooks(range);
   const topQuery = useTopProducts(range, 5);
   const payQuery = usePaymentBreakdown(range);
-  const weeklyQuery = useWeeklySales();
-  const monthlyQuery = useMonthlySales();
+  const healthQuery = useBusinessHealth();
+  const salesInRangeQuery = useSales(range);
 
   const stats = statsQuery.data;
+  const books = booksQuery.data;
   const top = topQuery.data ?? [];
   const pay = payQuery.data;
-  const chartData = period === 'month' ? (monthlyQuery.data ?? []) : (weeklyQuery.data ?? []);
-  const chartLoading = period === 'month' ? monthlyQuery.isLoading : weeklyQuery.isLoading;
+  const health = healthQuery.data;
+  const chartData = React.useMemo(
+    () =>
+      seriesForPeriod(
+        (salesInRangeQuery.data ?? []).map((s) => ({
+          sale_date: s.sale_date,
+          created_at: s.created_at,
+          total_amount: s.total_amount,
+          voided: s.voided,
+        })),
+        range.start,
+        range.end,
+        todayIso()
+      ),
+    [salesInRangeQuery.data, range.start, range.end]
+  );
+  const chartLoading = salesInRangeQuery.isLoading;
   const maxDay = Math.max(1, ...chartData.map((d) => d.total));
   const showProfit = canSeeProfit(user?.role);
   const loading = statsQuery.isLoading && !statsQuery.data;
@@ -114,10 +133,11 @@ export default function ReportsScreen() {
     setRefreshing(true);
     await Promise.all([
       statsQuery.refetch(),
+      booksQuery.refetch(),
       topQuery.refetch(),
       payQuery.refetch(),
-      weeklyQuery.refetch(),
-      monthlyQuery.refetch(),
+      healthQuery.refetch(),
+      salesInRangeQuery.refetch(),
     ]);
     setRefreshing(false);
   };
@@ -140,14 +160,20 @@ export default function ReportsScreen() {
   };
 
   const exportReport = async () => {
-    if (!stats) return;
+    if (!stats || !books) return;
     setExporting(true);
     try {
+      const collected =
+        (pay?.collections.cash ?? 0) + (pay?.collections.mobileMoney ?? 0) + (pay?.collections.bank ?? 0);
+      const otherIn =
+        (pay?.otherIncome.cash ?? 0) + (pay?.otherIncome.mobileMoney ?? 0) + (pay?.otherIncome.bank ?? 0);
       const payRows = [
-        { label: t('sales.cash'), amount: pay?.cash ?? 0 },
-        { label: t('sales.mobileMoney'), amount: pay?.mobileMoney ?? 0 },
-        { label: t('sales.bank'), amount: pay?.bank ?? 0 },
-        { label: t('sales.credit'), amount: pay?.credit ?? 0 },
+        { label: `${t('sales.cash')} (${t('reports.atCheckout')})`, amount: pay?.cash ?? 0 },
+        { label: `${t('sales.mobileMoney')} (${t('reports.atCheckout')})`, amount: pay?.mobileMoney ?? 0 },
+        { label: `${t('sales.bank')} (${t('reports.atCheckout')})`, amount: pay?.bank ?? 0 },
+        { label: t('reports.newCreditSales'), amount: pay?.credit ?? 0 },
+        { label: t('reports.oldDebtCollected'), amount: collected },
+        { label: t('reports.otherIncome'), amount: otherIn },
       ];
       await shareReportPdf({
         businessName: business?.name ?? 'MIA',
@@ -185,13 +211,18 @@ export default function ReportsScreen() {
     { value: 'custom', label: t('reports.customRange') },
   ];
 
-  const payRows = [
+  const collectedTotal =
+    (pay?.collections.cash ?? 0) + (pay?.collections.mobileMoney ?? 0) + (pay?.collections.bank ?? 0);
+  const otherIncomeTotal =
+    (pay?.otherIncome.cash ?? 0) + (pay?.otherIncome.mobileMoney ?? 0) + (pay?.otherIncome.bank ?? 0);
+  const checkoutRows = [
     { label: t('sales.cash'), value: pay?.cash ?? 0, icon: 'cash' },
     { label: t('sales.mobileMoney'), value: pay?.mobileMoney ?? 0, icon: 'phone-portrait' },
     { label: t('sales.bank'), value: pay?.bank ?? 0, icon: 'card' },
     { label: t('sales.credit'), value: pay?.credit ?? 0, icon: 'person' },
   ];
-  const payTotal = payRows.reduce((sum, row) => sum + row.value, 0);
+  const checkoutTotal = checkoutRows.reduce((sum, row) => sum + row.value, 0);
+  const payTotal = checkoutTotal;
 
   return (
     <View style={styles.screen}>
@@ -314,37 +345,36 @@ export default function ReportsScreen() {
               </Text>
             </View>
 
-            {period !== 'custom' ? (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>{t('reports.salesTrend')}</Text>
-                {chartLoading ? (
-                  <Skeleton height={120} />
-                ) : chartData.length === 0 || chartData.every((d) => d.total === 0) ? (
-                  <Text style={styles.muted}>{t('reports.noSalesInPeriod')}</Text>
-                ) : (
-                  <View style={styles.chart}>
-                    {chartData.map((d) => (
-                      <View key={d.date} style={styles.barCol}>
-                        <View style={styles.barTrack}>
-                          <View
-                            style={StyleSheet.flatten([
-                              styles.barFill,
-                              {
-                                height: `${Math.max(4, Math.round((d.total / maxDay) * 100))}%`,
-                                backgroundColor: d.isToday ? colors.primary : colors.primarySoft,
-                              },
-                            ])}
-                          />
-                        </View>
-                        <Text style={StyleSheet.flatten([styles.barLabel, d.isToday ? styles.barLabelToday : null])}>
-                          {period === 'month' ? d.dayLabel : d.weekday}
-                        </Text>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>{t('reports.salesTrend')}</Text>
+              <Text style={styles.cardHint}>{formatPeriodLabel(range)}</Text>
+              {chartLoading ? (
+                <Skeleton height={120} />
+              ) : chartData.length === 0 || chartData.every((d) => d.total === 0) ? (
+                <Text style={styles.muted}>{t('reports.noSalesInPeriod')}</Text>
+              ) : (
+                <View style={styles.chart}>
+                  {chartData.map((d) => (
+                    <View key={d.date} style={styles.barCol}>
+                      <View style={styles.barTrack}>
+                        <View
+                          style={StyleSheet.flatten([
+                            styles.barFill,
+                            {
+                              height: `${Math.max(4, Math.round((d.total / maxDay) * 100))}%`,
+                              backgroundColor: d.isToday ? colors.primary : colors.primarySoft,
+                            },
+                          ])}
+                        />
                       </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            ) : null}
+                      <Text style={StyleSheet.flatten([styles.barLabel, d.isToday ? styles.barLabelToday : null])}>
+                        {d.label}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
 
             <View style={styles.grid}>
               {showProfit ? (
@@ -359,6 +389,7 @@ export default function ReportsScreen() {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('reports.topProducts')}</Text>
+              <Text style={styles.cardHint}>{t('reports.topProductsHint')}</Text>
               {topQuery.isLoading ? (
                 <Skeleton height={120} />
               ) : top.length === 0 ? (
@@ -373,7 +404,14 @@ export default function ReportsScreen() {
                       <Text style={styles.topName} numberOfLines={1}>{p.productName}</Text>
                       <Text style={styles.topSub}>
                         {p.quantitySold} {t('dashboard.itemsSold').toLowerCase()}
+                        {showProfit ? ` · ${t('reports.profit')} ` : ''}
                       </Text>
+                      {showProfit ? (
+                        <Text style={styles.topProfit}>
+                          <MoneyText amount={p.totalProfit} size={12} weight="700" color={colors.success} />
+                          <Text style={styles.topMargin}> · {p.margin}%</Text>
+                        </Text>
+                      ) : null}
                     </View>
                     <MoneyText amount={p.totalSales} size={14} weight="700" color={colors.ink} />
                   </View>
@@ -383,29 +421,108 @@ export default function ReportsScreen() {
 
             <View style={styles.card}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>{t('reports.paymentBreakdown')}</Text>
-                <MoneyText amount={payTotal} size={14} weight="700" color={colors.ink} />
+                <Text style={styles.cardTitle}>{t('reports.moneyInOut')}</Text>
               </View>
+              <Text style={styles.cardHint}>{t('reports.atCheckoutHint')}</Text>
               {payQuery.isLoading ? (
                 <Skeleton height={120} />
-              ) : payTotal === 0 ? (
-                <Text style={styles.muted}>{t('reports.noPaymentsInPeriod')}</Text>
               ) : (
-                payRows.map((row) => {
-                  const pct = payTotal > 0 ? Math.round((row.value / payTotal) * 100) : 0;
-                  return (
-                    <View key={row.label} style={styles.payRow}>
-                      <View style={styles.payLeft}>
-                        <Ionicons name={row.icon as any} size={18} color={colors.muted} />
-                        <Text style={styles.payLabel}>{row.label}</Text>
+                <>
+                  {checkoutRows.map((row) => {
+                    const pct = payTotal > 0 ? Math.round((row.value / payTotal) * 100) : 0;
+                    return (
+                      <View key={row.label} style={styles.payRow}>
+                        <View style={styles.payLeft}>
+                          <Ionicons name={row.icon as any} size={18} color={colors.muted} />
+                          <Text style={styles.payLabel}>{row.label}</Text>
+                        </View>
+                        <View style={styles.payRight}>
+                          <Text style={styles.payPct}>{pct}%</Text>
+                          <MoneyText amount={row.value} size={14} weight="700" color={colors.ink} />
+                        </View>
                       </View>
-                      <View style={styles.payRight}>
-                        <Text style={styles.payPct}>{pct}%</Text>
-                        <MoneyText amount={row.value} size={14} weight="700" color={colors.ink} />
-                      </View>
-                    </View>
-                  );
-                })
+                    );
+                  })}
+                  <View style={styles.divider} />
+                  <View style={styles.payRow}>
+                    <Text style={styles.payLabel}>{t('reports.oldDebtCollected')}</Text>
+                    <MoneyText amount={collectedTotal} size={14} weight="700" color={colors.ink} />
+                  </View>
+                  <View style={styles.payRow}>
+                    <Text style={styles.payLabel}>{t('reports.otherIncome')}</Text>
+                    <MoneyText amount={otherIncomeTotal} size={14} weight="700" color={colors.ink} />
+                  </View>
+                </>
+              )}
+            </View>
+
+            {showProfit && books ? (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>{t('reports.howCalculated')}</Text>
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabel}>{t('reports.totalSales')}</Text>
+                  <MoneyText amount={books.totalSales} size={14} weight="600" />
+                </View>
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabel}>{t('reports.cogs')}</Text>
+                  <MoneyText amount={-books.cogs} size={14} weight="600" />
+                </View>
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabel}>{t('reports.grossProfit')}</Text>
+                  <MoneyText amount={books.grossProfit} size={14} weight="700" />
+                </View>
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabel}>{t('reports.totalExpenses')}</Text>
+                  <MoneyText amount={-books.expenses} size={14} weight="600" />
+                </View>
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabel}>{t('reports.inventoryLoss')}</Text>
+                  <MoneyText amount={-books.inventoryLoss} size={14} weight="600" />
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.payRow}>
+                  <Text style={styles.payLabelBold}>{t('reports.netProfit')}</Text>
+                  <MoneyText amount={books.netProfit} size={16} weight="800" />
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>{t('reports.businessHealth')}</Text>
+              {healthQuery.isLoading ? (
+                <Skeleton height={72} />
+              ) : (
+                <>
+                  <HealthRow
+                    ok={(health?.customerDebt ?? 0) === 0}
+                    label={t('reports.customerDebt')}
+                    value={health?.customerDebt ?? 0}
+                  />
+                  <HealthRow
+                    ok={(health?.supplierDebt ?? 0) === 0}
+                    label={t('reports.supplierDebt')}
+                    value={health?.supplierDebt ?? 0}
+                  />
+                  <View style={styles.payRow}>
+                    <Text style={styles.payLabel}>{t('reports.lowStockCount')}</Text>
+                    <Text style={styles.healthValue}>
+                      {health?.lowStockCount ?? 0} ({t('reports.outOfStock')}: {health?.outOfStockCount ?? 0})
+                    </Text>
+                  </View>
+                  <View style={styles.payRow}>
+                    <Text style={styles.payLabel}>{t('reports.syncState')}</Text>
+                    <Text style={styles.healthValue}>
+                      {(health?.pendingSync ?? 0) === 0 && (health?.failedSync ?? 0) === 0
+                        ? t('common.synced')
+                        : `${health?.pendingSync ?? 0} ${t('common.waitingToSync')}${
+                            (health?.failedSync ?? 0) > 0 ? ` · ${health?.failedSync} ${t('common.failed')}` : ''
+                          }`}
+                    </Text>
+                  </View>
+                  {!health?.openDay ? (
+                    <Text style={styles.warnText}>{t('reports.noOpenDay')}</Text>
+                  ) : null}
+                </>
               )}
             </View>
 
@@ -429,6 +546,22 @@ export default function ReportsScreen() {
           </>
         )}
       </ScrollView>
+    </View>
+  );
+}
+
+function HealthRow({ ok, label, value }: { ok: boolean; label: string; value: number }) {
+  return (
+    <View style={styles.payRow}>
+      <View style={styles.payLeft}>
+        <Ionicons
+          name={ok ? 'checkmark-circle' : 'warning'}
+          size={18}
+          color={ok ? colors.success : colors.warning}
+        />
+        <Text style={styles.payLabel}>{label}</Text>
+      </View>
+      <MoneyText amount={value} size={14} weight="700" color={colors.ink} />
     </View>
   );
 }
@@ -558,7 +691,41 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.ink,
+    marginBottom: 2,
+  },
+  cardHint: {
+    fontSize: 12,
+    color: colors.muted,
     marginBottom: spacing.sm,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.borderSoft,
+    marginVertical: spacing.sm,
+  },
+  payLabelBold: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  topProfit: {
+    marginTop: 2,
+  },
+  topMargin: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  healthValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  warnText: {
+    fontSize: 13,
+    color: colors.warning,
+    fontWeight: '600',
+    marginTop: spacing.sm,
   },
   muted: {
     fontSize: 14,

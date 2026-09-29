@@ -18,11 +18,15 @@ import { canManageInventory } from '@/utils/permissions';
 import {
   useProducts,
   useCategories,
+  useSuppliers,
+  useLowStockProducts,
   useCreateProduct,
   useCreateCategory,
   useImportProducts,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
+import { MoneyText } from '@/components/MoneyText';
+import { suggestedReorderQty } from '@/services/financial/calculations';
 import { AddProductSheet } from '@/components/AddProductSheet';
 import {
   pickAndParseProductFile,
@@ -36,6 +40,30 @@ export default function StockScreen() {
   const { user } = useAuthStore();
   const { data: products, isLoading, refetch, isRefetching } = useProducts({ active: true });
   const { data: categories, refetch: refetchCategories } = useCategories();
+  const { data: suppliers } = useSuppliers();
+  const { data: lowStock } = useLowStockProducts();
+
+  const reorderRows = React.useMemo(() => {
+    const bySupplier = new Map((suppliers ?? []).map((s) => [s.id, s.name]));
+    return (lowStock ?? [])
+      .map((p) => {
+        const onHand = p.current_stock ?? 0;
+        const suggested = suggestedReorderQty(onHand, p.reorder_level);
+        return {
+          id: p.id,
+          name: p.name,
+          unit: p.unit,
+          onHand,
+          reorderLevel: p.reorder_level,
+          suggested,
+          estCost: suggested * (p.average_cost ?? 0),
+          supplierName: (p.preferred_supplier_id && bySupplier.get(p.preferred_supplier_id)) || null,
+          out: onHand <= 0,
+        };
+      })
+      .filter((r) => r.suggested > 0 || r.out)
+      .sort((a, b) => Number(b.out) - Number(a.out));
+  }, [lowStock, suppliers]);
   const createProductMutation = useCreateProduct();
   const createCategory = useCreateCategory();
   const importProducts = useImportProducts();
@@ -88,6 +116,7 @@ export default function StockScreen() {
       await createProductMutation.mutateAsync({
         business_id: '',
         category_id: data.category_id || null,
+        preferred_supplier_id: null,
         name: data.name,
         sku: data.sku || null,
         barcode: data.barcode || null,
@@ -187,6 +216,40 @@ export default function StockScreen() {
           contentContainerStyle={styles.chips}
           showsHorizontalScrollIndicator={false}
         />
+      ) : null}
+
+      {reorderRows.length > 0 && !liveQuery && selectedCategory === 'all' ? (
+        <View style={styles.reorderCard}>
+          <Text style={styles.reorderTitle}>{t('stock.reorderTitle', { count: reorderRows.length })}</Text>
+          <Text style={styles.reorderHint}>{t('stock.reorderHint')}</Text>
+          {reorderRows.slice(0, 8).map((row) => (
+            <View key={row.id} style={styles.reorderRow}>
+              <View style={styles.reorderInfo}>
+                <Text style={styles.reorderName} numberOfLines={1}>
+                  {row.out ? `⚠ ${row.name}` : row.name}
+                </Text>
+                <Text style={styles.reorderSub}>
+                  {t('stock.reorderOnHand', { qty: row.onHand.toLocaleString(), level: row.reorderLevel.toLocaleString() })}
+                  {' · '}
+                  {t('stock.reorderSuggest', { qty: row.suggested.toLocaleString(), unit: row.unit })}
+                </Text>
+                <Text style={styles.reorderSub}>
+                  {row.supplierName ?? t('stock.noSupplier')}
+                  {' · '}
+                  <MoneyText amount={row.estCost} size={12} weight="700" color={colors.ink} />
+                </Text>
+              </View>
+              <Button variant="secondary" size="sm" onPress={() => router.push('/stock-in' as any)}>
+                {t('stock.buyStock')}
+              </Button>
+            </View>
+          ))}
+          {reorderRows.length > 8 ? (
+            <Text style={styles.reorderMore}>
+              +{reorderRows.length - 8} {t('common.more').toLowerCase()}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
 
       {isLoading ? (
@@ -341,6 +404,53 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: 120,
+  },
+  reorderCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+  },
+  reorderTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  reorderHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+    marginBottom: spacing.sm,
+  },
+  reorderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    gap: spacing.md,
+  },
+  reorderInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  reorderName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  reorderSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  reorderMore: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: spacing.sm,
   },
   skel: {
     borderRadius: radius.lg,

@@ -1,6 +1,9 @@
 import { BaseRepository } from '../base';
 import { Product, Category, StockMovement, StockMovementType } from '@/types';
 import { getDatabase } from '../../db/database';
+import { foldAverageCost } from '@/services/financial/calculations';
+
+const INBOUND_TYPES = new Set(['opening', 'purchase', 'return_in', 'adjustment_in']);
 
 export class CategoryRepository extends BaseRepository<Category> {
   protected tableName = 'categories';
@@ -14,7 +17,7 @@ export class CategoryRepository extends BaseRepository<Category> {
 export class ProductRepository extends BaseRepository<Product> {
   protected tableName = 'products';
   protected columns = [
-    'id', 'business_id', 'category_id', 'name', 'sku', 'barcode', 'unit',
+    'id', 'business_id', 'category_id', 'preferred_supplier_id', 'name', 'sku', 'barcode', 'unit',
     'selling_price', 'average_cost', 'reorder_level', 'track_inventory', 'active', 'created_at', 'updated_at'
   ];
 
@@ -181,6 +184,82 @@ export class ProductRepository extends BaseRepository<Product> {
     return { quantity: row?.quantity ?? 0, value: row?.value ?? 0 };
   }
 
+  /**
+   * Quantity and average cost from movements up to a calendar date.
+   * Cost is folded only through that date, so a later purchase does not rewrite an earlier stock value.
+   */
+  async getPositionAsOf(businessId: string, asOfDate: string): Promise<Array<{
+    product_id: string;
+    name: string;
+    unit: string;
+    quantity: number;
+    unit_cost: number;
+    value: number;
+  }>> {
+    const db = await this.getDb();
+    const day = asOfDate.slice(0, 10);
+    const products = await db.getAllAsync<{ id: string; name: string; unit: string; average_cost: number }>(
+      `SELECT id, name, unit, average_cost
+       FROM products
+       WHERE business_id = ? AND track_inventory = 1 AND active = 1
+       ORDER BY name ASC`,
+      [businessId]
+    );
+    const movements = await db.getAllAsync<{
+      product_id: string;
+      type: string;
+      quantity: number;
+      unit_cost: number;
+    }>(
+      `SELECT product_id, type, quantity, unit_cost
+       FROM stock_movements
+       WHERE business_id = ? AND substr(occurred_at, 1, 10) <= ?
+       ORDER BY product_id ASC, occurred_at ASC, created_at ASC`,
+      [businessId, day]
+    );
+    const byProduct = new Map<string, Array<{ type: string; quantity: number; unit_cost: number }>>();
+    for (const movement of movements) {
+      const list = byProduct.get(movement.product_id) ?? [];
+      list.push(movement);
+      byProduct.set(movement.product_id, list);
+    }
+    return products.map((product) => {
+      const rows = byProduct.get(product.id) ?? [];
+      let quantity = 0;
+      for (const row of rows) {
+        quantity += INBOUND_TYPES.has(row.type) ? row.quantity : -row.quantity;
+      }
+      const unitCost = rows.length > 0 ? foldAverageCost(rows) : product.average_cost;
+      return {
+        product_id: product.id,
+        name: product.name,
+        unit: product.unit,
+        quantity,
+        unit_cost: unitCost,
+        value: quantity * unitCost,
+      };
+    });
+  }
+
+  async getDayFlow(businessId: string, businessDate: string): Promise<Map<string, { inQty: number; outQty: number }>> {
+    const db = await this.getDb();
+    const day = businessDate.slice(0, 10);
+    const rows = await db.getAllAsync<{ product_id: string; type: string; quantity: number }>(
+      `SELECT product_id, type, quantity
+       FROM stock_movements
+       WHERE business_id = ? AND substr(occurred_at, 1, 10) = ?`,
+      [businessId, day]
+    );
+    const map = new Map<string, { inQty: number; outQty: number }>();
+    for (const row of rows) {
+      const current = map.get(row.product_id) ?? { inQty: 0, outQty: 0 };
+      if (INBOUND_TYPES.has(row.type)) current.inQty += row.quantity;
+      else current.outQty += row.quantity;
+      map.set(row.product_id, current);
+    }
+    return map;
+  }
+
   async updateAverageCost(productId: string, businessId: string, newAverageCost: number): Promise<Product | null> {
     return this.update(productId, businessId, { average_cost: newAverageCost });
   }
@@ -254,6 +333,30 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
       params as (string | number | null)[]
     );
     return rows.map((row) => this.mapRow(row)) as Array<StockMovement & { product_name: string; user_name: string | null }>;
+  }
+
+  async getInventoryLossBreakdown(
+    businessId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<{ damaged: number; adjustmentOut: number; adjustmentIn: number }> {
+    const db = await this.getDb();
+    const { buildPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildPeriodWhere('occurred_at', 'occurred_at', startDate, endDate);
+    const row = await db.getFirstAsync<{ damaged: number; adjustment_out: number; adjustment_in: number }>(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type = 'damaged' THEN quantity * unit_cost ELSE 0 END), 0) as damaged,
+         COALESCE(SUM(CASE WHEN type = 'adjustment_out' THEN quantity * unit_cost ELSE 0 END), 0) as adjustment_out,
+         COALESCE(SUM(CASE WHEN type = 'adjustment_in' THEN quantity * unit_cost ELSE 0 END), 0) as adjustment_in
+       FROM ${this.tableName}
+       WHERE business_id = ? AND ${period.clause}`,
+      [businessId, ...period.params]
+    );
+    return {
+      damaged: row?.damaged ?? 0,
+      adjustmentOut: row?.adjustment_out ?? 0,
+      adjustmentIn: row?.adjustment_in ?? 0,
+    };
   }
 
   async getInventoryLoss(businessId: string, startDate: string, endDate: string): Promise<number> {

@@ -4,6 +4,7 @@ import { queueSync } from '@/services/sync/queue';
 import { assertDayIsOpen } from './guards';
 import { settleCustomerAccount } from './settle';
 import { recordStockMovement } from './recordStockMovement';
+import { audit } from './audit';
 import { UserRole } from '@/types';
 
 export async function voidSale(input: {
@@ -52,4 +53,15 @@ export async function voidSale(input: {
   }
 
   await settleCustomerAccount(input.businessId, sale.customer_id);
+  await audit({
+    businessId: input.businessId,
+    userId: input.userId,
+    role: input.role,
+    action: 'sale.void',
+    entity: 'sale',
+    entityId: sale.id,
+    before: { total_amount: sale.total_amount },
+    reason: input.reason?.trim() || 'Sale void',
+    deviceId: input.deviceId,
+  });
 }

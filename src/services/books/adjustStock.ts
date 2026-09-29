@@ -2,6 +2,7 @@ import { productRepository } from '@/repositories/products/products';
 import { recordStockMovement } from './recordStockMovement';
 import { assertDayIsOpen } from './guards';
 import { reconcileProductCost } from './averageCost';
+import { audit } from './audit';
 import { getTodayDateString } from '@/utils/formatters';
 import { UserRole } from '@/types';
 
@@ -21,7 +22,7 @@ export async function adjustStock(input: {
   if (!product) throw new Error('PRODUCT_NOT_FOUND');
 
   await assertDayIsOpen(input.businessId, getTodayDateString());
-  await recordStockMovement({
+  const movement = await recordStockMovement({
     businessId: input.businessId,
     productId: input.productId,
     userId: input.userId,
@@ -35,4 +36,15 @@ export async function adjustStock(input: {
     reason: input.reason,
   });
   await reconcileProductCost(input.businessId, input.productId);
+  await audit({
+    businessId: input.businessId,
+    userId: input.userId,
+    role: input.role,
+    action: input.kind === 'damaged' ? 'stock.damage' : 'stock.adjust',
+    entity: 'stock_movement',
+    entityId: movement.id,
+    after: { product_id: input.productId, kind: input.kind, quantity: input.quantity },
+    reason: input.reason,
+    deviceId: input.deviceId,
+  });
 }

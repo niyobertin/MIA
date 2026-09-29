@@ -17,4 +17,5 @@ export {
   Payment,
   DailyClosing,
   DailyStockLine,
+  AuditLog,
 } from './transactions';
