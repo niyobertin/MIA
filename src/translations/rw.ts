@@ -143,6 +143,8 @@ export const rw = {
     last30Days: 'Imisi 30 ishize',
     days7: 'Iminsi 7',
     days30: 'Iminsi 30',
+    whoOwes: 'Ababamo iduka',
+    noDebt: 'Nta muntu ubamo iduka.',
   },
   stock: {
     products: 'Ibicuruzwa',

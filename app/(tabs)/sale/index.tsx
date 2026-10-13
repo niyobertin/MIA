@@ -28,7 +28,7 @@ import { showToast } from '@/stores/toastStore';
 import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale, useOpenDailyClosing } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
-import { debounce, getTodayDateString } from '@/utils/formatters';
+import { debounce, formatNumber, getInitials, getTodayDateString } from '@/utils/formatters';
 import { PAYMENT_METHODS } from '@/constants';
 import { Customer, Product } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
@@ -71,6 +71,7 @@ export default function NewSaleScreen() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [liveQuery, setLiveQuery] = React.useState('');
   const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
+  const [showCartSheet, setShowCartSheet] = React.useState(false);
   const [showCustomerSheet, setShowCustomerSheet] = React.useState(false);
   const [tab, setTab] = React.useState<'new' | 'history'>('new');
   const [success, setSuccess] = React.useState<{
@@ -129,6 +130,7 @@ export default function NewSaleScreen() {
 
   const startCheckout = () => {
     if (cart.length === 0) return;
+    setShowCartSheet(false);
     setShowPaymentSheet(true);
   };
 
@@ -254,9 +256,19 @@ export default function NewSaleScreen() {
                 : t('sales.todaysSales')}
           </Text>
         </View>
-        {tab === 'new' && cart.length > 0 ? (
-          <TouchableOpacity onPress={() => clearCart()} hitSlop={12} style={styles.clearButton} accessibilityLabel={t('sales.emptyCart')}>
-            <Ionicons name="trash-outline" size={22} color={colors.danger} />
+        {tab === 'new' ? (
+          <TouchableOpacity
+            onPress={() => setShowCartSheet(true)}
+            hitSlop={12}
+            style={styles.cartButton}
+            accessibilityLabel={t('sales.cart')}
+          >
+            <Ionicons name="cart-outline" size={26} color={colors.ink} />
+            {getItemCount() > 0 ? (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{getItemCount()}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         ) : null}
       </View>
@@ -331,26 +343,6 @@ export default function NewSaleScreen() {
                 />
               </View>
 
-              {cart.length > 0 ? (
-                <View style={styles.cartCard}>
-                  <View style={styles.cartHeader}>
-                    <Text style={styles.cartTitle}>
-                      {t('sales.cart')} · {getItemCount()}
-                    </Text>
-                    <MoneyText amount={getTotal()} size={17} weight="800" color={colors.ink} />
-                  </View>
-                  {cart.map((item) => (
-                    <CartLine
-                      key={item.product.id}
-                      item={item}
-                      onRemove={() => removeFromCart(item.product.id)}
-                      onQuantityChange={(qty) => updateCartItemQuantity(item.product.id, qty)}
-                      onPriceChange={(price) => updateCartItemPrice(item.product.id, price)}
-                    />
-                  ))}
-                </View>
-              ) : null}
-
               <View style={styles.listHeader}>
                 <Text style={styles.listTitle}>{t('stock.products')}</Text>
               </View>
@@ -374,19 +366,62 @@ export default function NewSaleScreen() {
       )}
 
       {tab === 'new' && cart.length > 0 ? (
-        <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
-          <View style={styles.bottomTotal}>
-            <View>
-              <Text style={styles.bottomLabel}>{t('sales.total')}</Text>
-              <Text style={styles.bottomCount}>{getItemCount()} {t('sales.items')}</Text>
+        <TouchableOpacity
+          style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}
+          onPress={() => setShowCartSheet(true)}
+          activeOpacity={0.85}
+          accessibilityLabel={t('sales.cart')}
+        >
+          <View style={styles.bottomCartIcon}>
+            <Ionicons name="cart" size={22} color={colors.white} />
+            <View style={styles.bottomCartCount}>
+              <Text style={styles.bottomCartCountText}>{getItemCount()}</Text>
             </View>
-            <MoneyText amount={getTotal()} size={26} weight="800" color={colors.ink} />
           </View>
-          <Button variant="primary" size="lg" fullWidth onPress={startCheckout}>
-            {t('sales.completeSale')}
-          </Button>
-        </View>
+          <View style={styles.bottomTotal}>
+            <Text style={styles.bottomLabel}>{t('sales.cart')}</Text>
+            <Text style={styles.bottomCount}>{getItemCount()} {t('sales.items')}</Text>
+          </View>
+          <MoneyText amount={getTotal()} size={22} weight="800" color={colors.ink} />
+          <Ionicons name="chevron-up" size={20} color={colors.muted} />
+        </TouchableOpacity>
       ) : null}
+
+      <BottomSheet
+        visible={showCartSheet}
+        onClose={() => setShowCartSheet(false)}
+        title={`${t('sales.cart')} · ${getItemCount()}`}
+      >
+        {cart.length === 0 ? (
+          <EmptyState icon="cart-outline" title={t('sales.emptyCart')} message={t('sales.addProducts')} />
+        ) : (
+          <View style={styles.sheetBody}>
+            <ScrollView style={styles.cartSheetList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {cart.map((item) => (
+                <CartLine
+                  key={item.product.id}
+                  item={item}
+                  onRemove={() => removeFromCart(item.product.id)}
+                  onQuantityChange={(qty) => updateCartItemQuantity(item.product.id, qty)}
+                  onPriceChange={(price) => updateCartItemPrice(item.product.id, price)}
+                />
+              ))}
+            </ScrollView>
+            <View style={styles.cartSheetFooter}>
+              <View style={styles.cartSheetTotal}>
+                <Text style={styles.totalLabel}>{t('sales.total')}</Text>
+                <MoneyText amount={getTotal()} size={22} weight="800" color={colors.ink} />
+              </View>
+              <TouchableOpacity onPress={() => clearCart()} hitSlop={8} accessibilityLabel={t('sales.emptyCart')}>
+                <Text style={styles.clearCartText}>{t('common.delete')}</Text>
+              </TouchableOpacity>
+              <Button variant="primary" size="lg" fullWidth onPress={startCheckout}>
+                {t('sales.completeSale')}
+              </Button>
+            </View>
+          </View>
+        )}
+      </BottomSheet>
 
       <BottomSheet
         visible={showPaymentSheet}
@@ -624,6 +659,14 @@ export default function NewSaleScreen() {
   );
 }
 
+const TILE_COLORS = ['#4338ca', '#0f766e', '#b45309', '#be123c', '#1d4ed8', '#7c3aed', '#047857', '#c2410c'];
+
+function tileColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash + name.charCodeAt(i) * (i + 1)) % TILE_COLORS.length;
+  return TILE_COLORS[hash] ?? TILE_COLORS[0];
+}
+
 function PosProductCard({
   product,
   quantity,
@@ -633,24 +676,40 @@ function PosProductCard({
   quantity: number;
   onPress: () => void;
 }) {
+  const { t } = useTranslation();
   const selected = quantity > 0;
   const stock = product.track_inventory ? (product.current_stock ?? null) : null;
+  const out = stock !== null && stock <= 0;
   return (
     <TouchableOpacity
-      style={[styles.posCard, selected && styles.posCardSelected]}
+      style={[styles.posCard, selected && styles.posCardSelected, out && styles.posCardOut]}
       onPress={onPress}
       activeOpacity={0.85}
     >
-      {selected ? (
-        <View style={styles.posQty}>
-          <Text style={styles.posQtyText}>{quantity}</Text>
-        </View>
-      ) : null}
-      <Text style={styles.posName} numberOfLines={2}>{product.name}</Text>
-      <MoneyText amount={product.selling_price} size={15} weight="800" color={selected ? colors.primaryText : colors.ink} />
-      {stock !== null ? (
-        <Text style={styles.posStock} numberOfLines={1}>{stock}</Text>
-      ) : null}
+      <View style={[styles.posImage, { backgroundColor: tileColor(product.name) }]}>
+        <Text style={styles.posInitials}>{getInitials(product.name)}</Text>
+        {selected ? (
+          <View style={styles.posQty}>
+            <Text style={styles.posQtyText}>{quantity}</Text>
+          </View>
+        ) : null}
+        {stock !== null ? (
+          <View style={[styles.posStockPill, out && styles.posStockPillOut]}>
+            <Text style={[styles.posStockPillText, out && styles.posStockPillTextOut]} numberOfLines={1}>
+              {out ? t('stock.outOfStock') : `${formatNumber(stock)} ${product.unit}`}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.posStockPill}>
+            <Text style={styles.posStockPillText} numberOfLines={1}>{product.unit}</Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.posMeta}>
+        <Text style={styles.posName} numberOfLines={2}>{product.name}</Text>
+        {product.sku ? <Text style={styles.posSku} numberOfLines={1}>{product.sku}</Text> : null}
+        <MoneyText amount={product.selling_price} size={15} weight="800" color={selected ? colors.primaryText : colors.ink} />
+      </View>
     </TouchableOpacity>
   );
 }
@@ -948,8 +1007,52 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
   },
-  clearButton: {
-    padding: spacing.sm,
+  cartButton: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartBadgeText: {
+    color: colors.white,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  cartSheetList: {
+    maxHeight: 360,
+  },
+  cartSheetFooter: {
+    gap: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  cartSheetTotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  clearCartText: {
+    textAlign: 'center',
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '700',
   },
   searchWrap: {
     marginBottom: spacing.sm,
@@ -957,26 +1060,6 @@ const styles = StyleSheet.create({
   tabWrap: {
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.sm,
-  },
-  cartCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
-    padding: spacing.lg,
-    ...shadows.card,
-  },
-  cartHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  cartTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.ink,
   },
   cartRow: {
     paddingVertical: spacing.md,
@@ -1077,19 +1160,30 @@ const styles = StyleSheet.create({
   },
   posCard: {
     flex: 1,
-    minHeight: 112,
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.md,
-    justifyContent: 'flex-end',
+    overflow: 'hidden',
     ...shadows.card,
   },
   posCardSelected: {
-    backgroundColor: colors.primarySoft,
     borderColor: colors.primary,
     borderWidth: 2,
+  },
+  posCardOut: {
+    opacity: 0.72,
+  },
+  posImage: {
+    height: 108,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  posInitials: {
+    color: colors.white,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
   posQty: {
     position: 'absolute',
@@ -1099,7 +1193,7 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
     paddingHorizontal: 6,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.ink,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1108,18 +1202,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  posStockPill: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    maxWidth: '90%',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  posStockPillOut: {
+    backgroundColor: colors.dangerSoft,
+  },
+  posStockPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  posStockPillTextOut: {
+    color: colors.dangerText,
+  },
+  posMeta: {
+    padding: spacing.md,
+    gap: 2,
+  },
   posName: {
     fontSize: 14,
     fontWeight: '700',
     color: colors.ink,
-    marginBottom: 6,
-    marginRight: 28,
+    minHeight: 36,
   },
-  posStock: {
-    marginTop: 4,
-    fontSize: 12,
+  posSku: {
+    fontSize: 11,
     fontWeight: '600',
-    color: colors.muted,
+    color: colors.faint,
+    marginBottom: 4,
   },
   listHeader: {
     paddingVertical: spacing.sm,
@@ -1135,24 +1253,49 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   listWithCart: {
-    paddingBottom: 190,
+    paddingBottom: 120,
   },
   skel: {
     borderRadius: radius.md,
     marginBottom: spacing.sm,
   },
   bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
     backgroundColor: colors.card,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    gap: spacing.md,
+  },
+  bottomCartIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomCartCount: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomCartCountText: {
+    color: colors.white,
+    fontSize: 11,
+    fontWeight: '800',
   },
   bottomTotal: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flex: 1,
   },
   bottomLabel: {
     fontSize: 13,

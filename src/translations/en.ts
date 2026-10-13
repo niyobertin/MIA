@@ -143,6 +143,8 @@ export const en = {
     last30Days: 'Last 30 days',
     days7: '7D',
     days30: '30D',
+    whoOwes: 'Who owes the shop',
+    noDebt: 'Nobody owes the shop.',
   },
   stock: {
     products: 'Products',
