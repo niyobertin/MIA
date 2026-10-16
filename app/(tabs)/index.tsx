@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, useWindowDimensions, DimensionValue } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -10,7 +10,7 @@ import { MoneyText } from '@/components/MoneyText';
 import { StatusBadge } from '@/components/StatusBadge';
 import { SkeletonCard, Skeleton } from '@/components/Skeleton';
 import { BottomSheet } from '@/components/SegmentedControl';
-import { getInitials, getTodayDateString, formatTime } from '@/utils/formatters';
+import { getInitials, formatTime } from '@/utils/formatters';
 import { canSeeProfit } from '@/utils/permissions';
 import {
   useDashboardStats,
@@ -36,17 +36,21 @@ export default function HomeScreen() {
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const { business, user } = useAuthStore();
-  const today = getTodayDateString();
-  const todayRange = React.useMemo(() => ({ start: today, end: today }), [today]);
-
   const statsQuery = useDashboardStats();
+  const sessionRange = React.useMemo(() => {
+    const start = statsQuery.data?.sessionStart;
+    const end = statsQuery.data?.sessionEnd;
+    if (!start || !end) return null;
+    return { start, end };
+  }, [statsQuery.data?.sessionStart, statsQuery.data?.sessionEnd]);
+
   const lowStockQuery = useLowStockProducts();
   const weeklyQuery = useWeeklySales();
   const monthlyQuery = useMonthlySales();
   const healthQuery = useBusinessHealth();
-  const topQuery = useTopProducts(todayRange, 5);
-  const paymentsQuery = usePaymentBreakdown(todayRange);
-  const salesQuery = useSales(todayRange);
+  const topQuery = useTopProducts(sessionRange, 5);
+  const paymentsQuery = usePaymentBreakdown(sessionRange);
+  const salesQuery = useSales(sessionRange);
   const debtQuery = useCustomersWithBalances();
 
   const [refreshing, setRefreshing] = React.useState(false);
@@ -70,7 +74,6 @@ export default function HomeScreen() {
   const split = width >= 760;
   const statColumns = width >= 1100 ? 4 : width >= 720 ? 3 : 2;
   const statWidth = statColumns === 4 ? '23.5%' : statColumns === 3 ? '31%' : '47.5%';
-  const actionWidth = width >= 900 ? '23%' : '47%';
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -148,7 +151,7 @@ export default function HomeScreen() {
               <View style={styles.hero}>
                 <View style={styles.heroTop}>
                   <View style={styles.heroCopy}>
-                    <Text style={styles.heroLabel}>{t('dashboard.today')} · {t('dashboard.sales')}</Text>
+                    <Text style={styles.heroLabel}>{t('dashboard.openDaySales')}</Text>
                     <MoneyText amount={stats?.todaySales ?? 0} size={wide ? 36 : 32} weight="800" color="#fff" />
                   </View>
                   <View style={styles.heroBadge}>
@@ -166,7 +169,7 @@ export default function HomeScreen() {
                       {stats?.itemsSold ?? 0} {t('dashboard.itemsSold').toLowerCase()}
                     </Text>
                   )}
-                  {delta !== null ? (
+                  {delta !== null && stats?.hasOpenDay ? (
                     <View style={styles.deltaRow}>
                       <Ionicons
                         name={delta >= 0 ? 'trending-up' : 'trending-down'}
@@ -174,12 +177,14 @@ export default function HomeScreen() {
                         color={delta >= 0 ? '#bbf7d0' : '#fecaca'}
                       />
                       <Text style={styles.deltaText}>
-                        {delta >= 0 ? '↑' : '↓'} {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsYesterday')}
+                        {delta >= 0 ? '↑' : '↓'} {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsPreviousDay')}
                       </Text>
                     </View>
                   ) : null}
                 </View>
-                {(stats?.todaySales ?? 0) === 0 ? (
+                {!stats?.hasOpenDay ? (
+                  <Text style={styles.heroEmpty}>{t('dashboard.openDayRequired')}</Text>
+                ) : (stats?.todaySales ?? 0) === 0 ? (
                   <Text style={styles.heroEmpty}>{t('dashboard.noSalesMessage')}</Text>
                 ) : null}
                 <TouchableOpacity style={styles.heroButton} onPress={() => go('/sale')} activeOpacity={0.85}>
@@ -222,16 +227,20 @@ export default function HomeScreen() {
               </View>
 
               <Text style={styles.sectionTitle}>{t('dashboard.quickActions')}</Text>
-              <View style={styles.quickGrid}>
-                <QuickAction icon="cart" label={t('navigation.newSale')} bg={colors.primary} width={actionWidth} onPress={() => go('/sale')} />
-                <QuickAction icon="cube" label={t('navigation.stockIn')} bg={colors.success} width={actionWidth} onPress={() => go('/stock-in')} />
-                <QuickAction icon="cash" label={t('navigation.expense')} bg={colors.warning} width={actionWidth} onPress={() => go('/expense')} />
-                <QuickAction icon="person" label={t('payments.payments')} bg={colors.info} width={actionWidth} onPress={() => setShowPaymentSheet(true)} />
-                <QuickAction icon="bar-chart" label={t('navigation.reports')} bg={colors.primaryDark} width={actionWidth} onPress={() => go('/reports')} />
-                <QuickAction icon="lock-closed" label={t('cash.openDay')} bg="#0f766e" width={actionWidth} onPress={() => go('/closing')} />
-                <QuickAction icon="people" label={t('customers.customers')} bg="#7c3aed" width={actionWidth} onPress={() => go('/customers')} />
-                <QuickAction icon="storefront" label={t('navigation.stock')} bg="#b45309" width={actionWidth} onPress={() => go('/stock')} />
-              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.quickRow}
+              >
+                <QuickAction icon="cart" label={t('navigation.newSale')} bg={colors.primary} onPress={() => go('/sale')} />
+                <QuickAction icon="cube" label={t('navigation.stockIn')} bg={colors.success} onPress={() => go('/stock-in')} />
+                <QuickAction icon="cash" label={t('navigation.expense')} bg={colors.warning} onPress={() => go('/expense')} />
+                <QuickAction icon="person" label={t('payments.payments')} bg={colors.info} onPress={() => setShowPaymentSheet(true)} />
+                <QuickAction icon="bar-chart" label={t('navigation.reports')} bg={colors.primaryDark} onPress={() => go('/reports')} />
+                <QuickAction icon="lock-closed" label={t('cash.openDay')} bg="#0f766e" onPress={() => go('/closing')} />
+                <QuickAction icon="people" label={t('customers.customers')} bg="#7c3aed" onPress={() => go('/customers')} />
+                <QuickAction icon="storefront" label={t('navigation.stock')} bg="#b45309" onPress={() => go('/stock')} />
+              </ScrollView>
 
               <View style={split ? styles.columns : undefined}>
                 <View style={split ? styles.columnMain : undefined}>
@@ -516,17 +525,15 @@ function QuickAction({
   icon,
   label,
   bg,
-  width,
   onPress,
 }: {
   icon: string;
   label: string;
   bg: string;
-  width: DimensionValue;
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity style={[styles.quickAction, { width }]} onPress={onPress} activeOpacity={0.85}>
+    <TouchableOpacity style={styles.quickAction} onPress={onPress} activeOpacity={0.85}>
       <View style={[styles.quickIcon, { backgroundColor: bg }]}>
         <Ionicons name={icon as any} size={22} color="#fff" />
       </View>
@@ -914,21 +921,21 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginBottom: spacing.md,
   },
-  quickGrid: {
+  quickRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
+    gap: spacing.sm,
+    paddingRight: spacing.lg,
     marginBottom: spacing.lg,
   },
   quickAction: {
-    flexGrow: 1,
+    width: 88,
     alignItems: 'center',
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
     gap: spacing.sm,
     minHeight: 96,
     justifyContent: 'center',

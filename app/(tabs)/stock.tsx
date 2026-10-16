@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ScrollView, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
@@ -18,15 +19,13 @@ import { canManageInventory } from '@/utils/permissions';
 import {
   useProducts,
   useCategories,
-  useSuppliers,
-  useLowStockProducts,
   useCreateProduct,
   useCreateCategory,
   useImportProducts,
 } from '@/hooks/useData';
+import { useReorderSuggestions } from '@/hooks/useReorderSuggestions';
 import { useAuthStore } from '@/stores/authStore';
 import { MoneyText } from '@/components/MoneyText';
-import { suggestedReorderQty } from '@/services/financial/calculations';
 import { AddProductSheet } from '@/components/AddProductSheet';
 import {
   pickAndParseProductFile,
@@ -40,30 +39,11 @@ export default function StockScreen() {
   const { user } = useAuthStore();
   const { data: products, isLoading, refetch, isRefetching } = useProducts({ active: true });
   const { data: categories, refetch: refetchCategories } = useCategories();
-  const { data: suppliers } = useSuppliers();
-  const { data: lowStock } = useLowStockProducts();
-
-  const reorderRows = React.useMemo(() => {
-    const bySupplier = new Map((suppliers ?? []).map((s) => [s.id, s.name]));
-    return (lowStock ?? [])
-      .map((p) => {
-        const onHand = p.current_stock ?? 0;
-        const suggested = suggestedReorderQty(onHand, p.reorder_level);
-        return {
-          id: p.id,
-          name: p.name,
-          unit: p.unit,
-          onHand,
-          reorderLevel: p.reorder_level,
-          suggested,
-          estCost: suggested * (p.average_cost ?? 0),
-          supplierName: (p.preferred_supplier_id && bySupplier.get(p.preferred_supplier_id)) || null,
-          out: onHand <= 0,
-        };
-      })
-      .filter((r) => r.suggested > 0 || r.out)
-      .sort((a, b) => Number(b.out) - Number(a.out));
-  }, [lowStock, suppliers]);
+  const {
+    rows: reorderRows,
+    totalCost: reorderTotalCost,
+    outCount: reorderOutCount,
+  } = useReorderSuggestions();
   const createProductMutation = useCreateProduct();
   const createCategory = useCreateCategory();
   const importProducts = useImportProducts();
@@ -193,6 +173,28 @@ export default function StockScreen() {
         <SyncIndicator compact />
       </View>
 
+      {reorderRows.length > 0 ? (
+        <Pressable
+          style={({ pressed }) => [styles.reorderButton, pressed && styles.reorderButtonPressed]}
+          onPress={() => router.push('/reorder' as any)}
+          accessibilityRole="button"
+        >
+          <View style={styles.reorderIcon}>
+            <Ionicons name="cart-outline" size={20} color={colors.white} />
+          </View>
+          <View style={styles.reorderInfo}>
+            <Text style={styles.reorderTitle}>
+              {t('stock.buySuggestionsCount', { count: reorderRows.length })}
+            </Text>
+            <Text style={styles.reorderSub} numberOfLines={1}>
+              {reorderOutCount > 0 ? `${t('stock.outOfStock')}: ${reorderOutCount} · ` : ''}
+              <MoneyText amount={reorderTotalCost} size={12} weight="700" color={colors.ink} />
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+        </Pressable>
+      ) : null}
+
       <View style={styles.searchWrap}>
         <SearchBar
           value={searchQuery}
@@ -218,39 +220,6 @@ export default function StockScreen() {
         />
       ) : null}
 
-      {reorderRows.length > 0 && !liveQuery && selectedCategory === 'all' ? (
-        <View style={styles.reorderCard}>
-          <Text style={styles.reorderTitle}>{t('stock.reorderTitle', { count: reorderRows.length })}</Text>
-          <Text style={styles.reorderHint}>{t('stock.reorderHint')}</Text>
-          {reorderRows.slice(0, 8).map((row) => (
-            <View key={row.id} style={styles.reorderRow}>
-              <View style={styles.reorderInfo}>
-                <Text style={styles.reorderName} numberOfLines={1}>
-                  {row.out ? `⚠ ${row.name}` : row.name}
-                </Text>
-                <Text style={styles.reorderSub}>
-                  {t('stock.reorderOnHand', { qty: row.onHand.toLocaleString(), level: row.reorderLevel.toLocaleString() })}
-                  {' · '}
-                  {t('stock.reorderSuggest', { qty: row.suggested.toLocaleString(), unit: row.unit })}
-                </Text>
-                <Text style={styles.reorderSub}>
-                  {row.supplierName ?? t('stock.noSupplier')}
-                  {' · '}
-                  <MoneyText amount={row.estCost} size={12} weight="700" color={colors.ink} />
-                </Text>
-              </View>
-              <Button variant="secondary" size="sm" onPress={() => router.push('/stock-in' as any)}>
-                {t('stock.buyStock')}
-              </Button>
-            </View>
-          ))}
-          {reorderRows.length > 8 ? (
-            <Text style={styles.reorderMore}>
-              +{reorderRows.length - 8} {t('common.more').toLowerCase()}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
 
       {isLoading ? (
         <View style={styles.list}>
@@ -405,52 +374,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: 120,
   },
-  reorderCard: {
+  reorderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: spacing.lg,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.lg,
-  },
-  reorderTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  reorderHint: {
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
-    marginBottom: spacing.sm,
-  },
-  reorderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
+    paddingHorizontal: spacing.md,
     gap: spacing.md,
+  },
+  reorderButtonPressed: {
+    opacity: 0.7,
+  },
+  reorderIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reorderInfo: {
     flex: 1,
     minWidth: 0,
   },
-  reorderName: {
+  reorderTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.ink,
   },
   reorderSub: {
     fontSize: 12,
     color: colors.muted,
     marginTop: 2,
-  },
-  reorderMore: {
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: spacing.sm,
   },
   skel: {
     borderRadius: radius.lg,

@@ -24,7 +24,7 @@ import { captureOpeningStock, sealClosingStock } from '@/services/books/dailySto
 import { dailyStockLineRepository } from '@/repositories/reports/dailyStock';
 import { reconcileProductCost } from '@/services/books/averageCost';
 import { Product, Category, Supplier, Customer, Purchase, Sale, Expense, Payment, PaymentMethod, DailyClosing, StockMovement } from '@/types';
-import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
+import { getTodayDateString } from '@/utils/formatters';
 import { toLocalDateString } from '@/utils/periodBounds';
 
 const getBusinessId = () => useAuthStore.getState().business?.id ?? '';
@@ -101,14 +101,16 @@ export function usePurchases(dateRange?: { start: string; end: string }) {
   });
 }
 
-export function useSales(dateRange?: { start: string; end: string }) {
+export function useSales(dateRange?: { start: string; end: string } | null) {
   const businessId = getBusinessId();
   return useQuery({
     queryKey: ['sales', businessId, dateRange],
-    queryFn: () => dateRange
-      ? saleRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-      : saleRepository.findAll(businessId),
-    enabled: !!businessId,
+    queryFn: () =>
+      dateRange
+        ? saleRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
+        : saleRepository.findAll(businessId),
+    // null = no open day / no range yet (skip). undefined = load all.
+    enabled: !!businessId && dateRange !== null,
   });
 }
 
@@ -159,23 +161,44 @@ export function useDashboardStats() {
   return useQuery({
     queryKey: ['dashboardStats', businessId, today],
     queryFn: async () => {
-      const openDay = await dailyClosingRepository.findOpenDay(businessId);
-      const sessionStart = openDay?.business_date?.slice(0, 10) ?? today;
-      const financials = await financialService.calculateDailyFinancials(
-        businessId,
-        sessionStart,
-        today
-      );
-      const yesterdayIso = getYesterdayDateString();
-      const [itemsSold, stockValue, yesterdaySales, dayForToday] = await Promise.all([
-        financialService.getTotalItemsSold(businessId, sessionStart, today),
+      const [openDay, stockValue, previousClosed] = await Promise.all([
+        dailyClosingRepository.findOpenDay(businessId),
         productRepository.getStockValue(businessId),
-        saleRepository.getTotalSales(businessId, yesterdayIso, yesterdayIso),
-        openDay ? Promise.resolve(openDay) : dailyClosingRepository.findByDate(businessId, today),
+        dailyClosingRepository.getLatestClosing(businessId),
       ]);
-      const openingCash = dayForToday?.opening_cash ?? 0;
+
+      // Daily dashboard numbers follow the current open business day only —
+      // never a calendar "today" fallback when no day is open.
+      if (!openDay) {
+        return {
+          hasOpenDay: false,
+          sessionStart: null as string | null,
+          sessionEnd: null as string | null,
+          todaySales: 0,
+          todayGrossProfit: 0,
+          todayNetProfit: 0,
+          todayExpenses: 0,
+          itemsSold: 0,
+          stockValue,
+          cashSales: 0,
+          previousDaySales: previousClosed?.total_sales ?? 0,
+          salesDelta: null as number | null,
+          cashBalance: 0,
+        };
+      }
+
+      const sessionStart = (openDay.business_date ?? today).slice(0, 10);
+      const sessionEnd = today;
+      const [financials, itemsSold] = await Promise.all([
+        financialService.calculateDailyFinancials(businessId, sessionStart, sessionEnd),
+        financialService.getTotalItemsSold(businessId, sessionStart, sessionEnd),
+      ]);
+      const previousDaySales = previousClosed?.total_sales ?? 0;
 
       return {
+        hasOpenDay: true,
+        sessionStart,
+        sessionEnd,
         todaySales: financials.totalSales,
         todayGrossProfit: financials.grossProfit,
         todayNetProfit: financials.netProfit,
@@ -183,10 +206,13 @@ export function useDashboardStats() {
         itemsSold,
         stockValue,
         cashSales: financials.cashSales,
-        yesterdaySales,
-        salesDelta: yesterdaySales > 0 ? (financials.totalSales - yesterdaySales) / yesterdaySales : null,
+        previousDaySales,
+        salesDelta:
+          previousDaySales > 0
+            ? (financials.totalSales - previousDaySales) / previousDaySales
+            : null,
         cashBalance: calculateExpectedCash(
-          openingCash,
+          openDay.opening_cash ?? 0,
           financials.cashSales,
           financials.customerCashPayments,
           financials.otherCashIncome,
