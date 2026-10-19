@@ -171,6 +171,83 @@ export class FinancialService {
     };
   }
 
+  /**
+   * Trading-session books: every row stamped with session_id.
+   * Spans midnight / multi-day sessions without mixing calendar-date reports.
+   */
+  async calculateSessionFinancials(
+    businessId: string,
+    sessionId: string
+  ): Promise<{
+    totalSales: number;
+    cogs: number;
+    grossProfit: number;
+    expenses: number;
+    netProfit: number;
+    cashSales: number;
+    customerCashPayments: number;
+    otherCashIncome: number;
+    cashPurchases: number;
+    cashExpenses: number;
+    supplierCashPayments: number;
+    withdrawals: number;
+  }> {
+    const [
+      totalSales,
+      tax,
+      salesWithItems,
+      expenses,
+      inventoryLoss,
+      cashSales,
+      customerCashPayments,
+      otherCashIncome,
+      cashPurchases,
+      cashExpenses,
+      supplierCashPayments,
+      withdrawals,
+    ] = await Promise.all([
+      saleRepository.getTotalSalesForSession(businessId, sessionId),
+      saleRepository.getTotalTaxForSession(businessId, sessionId),
+      saleRepository.getSalesWithItemsForSession(businessId, sessionId),
+      expenseRepository.getTotalExpensesForSession(businessId, sessionId),
+      stockMovementRepository.getInventoryLossForSession(businessId, sessionId),
+      saleRepository.getCashSalesForSession(businessId, sessionId),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'customer_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'other_income', 'cash'),
+      purchaseRepository.getCashPurchasesForSession(businessId, sessionId),
+      expenseRepository.getCashExpensesForSession(businessId, sessionId),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'supplier_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'withdrawal', 'cash'),
+    ]);
+
+    let cogs = 0;
+    for (const sale of salesWithItems) {
+      if (sale.voided) continue;
+      for (const item of sale.items ?? []) {
+        cogs += (item.quantity ?? 0) * (item.unit_cost ?? 0);
+      }
+    }
+
+    const revenue = salesRevenue(totalSales, tax);
+    const grossProfit = calculateGrossProfit(revenue, cogs);
+    const netProfit = calculateNetProfit(grossProfit, expenses, inventoryLoss);
+
+    return {
+      totalSales,
+      cogs,
+      grossProfit,
+      expenses,
+      netProfit,
+      cashSales,
+      customerCashPayments,
+      otherCashIncome,
+      cashPurchases,
+      cashExpenses,
+      supplierCashPayments,
+      withdrawals,
+    };
+  }
+
   async calculateCOGSForPeriod(businessId: string, startDate: string, endDate: string): Promise<number> {
     const sales = await saleRepository.getSalesWithItems(businessId, startDate, endDate);
     let totalCOGS = 0;
@@ -244,6 +321,68 @@ export class FinancialService {
     return {
       expectedCash,
       cashVariance,
+      breakdown: {
+        cashSales,
+        customerCashPayments,
+        otherCashIncome,
+        cashPurchases,
+        cashExpenses,
+        supplierCashPayments,
+        withdrawals,
+      },
+    };
+  }
+
+  async calculateCashReconciliationForSession(
+    businessId: string,
+    sessionId: string,
+    openingCash: number,
+    actualCash: number
+  ): Promise<{
+    expectedCash: number;
+    cashVariance: number;
+    breakdown: {
+      cashSales: number;
+      customerCashPayments: number;
+      otherCashIncome: number;
+      cashPurchases: number;
+      cashExpenses: number;
+      supplierCashPayments: number;
+      withdrawals: number;
+    };
+  }> {
+    const [
+      cashSales,
+      customerCashPayments,
+      otherCashIncome,
+      cashPurchases,
+      cashExpenses,
+      supplierCashPayments,
+      withdrawals,
+    ] = await Promise.all([
+      saleRepository.getCashSalesForSession(businessId, sessionId),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'customer_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'other_income', 'cash'),
+      purchaseRepository.getCashPurchasesForSession(businessId, sessionId),
+      expenseRepository.getCashExpensesForSession(businessId, sessionId),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'supplier_payment', 'cash'),
+      paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'withdrawal', 'cash'),
+    ]);
+
+    const expectedCash = calculateExpectedCash(
+      openingCash,
+      cashSales,
+      customerCashPayments,
+      otherCashIncome,
+      cashPurchases,
+      cashExpenses,
+      supplierCashPayments,
+      withdrawals
+    );
+
+    return {
+      expectedCash,
+      cashVariance: calculateCashVariance(actualCash, expectedCash),
       breakdown: {
         cashSales,
         customerCashPayments,
@@ -338,8 +477,11 @@ export class FinancialService {
     businessId: string,
     startDate: string,
     endDate: string,
-    options?: { openingCash?: number; topLimit?: number }
+    options?: { openingCash?: number; topLimit?: number; sessionId?: string | null }
   ): Promise<PeriodBooks> {
+    if (options?.sessionId) {
+      return this.buildSessionBooks(businessId, options.sessionId, options);
+    }
     const start = startDate.slice(0, 10);
     const end = endDate.slice(0, 10);
     const [
@@ -427,6 +569,93 @@ export class FinancialService {
     });
   }
 
+  /** Period books keyed by trading session (open→close), not calendar date. */
+  async buildSessionBooks(
+    businessId: string,
+    sessionId: string,
+    options?: { openingCash?: number; topLimit?: number }
+  ): Promise<PeriodBooks> {
+    const [
+      totalSales,
+      tax,
+      salesWithItems,
+      expenses,
+      inventoryLoss,
+      itemsSold,
+      checkout,
+      sums,
+      cashPurchases,
+      cashExpenses,
+      stockNow,
+      topProducts,
+    ] = await Promise.all([
+      saleRepository.getTotalSalesForSession(businessId, sessionId),
+      saleRepository.getTotalTaxForSession(businessId, sessionId),
+      saleRepository.getSalesWithItemsForSession(businessId, sessionId),
+      expenseRepository.getTotalExpensesForSession(businessId, sessionId),
+      stockMovementRepository.getInventoryLossForSession(businessId, sessionId),
+      this.getTotalItemsSoldForSession(businessId, sessionId),
+      saleRepository.getCheckoutSplitForSession(businessId, sessionId),
+      paymentRepository.sumByTypeAndMethodForSession(businessId, sessionId),
+      purchaseRepository.getCashPurchasesForSession(businessId, sessionId),
+      expenseRepository.getCashExpensesForSession(businessId, sessionId),
+      productRepository.getStockValue(businessId),
+      this.getTopProducts(businessId, '2000-01-01', '2099-12-31', options?.topLimit ?? 5, {
+        sessionId,
+      }),
+    ]);
+
+    let cogs = 0;
+    for (const sale of salesWithItems) {
+      if (sale.voided) continue;
+      for (const item of sale.items ?? []) {
+        cogs += (item.quantity ?? 0) * (item.unit_cost ?? 0);
+      }
+    }
+
+    const byType = (type: string): MethodTotals => {
+      const out = emptyMethods();
+      for (const row of sums) {
+        if (row.type !== type) continue;
+        const v = row.total ?? 0;
+        if (row.payment_method === 'cash') out.cash += v;
+        else if (row.payment_method === 'mobile_money') out.mobileMoney += v;
+        else if (row.payment_method === 'bank') out.bank += v;
+      }
+      return out;
+    };
+    const collections = byType('customer_payment');
+    const otherIncome = byType('other_income');
+    const supplierPayments = byType('supplier_payment');
+    const withdrawalsRow = byType('withdrawal');
+    const transactionCount = salesWithItems.filter((s) => !s.voided).length;
+
+    // Inventory loss is a net figure for the session; attribute to damaged for assembleBooks.
+    return assembleBooks({
+      totalSales,
+      tax,
+      cogs,
+      expenses,
+      damagedValue: Math.max(0, inventoryLoss),
+      adjustmentOutValue: 0,
+      adjustmentInValue: Math.max(0, -inventoryLoss),
+      itemsSold,
+      transactionCount,
+      checkout: { cash: checkout.cash, mobileMoney: checkout.mobileMoney, bank: checkout.bank },
+      creditSales: checkout.creditSales,
+      collections,
+      otherIncome,
+      supplierPayments,
+      cashPurchases,
+      cashExpenses,
+      withdrawals: withdrawalsRow.cash + withdrawalsRow.mobileMoney + withdrawalsRow.bank,
+      openingCash: options?.openingCash ?? 0,
+      topProducts,
+      stockValueNow: stockNow,
+      stockValueAtEnd: stockNow,
+    });
+  }
+
   async getBusinessHealth(
     businessId: string
   ): Promise<{
@@ -468,15 +697,28 @@ export class FinancialService {
     }, 0);
   }
 
+  async getTotalItemsSoldForSession(businessId: string, sessionId: string): Promise<number> {
+    const sales = await saleRepository.getSalesWithItemsForSession(businessId, sessionId);
+    return sales.reduce((sum, sale) => {
+      if (sale.voided) return sum;
+      return sum + sale.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+    }, 0);
+  }
+
   async getTopProducts(
     businessId: string,
     startDate: string,
     endDate: string,
-    limit = 10
+    limit = 10,
+    options?: { sessionId?: string | null }
   ): Promise<Array<{ productId: string; productName: string; quantitySold: number; totalSales: number; totalProfit: number; margin: number }>> {
     const db = await (await import('../../db/database')).getDatabase();
-    const { buildPeriodWhere } = await import('@/utils/periodBounds');
-    const period = buildPeriodWhere('s.sale_date', 's.created_at', startDate, endDate);
+    const { buildSessionOrPeriodWhere } = await import('@/utils/periodBounds');
+    const period = buildSessionOrPeriodWhere('s.session_id', 's.sale_date', 's.created_at', {
+      sessionId: options?.sessionId,
+      start: startDate,
+      end: endDate,
+    });
     const rows = await db.getAllAsync<{
       product_id: string;
       product_name: string;

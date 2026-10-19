@@ -25,6 +25,10 @@ export class StockMovement {
   @Column({ type: 'uuid' })
   product_id!: string;
 
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  session_id!: string | null;
+
   @Column({ type: 'text' })
   type!: string;
 
@@ -82,6 +86,10 @@ export class Purchase {
 
   @Column({ type: 'uuid' })
   supplier_id!: string;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  session_id!: string | null;
 
   @Column({ type: 'text', nullable: true })
   reference_number!: string | null;
@@ -159,6 +167,10 @@ export class Sale {
 
   @Column({ type: 'uuid', nullable: true })
   customer_id!: string | null;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  session_id!: string | null;
 
   @Column({ type: 'text', nullable: true })
   reference_number!: string | null;
@@ -255,6 +267,10 @@ export class Expense {
   @Column({ type: 'uuid' })
   business_id!: string;
 
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  session_id!: string | null;
+
   @Column({ type: 'text' })
   category!: string;
 
@@ -297,6 +313,10 @@ export class Payment {
   @Index()
   @Column({ type: 'uuid' })
   business_id!: string;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  session_id!: string | null;
 
   @Column({ type: 'text' })
   type!: string;
@@ -349,6 +369,9 @@ export class DailyClosing {
 
   @Column({ type: 'date' })
   business_date!: string;
+
+  @Column({ type: 'int', default: 1 })
+  session_number!: number;
 
   @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
   opening_cash!: number;

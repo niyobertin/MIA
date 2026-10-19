@@ -5,7 +5,7 @@ import { getDatabase } from '../../db/database';
 export class PaymentRepository extends BaseRepository<Payment> {
   protected tableName = 'payments';
   protected columns = [
-    'id', 'business_id', 'type', 'payment_method', 'amount',
+    'id', 'business_id', 'session_id', 'type', 'payment_method', 'amount',
     'reference_type', 'reference_id', 'party_id', 'payment_date',
     'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
   ];
@@ -49,6 +49,15 @@ export class PaymentRepository extends BaseRepository<Payment> {
     return rows.map(row => this.mapRow(row));
   }
 
+  async findBySession(businessId: string, sessionId: string): Promise<Payment[]> {
+    return this.findAll(businessId, {
+      where: { session_id: sessionId },
+      limit: 10000,
+      orderBy: 'created_at',
+      orderDirection: 'DESC',
+    });
+  }
+
   async getTotalByMethod(businessId: string, startDate: string, endDate: string, method?: PaymentMethod): Promise<number> {
     const db = await this.getDb();
     const { buildPeriodWhere } = await import('@/utils/periodBounds');
@@ -79,6 +88,20 @@ export class PaymentRepository extends BaseRepository<Payment> {
        WHERE business_id = ? AND ${period.clause}
        GROUP BY type, payment_method`,
       [businessId, ...period.params]
+    );
+  }
+
+  async sumByTypeAndMethodForSession(
+    businessId: string,
+    sessionId: string
+  ): Promise<Array<{ type: string; payment_method: string; total: number }>> {
+    const db = await this.getDb();
+    return db.getAllAsync(
+      `SELECT type, payment_method, COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ?
+       GROUP BY type, payment_method`,
+      [businessId, sessionId]
     );
   }
 
@@ -116,6 +139,23 @@ export class PaymentRepository extends BaseRepository<Payment> {
        WHERE business_id = ? AND payment_date BETWEEN ? AND ?
        AND type = ? AND payment_method = ?`,
       [businessId, startDate, endDate, type, method]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getTotalByTypeAndMethodForSession(
+    businessId: string,
+    sessionId: string,
+    type: PaymentType,
+    method: PaymentMethod = 'cash'
+  ): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ?
+       AND type = ? AND payment_method = ?`,
+      [businessId, sessionId, type, method]
     );
     return row?.total ?? 0;
   }

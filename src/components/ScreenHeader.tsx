@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { colors, spacing } from '@/theme/tokens';
+import { colors, radius, spacing } from '@/theme/tokens';
 
 interface ScreenHeaderProps {
   title: string;
@@ -37,7 +37,7 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   };
 
   return (
-    <View style={StyleSheet.flatten([styles.wrap, { paddingTop: insets.top + spacing.sm }])}>
+    <View style={StyleSheet.flatten([styles.wrap, { paddingTop: insets.top + spacing.lg }])}>
       <View style={styles.row}>
         {showBack ? (
           <TouchableOpacity
@@ -46,7 +46,7 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
             hitSlop={10}
             accessibilityLabel={t('common.back')}
           >
-            <Ionicons name="chevron-back" size={24} color={colors.ink} />
+            <Ionicons name="chevron-back" size={22} color={colors.ink} />
           </TouchableOpacity>
         ) : (
           <View style={styles.backSpacer} />
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   backButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: radius.full,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,

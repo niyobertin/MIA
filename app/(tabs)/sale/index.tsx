@@ -335,6 +335,7 @@ export default function NewSaleScreen() {
               onError: (error) => {
                 const code = error instanceof Error ? error.message : '';
                 if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+                else if (code === 'HISTORY_LOCKED') showToast(t('cash.historyLocked'), 'error');
                 else if (code === 'ALREADY_VOID') showToast(t('sales.saleVoided'), 'info');
                 else showToast(t('sales.saleFailed'), 'error');
               },

@@ -5,13 +5,30 @@ import { getDatabase } from '../../db/database';
 export class DailyClosingRepository extends BaseRepository<DailyClosing> {
   protected tableName = 'daily_closings';
   protected columns = [
-    'id', 'business_id', 'business_date', 'opening_cash', 'cash_sales',
+    'id', 'business_id', 'business_date', 'session_number', 'opening_cash', 'cash_sales',
     'customer_cash_payments', 'other_cash_income', 'cash_purchases', 'cash_expenses',
     'supplier_cash_payments', 'withdrawals', 'expected_cash', 'actual_cash', 'cash_variance',
     'total_sales', 'cogs', 'gross_profit', 'expenses', 'net_profit',
     'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
     'notes', 'opened_by', 'opened_at', 'closed_by', 'closed_at', 'status', 'created_at', 'updated_at'
   ];
+
+  protected mapRow(row: Record<string, unknown>): DailyClosing {
+    const closing = super.mapRow(row);
+    return {
+      ...closing,
+      session_number: Number(row.session_number ?? 1),
+    };
+  }
+
+  async nextSessionNumber(businessId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ max_n: number | null }>(
+      `SELECT MAX(session_number) AS max_n FROM ${this.tableName} WHERE business_id = ?`,
+      [businessId]
+    );
+    return (row?.max_n ?? 0) + 1;
+  }
 
   async findByDate(businessId: string, businessDate: string): Promise<DailyClosing | null> {
     const db = await this.getDb();
@@ -70,6 +87,25 @@ export class DailyClosingRepository extends BaseRepository<DailyClosing> {
 
   async delete(): Promise<boolean> {
     throw new Error('HISTORY_LOCKED');
+  }
+
+  /**
+   * Drop a local-only open session that lost a sync conflict.
+   * Closed sessions stay sealed. Offline sales keep their original session_id.
+   */
+  async abandonLocalOpen(id: string, businessId: string): Promise<void> {
+    const current = await this.findById(id, businessId);
+    if (!current) return;
+    if (current.status === 'closed') throw new Error('HISTORY_LOCKED');
+    const db = await this.getDb();
+    await db.runAsync(
+      `DELETE FROM daily_stock_lines WHERE business_id = ? AND daily_closing_id = ?`,
+      [businessId, id]
+    );
+    await db.runAsync(
+      `DELETE FROM ${this.tableName} WHERE id = ? AND business_id = ? AND status = 'open'`,
+      [id, businessId]
+    );
   }
 
   async getLatestClosing(businessId: string): Promise<DailyClosing | null> {

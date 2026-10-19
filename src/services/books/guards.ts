@@ -4,8 +4,8 @@ import { customerRepository } from '@/repositories/sales/customers';
 import { saleRepository } from '@/repositories/sales/sales';
 import { purchaseRepository } from '@/repositories/purchases/purchases';
 import { belowCostLines, lineNetUnitPrice, outstandingBalance } from '@/services/financial/calculations';
-import { getTodayDateString } from '@/utils/formatters';
 import { UserRole } from '@/types';
+import { requireOpenSession, assertSessionMutable } from './session';
 
 export interface GuardErrorInfo {
   code: string;
@@ -19,35 +19,38 @@ export function guardError(code: string, extra?: Omit<GuardErrorInfo, 'code'>): 
   return Object.assign(new Error(code), extra ?? {});
 }
 
-/** Open session range [sessionStart, today]. All dated activity must fall inside it. */
+/**
+ * @deprecated Prefer requireOpenSession — membership is by session_id, not calendar date.
+ * Kept for callers that only need "is any day open?" without stamping a session.
+ */
 export async function getOpenSessionRange(
   businessId: string
-): Promise<{ start: string; today: string } | null> {
+): Promise<{ start: string; today: string; sessionId: string } | null> {
   const open = await dailyClosingRepository.findOpenDay(businessId);
   if (!open) return null;
+  const { getTodayDateString } = await import('@/utils/formatters');
   return {
     start: (open.business_date ?? getTodayDateString()).slice(0, 10),
     today: getTodayDateString(),
+    sessionId: open.id,
   };
 }
 
-/** Business activity requires an open cash-day session and a date inside that session. */
-export async function assertDayIsOpen(businessId: string, businessDate?: string): Promise<void> {
-  const range = await getOpenSessionRange(businessId);
-  if (!range) {
-    throw guardError('DAY_CLOSED');
-  }
-  if (businessDate) {
-    const day = businessDate.slice(0, 10);
-    if (day < range.start || day > range.today) {
-      throw guardError('DAY_CLOSED');
-    }
-  }
+/**
+ * Business activity requires an open trading session.
+ * Calendar date is recorded separately (sale_date etc.) and must NOT decide session membership.
+ */
+export async function assertDayIsOpen(businessId: string, _businessDate?: string): Promise<void> {
+  await requireOpenSession(businessId);
 }
 
-/** Edits/deletes of records dated `recordDate` are only allowed while that day is mutable. */
-export async function assertRecordMutable(businessId: string, recordDate: string): Promise<void> {
-  await assertDayIsOpen(businessId, recordDate);
+/** Edits/deletes only while the record's session is still the open one. */
+export async function assertRecordMutable(
+  businessId: string,
+  _recordDate: string,
+  sessionId?: string | null
+): Promise<void> {
+  await assertSessionMutable(businessId, sessionId);
 }
 
 export async function assertSaleAllowed(
@@ -124,10 +127,10 @@ export async function assertCustomerPaymentAllowed(
   businessId: string,
   customerId: string | null,
   amount: number,
-  paymentDate: string
+  _paymentDate: string
 ): Promise<{ outstanding: number }> {
   if (!Number.isInteger(amount) || amount < 1) throw guardError('INVALID_PRICE');
-  await assertDayIsOpen(businessId, paymentDate);
+  await requireOpenSession(businessId);
   if (!customerId) return { outstanding: 0 };
   const position = await saleRepository.getCustomerPosition(customerId, businessId);
   const outstanding = outstandingBalance(position.owed, position.paid);
@@ -144,10 +147,10 @@ export async function assertSupplierPaymentAllowed(
   businessId: string,
   supplierId: string | null,
   amount: number,
-  paymentDate: string
+  _paymentDate: string
 ): Promise<{ outstanding: number }> {
   if (!Number.isInteger(amount) || amount < 1) throw guardError('INVALID_PRICE');
-  await assertDayIsOpen(businessId, paymentDate);
+  await requireOpenSession(businessId);
   if (!supplierId) return { outstanding: 0 };
   const position = await purchaseRepository.getSupplierPosition(supplierId, businessId);
   const outstanding = outstandingBalance(position.owed, position.paid);

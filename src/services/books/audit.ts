@@ -16,7 +16,9 @@ export type AuditAction =
   | 'day.close'
   | 'stock.count'
   | 'price.below_cost_override'
-  | 'credit_limit.override';
+  | 'credit_limit.override'
+  | 'history.correction'
+  | 'session.abandon_local';
 
 /** Append-only audit trail. Never throws: the books must not fail because the log did. */
 export async function audit(input: {

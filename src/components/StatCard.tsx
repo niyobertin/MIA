@@ -37,8 +37,11 @@ export const StatCard: React.FC<StatCardProps> = ({
     <>
       <View style={styles.topRow}>
         <View style={[styles.iconTile, { backgroundColor: `${color}1a` }]}>
-          <Ionicons name={(icon ?? 'stats-chart') as any} size={20} color={color} />
+          <Ionicons name={(icon ?? 'stats-chart') as any} size={18} color={color} />
         </View>
+        <Text style={styles.title} numberOfLines={1}>
+          {title}
+        </Text>
         {trendValue ? (
           <View style={styles.trend}>
             {trend && trend !== 'neutral' ? (
@@ -57,7 +60,6 @@ export const StatCard: React.FC<StatCardProps> = ({
       <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit>
         {formatCurrency(value, currency)}
       </Text>
-      <Text style={styles.title} numberOfLines={2}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
     </>
   );
@@ -86,16 +88,22 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: spacing.sm,
     marginBottom: spacing.sm,
   },
   iconTile: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  title: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
   },
   trend: {
     flexDirection: 'row',
@@ -111,12 +119,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.ink,
     fontVariant: ['tabular-nums'],
-  },
-  title: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
-    marginTop: 2,
   },
   subtitle: {
     fontSize: 11,

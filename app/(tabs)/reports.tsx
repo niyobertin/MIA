@@ -31,6 +31,7 @@ import {
   usePurchases,
   useExpenses,
   usePayments,
+  useOpenDailyClosing,
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
@@ -40,7 +41,7 @@ import { shareReportPdf } from '@/utils/reportExport';
 import { showToast } from '@/stores/toastStore';
 import { seriesForPeriod } from '@/services/financial/books';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' | 'custom';
+type Period = 'openDay' | 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' | 'custom';
 type TxKind = 'all' | 'sale' | 'purchase' | 'expense' | 'payment';
 
 type TxRow = {
@@ -66,9 +67,17 @@ function todayIso(): string {
   return getTodayDateString();
 }
 
-function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
+function rangeFor(
+  period: Period,
+  custom: PeriodRange | null,
+  session?: { id: string; start: string } | null
+): PeriodRange {
   const today = todayIso();
   switch (period) {
+    case 'openDay':
+      return session
+        ? { start: session.start, end: today, sessionId: session.id }
+        : { start: today, end: today };
     case 'yesterday':
       return { start: getYesterdayDateString(), end: getYesterdayDateString() };
     case 'week':
@@ -91,8 +100,14 @@ function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
   }
 }
 
-function formatPeriodLabel(range: PeriodRange, period: Period, allLabel: string): string {
+function formatPeriodLabel(
+  range: PeriodRange,
+  period: Period,
+  allLabel: string,
+  sessionLabel: string
+): string {
   if (period === 'all') return allLabel;
+  if (period === 'openDay' && range.sessionId) return sessionLabel;
   const start = range.start.replace('T', ' ').slice(0, 16);
   const end = range.end.replace('T', ' ').slice(0, 16);
   return `${start} → ${end}`;
@@ -140,7 +155,7 @@ function paymentTypeLabel(
 export default function ReportsScreen() {
   const { t } = useTranslation();
   const { user, business } = useAuthStore();
-  const [period, setPeriod] = React.useState<Period>('week');
+  const [period, setPeriod] = React.useState<Period>('openDay');
   const [refreshing, setRefreshing] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
   const [txType, setTxType] = React.useState<TxKind>('all');
@@ -154,6 +169,22 @@ export default function ReportsScreen() {
   const [endTime, setEndTime] = React.useState('23:59');
   const [customApplied, setCustomApplied] = React.useState<PeriodRange | null>(null);
 
+  const openClosingQuery = useOpenDailyClosing();
+  const openSession =
+    openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
+  const openSessionMeta = openSession
+    ? {
+        id: openSession.id,
+        start: openSession.business_date?.slice(0, 10) ?? todayIso(),
+      }
+    : null;
+
+  React.useEffect(() => {
+    if (period === 'openDay' && !openSessionMeta && openClosingQuery.isFetched) {
+      setPeriod('today');
+    }
+  }, [period, openSessionMeta, openClosingQuery.isFetched]);
+
   const customRange = React.useMemo(
     () => ({
       start: combineDateAndTime(startDate, startTime, '00:00'),
@@ -163,8 +194,13 @@ export default function ReportsScreen() {
   );
 
   const range = React.useMemo(
-    () => rangeFor(period, period === 'custom' ? (customApplied ?? customRange) : null),
-    [period, customApplied, customRange]
+    () =>
+      rangeFor(
+        period,
+        period === 'custom' ? (customApplied ?? customRange) : null,
+        openSessionMeta
+      ),
+    [period, customApplied, customRange, openSessionMeta]
   );
 
   const statsQuery = usePeriodStats(range);
@@ -406,7 +442,12 @@ export default function ReportsScreen() {
         businessName: business?.name ?? 'MIA',
         businessCode: business?.business_code,
         currency: business?.currency ?? 'RWF',
-        periodLabel: formatPeriodLabel(range, period, t('sales.allTime')),
+        periodLabel: formatPeriodLabel(
+          range,
+          period,
+          t('sales.allTime'),
+          t('sales.openDayFilter')
+        ),
         generatedAt: new Date().toLocaleString(),
         totalSales: stats.totalSales,
         itemsSold: stats.itemsSold,
@@ -430,7 +471,12 @@ export default function ReportsScreen() {
     }
   };
 
-  const periods: Array<{ value: Period; label: string }> = [
+  const periods: Array<{ value: Period; label: string; hidden?: boolean }> = [
+    {
+      value: 'openDay',
+      label: t('sales.openDayFilter'),
+      hidden: !openSessionMeta && period !== 'openDay',
+    },
     { value: 'today', label: t('reports.today') },
     { value: 'yesterday', label: t('reports.yesterday') },
     { value: 'week', label: t('reports.thisWeek') },
@@ -448,7 +494,12 @@ export default function ReportsScreen() {
     { value: 'payment', label: t('reports.typePayments') },
   ];
 
-  const periodLabel = formatPeriodLabel(range, period, t('sales.allTime'));
+  const periodLabel = formatPeriodLabel(
+    range,
+    period,
+    t('sales.allTime'),
+    t('sales.openDayFilter')
+  );
 
   const collectedTotal =
     (pay?.collections.cash ?? 0) + (pay?.collections.mobileMoney ?? 0) + (pay?.collections.bank ?? 0);
@@ -496,19 +547,21 @@ export default function ReportsScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.periods}
         >
-          {periods.map((item) => (
-            <FilterChip
-              key={item.value}
-              label={item.label}
-              selected={period === item.value}
-              onPress={() => {
-                setPeriod(item.value);
-                if (item.value === 'custom' && !customApplied) {
-                  setCustomApplied(customRange);
-                }
-              }}
-            />
-          ))}
+          {periods
+            .filter((item) => !item.hidden)
+            .map((item) => (
+              <FilterChip
+                key={item.value}
+                label={item.label}
+                selected={period === item.value}
+                onPress={() => {
+                  setPeriod(item.value);
+                  if (item.value === 'custom' && !customApplied) {
+                    setCustomApplied(customRange);
+                  }
+                }}
+              />
+            ))}
         </ScrollView>
 
         {period === 'custom' ? (

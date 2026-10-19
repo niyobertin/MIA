@@ -59,12 +59,12 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'created_at', 'updated_at',
   ],
   stock_movements: [
-    'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost', 'reference_type',
+    'id', 'business_id', 'product_id', 'session_id', 'type', 'quantity', 'unit_cost', 'reference_type',
     'reference_id', 'occurred_at', 'created_by', 'previous_quantity', 'new_quantity', 'reason',
     'reversal_of', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ],
   purchases: [
-    'id', 'business_id', 'supplier_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
+    'id', 'business_id', 'supplier_id', 'session_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
     'purchase_date', 'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ],
   purchase_items: [
@@ -72,7 +72,7 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'created_at', 'updated_at',
   ],
   sales: [
-    'id', 'business_id', 'customer_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
+    'id', 'business_id', 'customer_id', 'session_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
     'total_amount', 'paid_amount', 'voided', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id', 'sync_status',
     'created_at', 'updated_at',
   ],
@@ -81,15 +81,15 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'discount_amount', 'tax_amount', 'total_amount', 'created_at', 'updated_at',
   ],
   expenses: [
-    'id', 'business_id', 'category', 'amount', 'payment_method', 'description', 'expense_date',
+    'id', 'business_id', 'session_id', 'category', 'amount', 'payment_method', 'description', 'expense_date',
     'reference_number', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ],
   payments: [
-    'id', 'business_id', 'type', 'payment_method', 'amount', 'reference_type', 'reference_id',
+    'id', 'business_id', 'session_id', 'type', 'payment_method', 'amount', 'reference_type', 'reference_id',
     'party_id', 'payment_date', 'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ],
   daily_closings: [
-    'id', 'business_id', 'business_date', 'opening_cash', 'cash_sales', 'customer_cash_payments',
+    'id', 'business_id', 'business_date', 'session_number', 'opening_cash', 'cash_sales', 'customer_cash_payments',
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
     'net_profit', 'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
@@ -387,12 +387,44 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
     }
 
     const existing = await repo.findOne({ where: { id: payload.id } as ObjectLiteral });
+
+    // Only one open trading session per business. Late/offline opens collide explicitly.
+    if (table === 'daily_closings' && String(payload.status ?? '') === 'open') {
+      const businessId = String(payload.business_id ?? (existing as { business_id?: string } | null)?.business_id ?? '');
+      if (businessId) {
+        const otherOpen = await repo.findOne({
+          where: { business_id: businessId, status: 'open' } as ObjectLiteral,
+        });
+        if (otherOpen && String((otherOpen as { id: string }).id) !== String(payload.id)) {
+          res.status(409).json({
+            error: 'Another open trading session already exists for this business',
+            conflict_session_id: (otherOpen as { id: string }).id,
+          });
+          return;
+        }
+      }
+    }
+
     if (existing && (table === 'stock_movements' || table === 'daily_closings' || table === 'daily_stock_lines')) {
       const locked =
         table === 'stock_movements'
           ? ['type', 'quantity', 'product_id', 'previous_quantity', 'new_quantity', 'created_by', 'reason', 'reversal_of']
           : table === 'daily_closings' && (existing as { status?: string }).status === 'closed'
-            ? ['status', 'opening_stock_qty', 'closing_stock_qty', 'closed_by', 'closed_at', 'opened_by', 'opened_at', 'business_date']
+            ? [
+                'status',
+                'opening_stock_qty',
+                'closing_stock_qty',
+                'closed_by',
+                'closed_at',
+                'opened_by',
+                'opened_at',
+                'business_date',
+                'session_number',
+                'opening_cash',
+                'expected_cash',
+                'actual_cash',
+                'total_sales',
+              ]
             : table === 'daily_stock_lines' &&
         ((existing as { closing_qty?: number | null }).closing_qty != null ||
           (existing as { counted_qty?: number | null }).counted_qty != null)

@@ -1,7 +1,7 @@
 import { purchaseRepository } from '@/repositories/purchases/purchases';
 import { productRepository, stockMovementRepository } from '@/repositories/products/products';
 import { queueSync } from '@/services/sync/queue';
-import { assertDayIsOpen } from './guards';
+import { assertSessionMutable } from './session';
 import { settleSupplierAccount } from './settle';
 import { reconcileProductCost } from './averageCost';
 import { recordStockMovement } from './recordStockMovement';
@@ -20,7 +20,8 @@ export async function voidPurchase(input: {
   if (!purchase) throw new Error('PURCHASE_NOT_FOUND');
   if (purchase.status === 'cancelled') throw new Error('ALREADY_VOID');
 
-  await assertDayIsOpen(input.businessId, purchase.purchase_date);
+  // Closed sessions are history-locked — post a correction in the open session instead.
+  await assertSessionMutable(input.businessId, purchase.session_id);
 
   const recorded = await stockMovementRepository.findByReference('purchase', purchase.id, input.businessId);
   const received = recorded.filter((movement) => movement.type === 'purchase');

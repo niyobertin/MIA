@@ -1,10 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { colors, spacing } from '@/theme/tokens';
+import { colors, radius, spacing } from '@/theme/tokens';
 import { formatDate } from '@/utils/formatters';
 import { MiaLogo } from './MiaLogo';
 import { SyncIndicator } from './SyncIndicator';
@@ -30,23 +29,23 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={StyleSheet.flatten([styles.container, { paddingTop: insets.top + spacing.sm }])}>
+    <View style={StyleSheet.flatten([styles.container, { paddingTop: insets.top + spacing.lg }])}>
       <View style={styles.topRow}>
-        <MiaLogo size={36} />
+        <View style={styles.logoWrap}>
+          <MiaLogo size={28} />
+        </View>
         <View style={styles.topMiddle}>
           <Text style={styles.business} numberOfLines={1}>{businessName}</Text>
           <Text style={styles.date}>{subtitle ?? formatDate(new Date())}</Text>
         </View>
         {showActions ? (
           <View style={styles.actions}>
-            <SyncIndicator compact />
             <TouchableOpacity
-              style={styles.iconButton}
               onPress={() => router.push('/more/sync' as any)}
               hitSlop={10}
-              accessibilityLabel={t('dashboard.notifications')}
+              accessibilityLabel={t('settings.sync')}
             >
-              <Ionicons name="notifications-outline" size={22} color={colors.ink} />
+              <SyncIndicator compact />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.avatar}
@@ -66,10 +65,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
       {greeting || userName ? (
         <View style={styles.greetingBlock}>
-          {greeting ? <Text style={styles.greeting}>{greeting}</Text> : null}
-          {userName ? (
-            <Text style={styles.userName} numberOfLines={1}>{userName}</Text>
-          ) : null}
+          <Text style={styles.greetingLine} numberOfLines={1}>
+            {greeting ? `${greeting}` : ''}
+            {greeting && userName ? ', ' : ''}
+            {userName ? (
+              <Text style={styles.userNameInline}>{userName}</Text>
+            ) : null}
+          </Text>
         </View>
       ) : null}
     </View>
@@ -87,6 +89,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  logoWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
   topMiddle: {
     flex: 1,
@@ -106,20 +119,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   avatar: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: radius.full,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
@@ -130,17 +133,16 @@ const styles = StyleSheet.create({
     color: colors.white,
   },
   greetingBlock: {
-    paddingTop: 2,
+    paddingTop: 0,
   },
-  greeting: {
-    fontSize: 13,
-    fontWeight: '600',
+  greetingLine: {
+    fontSize: 15,
+    fontWeight: '500',
     color: colors.muted,
   },
-  userName: {
-    fontSize: 22,
+  userNameInline: {
+    fontSize: 15,
     fontWeight: '800',
     color: colors.ink,
-    marginTop: 2,
   },
 });

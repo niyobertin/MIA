@@ -143,11 +143,17 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!response.ok) {
-    const message =
-      body && typeof body === 'object' && body !== null && 'error' in body
-        ? String((body as { error: unknown }).error)
-        : `HTTP ${response.status}`;
-    throw new Error(message);
+    const errBody =
+      body && typeof body === 'object' && body !== null
+        ? (body as { error?: unknown; conflict_session_id?: unknown })
+        : null;
+    const message = errBody?.error != null ? String(errBody.error) : `HTTP ${response.status}`;
+    const conflictId =
+      errBody?.conflict_session_id != null ? String(errBody.conflict_session_id) : '';
+    // Embed conflict_session_id so sync UI can adopt the server open session.
+    throw new Error(
+      conflictId ? `${message} (conflict_session:${conflictId})` : message
+    );
   }
 
   return body as T;

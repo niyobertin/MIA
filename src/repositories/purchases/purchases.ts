@@ -5,7 +5,7 @@ import { buildPeriodWhere } from '@/utils/periodBounds';
 export class PurchaseRepository extends BaseRepository<Purchase> {
   protected tableName = 'purchases';
   protected columns = [
-    'id', 'business_id', 'supplier_id', 'reference_number', 'total_amount',
+    'id', 'business_id', 'supplier_id', 'session_id', 'reference_number', 'total_amount',
     'paid_amount', 'status', 'purchase_date', 'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
   ];
 
@@ -34,6 +34,15 @@ export class PurchaseRepository extends BaseRepository<Purchase> {
     return rows.map(row => this.mapRow(row));
   }
 
+  async findBySession(businessId: string, sessionId: string): Promise<Purchase[]> {
+    return this.findAll(businessId, {
+      where: { session_id: sessionId },
+      limit: 10000,
+      orderBy: 'created_at',
+      orderDirection: 'DESC',
+    });
+  }
+
   async getTotalPurchases(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
     const period = buildPeriodWhere('purchase_date', 'created_at', startDate, endDate);
@@ -58,6 +67,21 @@ export class PurchaseRepository extends BaseRepository<Purchase> {
        AND pay.type = 'purchase_payment'
        AND pay.payment_method = 'cash'`,
       [businessId, ...period.params]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getCashPurchasesForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(pay.amount), 0) as total
+       FROM ${this.tableName} p
+       JOIN payments pay ON pay.reference_type = 'purchase' AND pay.reference_id = p.id AND pay.business_id = p.business_id
+       WHERE p.business_id = ? AND p.session_id = ?
+       AND p.status != 'cancelled'
+       AND pay.type = 'purchase_payment'
+       AND pay.payment_method = 'cash'`,
+      [businessId, sessionId]
     );
     return row?.total ?? 0;
   }

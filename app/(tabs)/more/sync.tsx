@@ -204,13 +204,29 @@ export default function SyncScreen() {
                 setActingId(record.id);
                 try {
                   const engine = getSyncEngine('local-device');
+                  const kind = classifySyncError(record.error_message);
                   let result = null;
                   if (action === 'retry') {
                     result = await engine.retryRecord(record.id, businessId);
                   } else if (action === 'mine') {
                     result = await engine.keepMineRecord(record.table_name, record.record_id, businessId);
                   } else if (action === 'server') {
-                    result = await engine.keepServerRecord(record.table_name, record.record_id, businessId);
+                    if (
+                      kind === 'session_conflict' &&
+                      record.table_name === 'daily_closings'
+                    ) {
+                      result = await engine.keepServerOpenSession(
+                        record.record_id,
+                        businessId,
+                        record.error_message
+                      );
+                    } else {
+                      result = await engine.keepServerRecord(
+                        record.table_name,
+                        record.record_id,
+                        businessId
+                      );
+                    }
                   } else {
                     await engine.dismissRecord(record.id, businessId);
                     showToast(t('settings.conflictDismissed'), 'info');
@@ -319,16 +335,19 @@ function ConflictCard({
 }) {
   const { t } = useTranslation();
   const kind = classifySyncError(record.error_message);
+  const isSessionConflict = kind === 'session_conflict';
   const explanation =
     kind === 'sealed'
       ? t('settings.conflictSealed')
-      : kind === 'validation'
-        ? t('settings.conflictValidation')
-        : kind === 'auth'
-          ? t('settings.conflictAuth')
-          : kind === 'offline'
-            ? t('settings.conflictOffline')
-            : t('settings.conflictUnknown');
+      : isSessionConflict
+        ? t('settings.conflictSession')
+        : kind === 'validation'
+          ? t('settings.conflictValidation')
+          : kind === 'auth'
+            ? t('settings.conflictAuth')
+            : kind === 'offline'
+              ? t('settings.conflictOffline')
+              : t('settings.conflictUnknown');
   return (
     <View style={styles.conflictCard}>
       <View style={styles.conflictTop}>
@@ -337,10 +356,10 @@ function ConflictCard({
           <Text style={styles.conflictTitle}>
             {tableLabel(record.table_name)} · {record.operation}
           </Text>
-          <Text style={styles.conflictSub} numberOfLines={2}>
+          <Text style={styles.conflictSub} numberOfLines={3}>
             {explanation}
           </Text>
-          {record.error_message ? (
+          {record.error_message && !isSessionConflict ? (
             <Text style={styles.conflictError} numberOfLines={2}>
               {record.error_message}
             </Text>
@@ -348,18 +367,43 @@ function ConflictCard({
         </View>
       </View>
       <View style={styles.conflictActions}>
-        <Button variant="primary" size="sm" loading={acting} onPress={() => onAction('retry')} disabled={acting}>
-          {t('common.retry')}
-        </Button>
-        <Button variant="outline" size="sm" onPress={() => onAction('mine')} disabled={acting}>
-          {t('settings.keepMine')}
-        </Button>
-        <Button variant="outline" size="sm" onPress={() => onAction('server')} disabled={acting}>
-          {t('settings.keepServer')}
-        </Button>
-        <Button variant="ghost" size="sm" onPress={() => onAction('dismiss')} disabled={acting}>
-          {t('settings.dismissRecord')}
-        </Button>
+        {isSessionConflict ? (
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={acting}
+              onPress={() => onAction('server')}
+              disabled={acting}
+            >
+              {t('settings.keepServerSession')}
+            </Button>
+            <Button variant="ghost" size="sm" onPress={() => onAction('dismiss')} disabled={acting}>
+              {t('settings.dismissRecord')}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={acting}
+              onPress={() => onAction('retry')}
+              disabled={acting}
+            >
+              {t('common.retry')}
+            </Button>
+            <Button variant="outline" size="sm" onPress={() => onAction('mine')} disabled={acting}>
+              {t('settings.keepMine')}
+            </Button>
+            <Button variant="outline" size="sm" onPress={() => onAction('server')} disabled={acting}>
+              {t('settings.keepServer')}
+            </Button>
+            <Button variant="ghost" size="sm" onPress={() => onAction('dismiss')} disabled={acting}>
+              {t('settings.dismissRecord')}
+            </Button>
+          </>
+        )}
       </View>
     </View>
   );

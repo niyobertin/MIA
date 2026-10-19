@@ -268,7 +268,7 @@ export class ProductRepository extends BaseRepository<Product> {
 export class StockMovementRepository extends BaseRepository<StockMovement> {
   protected tableName = 'stock_movements';
   protected columns = [
-    'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost',
+    'id', 'business_id', 'product_id', 'session_id', 'type', 'quantity', 'unit_cost',
     'reference_type', 'reference_id', 'occurred_at', 'created_by', 'device_id',
     'previous_quantity', 'new_quantity', 'reason', 'reversal_of',
     'sync_status', 'created_at', 'updated_at'
@@ -370,6 +370,19 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
        FROM ${this.tableName}
        WHERE business_id = ? AND ${period.clause}`,
       [businessId, ...period.params]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getInventoryLossForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT
+         COALESCE(SUM(CASE WHEN type IN ('damaged', 'adjustment_out') THEN quantity * unit_cost ELSE 0 END), 0)
+         - COALESCE(SUM(CASE WHEN type = 'adjustment_in' THEN quantity * unit_cost ELSE 0 END), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ?`,
+      [businessId, sessionId]
     );
     return row?.total ?? 0;
   }

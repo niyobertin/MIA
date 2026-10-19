@@ -5,7 +5,7 @@ import { buildPeriodWhere } from '@/utils/periodBounds';
 export class SaleRepository extends BaseRepository<Sale> {
   protected tableName = 'sales';
   protected columns = [
-    'id', 'business_id', 'customer_id', 'reference_number', 'subtotal',
+    'id', 'business_id', 'customer_id', 'session_id', 'reference_number', 'subtotal',
     'discount_amount', 'tax_amount', 'total_amount', 'paid_amount', 'voided', 'payment_status', 'sale_date',
     'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
   ];
@@ -44,6 +44,16 @@ export class SaleRepository extends BaseRepository<Sale> {
     return rows.map(row => this.mapRow(row));
   }
 
+  /** All sales stamped to a trading session (may span midnight). */
+  async findBySession(businessId: string, sessionId: string): Promise<Sale[]> {
+    return this.findAll(businessId, {
+      where: { session_id: sessionId },
+      limit: 10000,
+      orderBy: 'created_at',
+      orderDirection: 'DESC',
+    });
+  }
+
   async getTotalSales(businessId: string, startDate: string, endDate: string): Promise<number> {
     const db = await this.getDb();
     const period = buildPeriodWhere('sale_date', 'created_at', startDate, endDate);
@@ -52,6 +62,62 @@ export class SaleRepository extends BaseRepository<Sale> {
        FROM ${this.tableName}
        WHERE business_id = ? AND voided = 0 AND ${period.clause}`,
       [businessId, ...period.params]
+    );
+    return row?.total ?? 0;
+  }
+
+  /** Session totals — not calendar date. Includes overnight sales. */
+  async getTotalSalesForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(total_amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND voided = 0 AND session_id = ?`,
+      [businessId, sessionId]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getSalesWithItemsForSession(
+    businessId: string,
+    sessionId: string
+  ): Promise<(Sale & { items: SaleItem[] })[]> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<Record<string, unknown>>(
+      `SELECT * FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ?
+       ORDER BY created_at DESC`,
+      [businessId, sessionId]
+    );
+    const sales = rows.map((row) => this.mapRow(row));
+    const result: (Sale & { items: SaleItem[] })[] = [];
+    for (const sale of sales) {
+      const items = await saleItemRepository.findBySale(sale.id, businessId);
+      result.push({ ...sale, items });
+    }
+    return result;
+  }
+
+  async getCashSalesForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(p.amount), 0) as total
+       FROM payments p
+       JOIN sales s ON s.id = p.reference_id AND s.business_id = p.business_id
+       WHERE p.business_id = ? AND p.type = 'sale_payment' AND p.payment_method = 'cash'
+         AND p.reference_type = 'sale' AND s.voided = 0 AND s.session_id = ?`,
+      [businessId, sessionId]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getTotalTaxForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(tax_amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND voided = 0 AND session_id = ?`,
+      [businessId, sessionId]
     );
     return row?.total ?? 0;
   }
@@ -212,13 +278,46 @@ export class SaleRepository extends BaseRepository<Sale> {
        GROUP BY s.id`,
       [businessId, ...period.params]
     );
+    return this.reduceCheckoutSplit(rows);
+  }
+
+  async getCheckoutSplitForSession(
+    businessId: string,
+    sessionId: string
+  ): Promise<{ cash: number; mobileMoney: number; bank: number; creditSales: number }> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<{
+      total_amount: number;
+      cash: number;
+      mobile_money: number;
+      bank: number;
+    }>(
+      `SELECT s.total_amount,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'cash' THEN p.amount ELSE 0 END), 0) as cash,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'mobile_money' THEN p.amount ELSE 0 END), 0) as mobile_money,
+         COALESCE(SUM(CASE WHEN p.payment_method = 'bank' THEN p.amount ELSE 0 END), 0) as bank
+       FROM ${this.tableName} s
+       LEFT JOIN payments p
+         ON p.business_id = s.business_id
+        AND p.type = 'sale_payment'
+        AND p.reference_type = 'sale'
+        AND p.reference_id = s.id
+       WHERE s.business_id = ? AND s.voided = 0 AND s.session_id = ?
+       GROUP BY s.id`,
+      [businessId, sessionId]
+    );
+    return this.reduceCheckoutSplit(rows);
+  }
+
+  private reduceCheckoutSplit(
+    rows: Array<{ total_amount: number; cash: number; mobile_money: number; bank: number }>
+  ): { cash: number; mobileMoney: number; bank: number; creditSales: number } {
     return rows.reduce(
       (acc, row) => {
-        const paid = row.cash + row.mobile_money + row.bank;
         acc.cash += row.cash;
         acc.mobileMoney += row.mobile_money;
         acc.bank += row.bank;
-        acc.creditSales += Math.max(0, row.total_amount - paid);
+        acc.creditSales += Math.max(0, row.total_amount - (row.cash + row.mobile_money + row.bank));
         return acc;
       },
       { cash: 0, mobileMoney: 0, bank: 0, creditSales: 0 }

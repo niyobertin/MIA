@@ -23,6 +23,7 @@ import { getInitials, formatTime, getTodayDateString, getWeekStartDateString } f
 import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
 import { canSeeProfit } from '@/utils/permissions';
 import { seriesForPeriod } from '@/services/financial/books';
+import { formatSessionDuration, sessionElapsedMs } from '@/services/books/session';
 import {
   useDashboardStats,
   useLowStockProducts,
@@ -60,12 +61,15 @@ function monthStartIso(): string {
 function rangeForPeriod(
   period: DashPeriod,
   openDayStart: string | null,
-  custom: PeriodRange | null
+  custom: PeriodRange | null,
+  sessionId?: string | null
 ): PeriodRange | null {
   const today = getTodayDateString();
   switch (period) {
     case 'openDay':
-      return openDayStart ? { start: openDayStart, end: today } : null;
+      return openDayStart
+        ? { start: openDayStart, end: today, sessionId: sessionId ?? null }
+        : null;
     case 'today':
       return { start: today, end: today };
     case 'week':
@@ -107,16 +111,16 @@ export default function HomeScreen() {
   const [period, setPeriod] = React.useState<DashPeriod>('openDay');
   const [showPeriodSheet, setShowPeriodSheet] = React.useState(false);
   const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
+  // period sheet only for custom range dates
   const [refreshing, setRefreshing] = React.useState(false);
   const [startDate, setStartDate] = React.useState(today);
   const [endDate, setEndDate] = React.useState(today);
   const [customApplied, setCustomApplied] = React.useState<PeriodRange | null>(null);
 
   const openClosingQuery = useOpenDailyClosing();
-  const openDayStart =
-    openClosingQuery.data?.status === 'open'
-      ? openClosingQuery.data.business_date?.slice(0, 10) ?? null
-      : null;
+  const openSession = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
+  const openDayStart = openSession?.business_date?.slice(0, 10) ?? null;
+  const openSessionId = openSession?.id ?? null;
 
   React.useEffect(() => {
     if (period === 'openDay' && !openDayStart && openClosingQuery.isFetched) {
@@ -133,8 +137,14 @@ export default function HomeScreen() {
   );
 
   const range = React.useMemo(
-    () => rangeForPeriod(period, openDayStart, period === 'custom' ? (customApplied ?? customDraft) : null),
-    [period, openDayStart, customApplied, customDraft]
+    () =>
+      rangeForPeriod(
+        period,
+        openDayStart,
+        period === 'custom' ? (customApplied ?? customDraft) : null,
+        openSessionId
+      ),
+    [period, openDayStart, openSessionId, customApplied, customDraft]
   );
 
   const statsQuery = useDashboardStats();
@@ -157,21 +167,26 @@ export default function HomeScreen() {
   const recentSales = (salesQuery.data ?? []).filter((sale) => !sale.voided).slice(0, 6);
   const debtors = (debtQuery.data?.rows ?? []).filter((row) => row.outstanding > 0).slice(0, 5);
 
-  const salesTotal = period === 'openDay' ? (dashStats?.todaySales ?? 0) : (periodStats?.totalSales ?? 0);
-  const grossProfit = period === 'openDay' ? (dashStats?.todayGrossProfit ?? 0) : (periodStats?.grossProfit ?? 0);
+  const salesTotal =
+    period === 'openDay'
+      ? (dashStats?.sessionSales ?? dashStats?.todaySales ?? 0)
+      : period === 'today'
+        ? (dashStats?.calendarTodaySales ?? periodStats?.totalSales ?? 0)
+        : (periodStats?.totalSales ?? 0);
   const netProfit = period === 'openDay' ? (dashStats?.todayNetProfit ?? 0) : (periodStats?.netProfit ?? 0);
   const expenses = period === 'openDay' ? (dashStats?.todayExpenses ?? 0) : (periodStats?.expenses ?? 0);
   const itemsSold = period === 'openDay' ? (dashStats?.itemsSold ?? 0) : (periodStats?.itemsSold ?? 0);
   const stockValue = periodStats?.stockValue ?? dashStats?.stockValue ?? 0;
   const cashBalance = dashStats?.cashBalance ?? 0;
   const hasOpenDay = !!openDayStart || !!dashStats?.hasOpenDay;
+  const sessionOpenedAt = openSession?.opened_at ?? dashStats?.sessionOpenedAt ?? null;
+  const sessionDuration = sessionOpenedAt ? formatSessionDuration(sessionElapsedMs(sessionOpenedAt)) : null;
+  const sessionNumber = openSession?.session_number ?? dashStats?.sessionNumber ?? null;
 
   const showProfit = canSeeProfit(user?.role);
   const firstName = user?.name?.split(' ')[0] ?? '';
   const wide = width >= 980;
   const split = width >= 760;
-  const statColumns = width >= 1100 ? 4 : width >= 720 ? 3 : 2;
-  const statWidth = statColumns === 4 ? '23.5%' : statColumns === 3 ? '31%' : '47.5%';
 
   const periodOptions: Array<{ value: DashPeriod; label: string; hidden?: boolean }> = [
     { value: 'openDay', label: t('sales.openDayFilter'), hidden: !openDayStart && period !== 'openDay' },
@@ -181,13 +196,23 @@ export default function HomeScreen() {
     { value: 'year', label: t('dashboard.thisYear') },
     { value: 'custom', label: t('reports.customRange') },
   ];
+  const visiblePeriods = periodOptions.filter((o) => !o.hidden);
   const periodLabel =
     periodOptions.find((o) => o.value === period)?.label ?? t('dashboard.periodFilter');
   const periodSubtitle = range
-    ? period === 'custom' || (range.start !== range.end)
+    ? period === 'custom' || range.start.slice(0, 10) !== range.end.slice(0, 10)
       ? `${range.start.slice(0, 10)} → ${range.end.slice(0, 10)}`
       : range.start.slice(0, 10)
     : t('dashboard.openDayRequired');
+
+  const selectPeriod = (value: DashPeriod) => {
+    if (value === 'custom') {
+      setPeriod('custom');
+      setShowPeriodSheet(true);
+      return;
+    }
+    setPeriod(value);
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -273,58 +298,57 @@ export default function HomeScreen() {
         <View style={styles.page}>
           {loading ? (
             <>
-              <Skeleton height={150} style={styles.heroSkeleton} />
-              <View style={styles.grid}>
-                <SkeletonCard />
-                <SkeletonCard />
-              </View>
+              <Skeleton height={220} style={styles.heroSkeleton} />
+              <SkeletonCard />
             </>
           ) : (
             <>
-              {health && !health.openDay ? (
-                <TouchableOpacity style={styles.dayBanner} onPress={() => go('/closing')} activeOpacity={0.85}>
-                  <Ionicons name="alert-circle" size={20} color={colors.warningText} />
-                  <Text style={styles.dayBannerText}>{t('reports.noOpenDay')}</Text>
-                  <Ionicons name="chevron-forward" size={18} color={colors.warningText} />
-                </TouchableOpacity>
-              ) : null}
-
-              <TouchableOpacity
-                style={styles.periodDropdown}
-                onPress={() => setShowPeriodSheet(true)}
-                activeOpacity={0.85}
-                accessibilityLabel={t('dashboard.selectPeriod')}
-              >
-                <View style={styles.periodDropdownCopy}>
-                  <Text style={styles.periodDropdownLabel}>{t('dashboard.periodFilter')}</Text>
-                  <Text style={styles.periodDropdownValue}>{periodLabel}</Text>
-                  <Text style={styles.periodDropdownRange}>{periodSubtitle}</Text>
-                </View>
-                <Ionicons name="chevron-down" size={20} color={colors.primary} />
-              </TouchableOpacity>
-
               <View style={styles.hero}>
-                <View style={styles.heroTop}>
-                  <View style={styles.heroCopy}>
-                    <Text style={styles.heroLabel}>{`${periodLabel} · ${t('dashboard.sales')}`}</Text>
-                    <MoneyText amount={salesTotal} size={wide ? 36 : 32} weight="800" color="#fff" />
-                  </View>
-                  <View style={styles.heroBadge}>
-                    <Ionicons name="cart" size={22} color={colors.primary} />
-                  </View>
-                </View>
-                <View style={styles.heroMeta}>
-                  {showProfit ? (
-                    <Text style={styles.heroMetaText}>
-                      {t('dashboard.grossProfit')}: <Text style={styles.heroMetaStrong}>{grossProfit.toLocaleString()} RWF</Text>
-                      {'  ·  '}{itemsSold} {t('dashboard.itemsSold').toLowerCase()}
+                {!hasOpenDay ? (
+                  <TouchableOpacity style={styles.heroAlert} onPress={() => go('/closing')} activeOpacity={0.85}>
+                    <Ionicons name="alert-circle" size={16} color="#fde68a" />
+                    <Text style={styles.heroAlertText}>{t('reports.noOpenDay')}</Text>
+                    <Ionicons name="chevron-forward" size={16} color="#fde68a" />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.heroSession} onPress={() => go('/closing')} activeOpacity={0.85}>
+                    <View style={styles.heroSessionDot} />
+                    <Text style={styles.heroSessionText} numberOfLines={1}>
+                      {t('cash.openStatus')}
+                      {sessionNumber != null ? ` #${sessionNumber}` : ''}
+                      {sessionDuration ? ` · ${sessionDuration}` : ''}
                     </Text>
-                  ) : (
-                    <Text style={styles.heroMetaText}>
-                      {itemsSold} {t('dashboard.itemsSold').toLowerCase()}
-                    </Text>
-                  )}
-                  {delta !== null && hasOpenDay ? (
+                    <Text style={styles.heroSessionAction}>{t('cash.closeSessionShort')}</Text>
+                  </TouchableOpacity>
+                )}
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.heroFilters}
+                >
+                  {visiblePeriods.map((option) => {
+                    const active = period === option.value;
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[styles.heroChip, active && styles.heroChipActive]}
+                        onPress={() => selectPeriod(option.value)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.heroChipText, active && styles.heroChipTextActive]}>
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <View style={styles.heroSales}>
+                  <Text style={styles.heroLabel}>{`${periodLabel} · ${t('dashboard.sales')}`}</Text>
+                  <MoneyText amount={salesTotal} size={wide ? 36 : 30} weight="800" color="#fff" />
+                  {periodSubtitle ? <Text style={styles.heroRange}>{periodSubtitle}</Text> : null}
+                  {delta !== null && (period === 'openDay' || period === 'today') ? (
                     <View style={styles.deltaRow}>
                       <Ionicons
                         name={delta >= 0 ? 'trending-up' : 'trending-down'}
@@ -332,70 +356,93 @@ export default function HomeScreen() {
                         color={delta >= 0 ? '#bbf7d0' : '#fecaca'}
                       />
                       <Text style={styles.deltaText}>
-                        {delta >= 0 ? '↑' : '↓'} {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsPreviousDay')}
+                        {delta >= 0 ? '+' : '−'}
+                        {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsPreviousDay')}
                       </Text>
                     </View>
                   ) : null}
+                  {period === 'openDay' && !hasOpenDay ? (
+                    <Text style={styles.heroEmpty}>{t('dashboard.openDayRequired')}</Text>
+                  ) : salesTotal === 0 ? (
+                    <Text style={styles.heroEmpty}>{t('dashboard.noSalesInPeriod')}</Text>
+                  ) : null}
                 </View>
-                {period === 'openDay' && !hasOpenDay ? (
-                  <Text style={styles.heroEmpty}>{t('dashboard.openDayRequired')}</Text>
-                ) : salesTotal === 0 ? (
-                  <Text style={styles.heroEmpty}>{t('dashboard.noSalesInPeriod')}</Text>
-                ) : null}
+
                 <TouchableOpacity style={styles.heroButton} onPress={() => go('/sale')} activeOpacity={0.85}>
                   <Ionicons name="add" size={20} color={colors.primary} />
                   <Text style={styles.heroButtonText}>{t('dashboard.recordSale')}</Text>
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.grid}>
+              <View style={styles.statGrid}>
                 {showProfit ? (
-                  <View style={[styles.statWrap, { width: statWidth }]}>
-                    <StatCard title={t('dashboard.netProfit')} value={netProfit} color={colors.success} icon="trending-up" onPress={() => go('/reports')} />
+                  <View style={styles.statWrap}>
+                    <StatCard
+                      title={t('dashboard.netProfit')}
+                      value={netProfit}
+                      color={colors.success}
+                      icon="trending-up"
+                      onPress={() => go('/reports')}
+                    />
                   </View>
                 ) : null}
-                <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.expenses')} value={expenses} color={colors.danger} icon="wallet" onPress={() => go('/expense')} />
+                <View style={styles.statWrap}>
+                  <StatCard
+                    title={t('dashboard.expenses')}
+                    value={expenses}
+                    color={colors.danger}
+                    icon="wallet"
+                    onPress={() => go('/expense')}
+                  />
                 </View>
-                <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.itemsSold')} value={itemsSold} currency="" color={colors.warning} icon="bag" />
+                <View style={styles.statWrap}>
+                  <StatCard
+                    title={t('dashboard.cashBalance')}
+                    value={cashBalance}
+                    color={colors.info}
+                    icon="cash"
+                    onPress={() => go('/closing')}
+                  />
                 </View>
-                <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.stockValue')} value={stockValue} color={colors.primary} icon="cube" onPress={() => go('/stock')} />
+                <View style={styles.statWrap}>
+                  <StatCard
+                    title={t('dashboard.stockValue')}
+                    value={stockValue}
+                    color={colors.primary}
+                    icon="cube"
+                    onPress={() => go('/stock')}
+                  />
                 </View>
-                <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.cashBalance')} value={cashBalance} color={colors.info} icon="cash" onPress={() => go('/closing')} />
+                <View style={styles.statWrap}>
+                  <StatCard
+                    title={t('dashboard.itemsSold')}
+                    value={itemsSold}
+                    currency=""
+                    color={colors.warning}
+                    icon="bag"
+                  />
                 </View>
-                {showProfit ? (
-                  <View style={[styles.statWrap, { width: statWidth }]}>
-                    <StatCard title={t('reports.customerDebt')} value={health?.customerDebt ?? 0} color={colors.warning} icon="people" onPress={() => go('/customers')} />
+                {(health?.lowStockCount ?? lowStock.length) > 0 ? (
+                  <View style={styles.statWrap}>
+                    <StatCard
+                      title={t('reports.lowStockCount')}
+                      value={health?.lowStockCount ?? lowStock.length}
+                      currency=""
+                      color={colors.warning}
+                      icon="alert"
+                      onPress={() => go('/stock')}
+                    />
                   </View>
                 ) : null}
-                {showProfit ? (
-                  <View style={[styles.statWrap, { width: statWidth }]}>
-                    <StatCard title={t('reports.supplierDebt')} value={health?.supplierDebt ?? 0} color={colors.danger} icon="business" onPress={() => go('/suppliers')} />
-                  </View>
-                ) : null}
-                <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('reports.lowStockCount')} value={health?.lowStockCount ?? lowStock.length} currency="" color={colors.warning} icon="alert" onPress={() => go('/stock')} />
-                </View>
               </View>
 
               <Text style={styles.sectionTitle}>{t('dashboard.quickActions')}</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.quickRow}
-              >
+              <View style={styles.quickGrid}>
                 <QuickAction icon="cart" label={t('navigation.newSale')} bg={colors.primary} onPress={() => go('/sale')} />
                 <QuickAction icon="cube" label={t('navigation.stockIn')} bg={colors.success} onPress={() => go('/stock-in')} />
                 <QuickAction icon="cash" label={t('navigation.expense')} bg={colors.warning} onPress={() => go('/expense')} />
                 <QuickAction icon="person" label={t('payments.payments')} bg={colors.info} onPress={() => setShowPaymentSheet(true)} />
-                <QuickAction icon="bar-chart" label={t('navigation.reports')} bg={colors.primaryDark} onPress={() => go('/reports')} />
-                <QuickAction icon="lock-closed" label={t('cash.openDay')} bg="#0f766e" onPress={() => go('/closing')} />
-                <QuickAction icon="people" label={t('customers.customers')} bg="#7c3aed" onPress={() => go('/customers')} />
-                <QuickAction icon="storefront" label={t('navigation.stock')} bg="#b45309" onPress={() => go('/stock')} />
-              </ScrollView>
+              </View>
 
               <View style={split ? styles.columns : undefined}>
                 <View style={split ? styles.columnMain : undefined}>
@@ -671,66 +718,38 @@ export default function HomeScreen() {
       <BottomSheet
         visible={showPeriodSheet}
         onClose={() => setShowPeriodSheet(false)}
-        title={t('dashboard.selectPeriod')}
+        title={t('reports.customRange')}
       >
-        {periodOptions
-          .filter((option) => !option.hidden)
-          .map((option) => {
-            const active = period === option.value;
-            return (
-              <TouchableOpacity
-                key={option.value}
-                style={[styles.periodOption, active && styles.periodOptionActive]}
-                onPress={() => {
-                  if (option.value === 'custom') {
-                    setPeriod('custom');
-                    return;
-                  }
-                  setPeriod(option.value);
-                  setShowPeriodSheet(false);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.periodOptionLabel, active && styles.periodOptionLabelActive]}>
-                  {option.label}
-                </Text>
-                {active ? <Ionicons name="checkmark-circle" size={20} color={colors.primary} /> : null}
-              </TouchableOpacity>
-            );
-          })}
-
-        {period === 'custom' ? (
-          <View style={styles.customPeriodBox}>
-            <Text style={styles.customPeriodHint}>{t('reports.dateTimeHint')}</Text>
-            <View style={styles.customPeriodRow}>
-              <View style={styles.customPeriodField}>
-                <Text style={styles.customPeriodLabel}>{t('reports.startDate')}</Text>
-                <TextInput
-                  style={styles.customPeriodInput}
-                  value={startDate}
-                  onChangeText={setStartDate}
-                  placeholder="YYYY-MM-DD"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
-              <View style={styles.customPeriodField}>
-                <Text style={styles.customPeriodLabel}>{t('reports.endDate')}</Text>
-                <TextInput
-                  style={styles.customPeriodInput}
-                  value={endDate}
-                  onChangeText={setEndDate}
-                  placeholder="YYYY-MM-DD"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </View>
+        <View style={styles.customPeriodBox}>
+          <Text style={styles.customPeriodHint}>{t('reports.dateTimeHint')}</Text>
+          <View style={styles.customPeriodRow}>
+            <View style={styles.customPeriodField}>
+              <Text style={styles.customPeriodLabel}>{t('reports.startDate')}</Text>
+              <TextInput
+                style={styles.customPeriodInput}
+                value={startDate}
+                onChangeText={setStartDate}
+                placeholder="YYYY-MM-DD"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
             </View>
-            <TouchableOpacity style={styles.customPeriodApply} onPress={applyCustom} activeOpacity={0.85}>
-              <Text style={styles.customPeriodApplyText}>{t('reports.applyRange')}</Text>
-            </TouchableOpacity>
+            <View style={styles.customPeriodField}>
+              <Text style={styles.customPeriodLabel}>{t('reports.endDate')}</Text>
+              <TextInput
+                style={styles.customPeriodInput}
+                value={endDate}
+                onChangeText={setEndDate}
+                placeholder="YYYY-MM-DD"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
           </View>
-        ) : null}
+          <TouchableOpacity style={styles.customPeriodApply} onPress={applyCustom} activeOpacity={0.85}>
+            <Text style={styles.customPeriodApplyText}>{t('reports.applyRange')}</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.sheetSpacer} />
       </BottomSheet>
     </View>
@@ -839,39 +858,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     marginBottom: spacing.lg,
   },
-  periodDropdown: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.md,
-    ...shadows.card,
-  },
-  periodDropdownCopy: {
-    flex: 1,
-    gap: 2,
-  },
-  periodDropdownLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.muted,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  periodDropdownValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  periodDropdownRange: {
-    fontSize: 12,
-    color: colors.muted,
-  },
   periodOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -944,77 +930,107 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginBottom: spacing.sm,
   },
-  dayBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  dayBannerText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.warningText,
-  },
   hero: {
     backgroundColor: colors.primary,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
     marginBottom: spacing.lg,
+    gap: spacing.md,
     shadowColor: colors.primaryDark,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.25,
     shadowRadius: 16,
     elevation: 6,
   },
-  heroTop: {
+  heroAlert: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: 'rgba(253, 230, 138, 0.15)',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  heroCopy: {
+  heroAlertText: {
     flex: 1,
-    marginRight: spacing.md,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fde68a',
+  },
+  heroSession: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  heroSessionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4ade80',
+  },
+  heroSessionText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
+  },
+  heroSessionAction: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  heroFilters: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingRight: spacing.sm,
+  },
+  heroChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  heroChipActive: {
+    backgroundColor: '#fff',
+    borderColor: '#fff',
+  },
+  heroChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  heroChipTextActive: {
+    color: colors.primary,
+    fontWeight: '800',
+  },
+  heroSales: {
+    gap: 4,
   },
   heroLabel: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 1,
-    color: colors.primarySoft,
-    marginBottom: 4,
+    letterSpacing: 0.8,
+    color: 'rgba(255,255,255,0.7)',
+    textTransform: 'uppercase',
   },
-  heroBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroMeta: {
-    marginTop: spacing.sm,
-  },
-  heroMetaText: {
-    fontSize: 13,
-    color: colors.primarySoft,
-  },
-  heroMetaStrong: {
-    fontWeight: '700',
-    color: colors.white,
+  heroRange: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.65)',
+    marginTop: 2,
   },
   heroEmpty: {
     fontSize: 13,
-    color: colors.primarySoft,
-    marginTop: spacing.sm,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 4,
   },
   deltaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 6,
+    marginTop: 4,
   },
   deltaText: {
     fontSize: 12,
@@ -1028,7 +1044,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     borderRadius: radius.md,
     paddingVertical: 13,
-    marginTop: spacing.lg,
     gap: 6,
     minHeight: 48,
   },
@@ -1037,13 +1052,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.primary,
   },
-  grid: {
+  statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.md,
     marginBottom: spacing.lg,
   },
   statWrap: {
+    width: '47.5%',
     flexGrow: 1,
   },
   columns: {
@@ -1242,14 +1258,15 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginBottom: spacing.md,
   },
-  quickRow: {
+  quickGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
-    paddingRight: spacing.lg,
     marginBottom: spacing.lg,
   },
   quickAction: {
-    width: 88,
+    width: '23%',
+    flexGrow: 1,
     alignItems: 'center',
     backgroundColor: colors.card,
     borderRadius: radius.lg,
@@ -1258,18 +1275,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.xs,
     gap: spacing.sm,
-    minHeight: 96,
+    minHeight: 92,
     justifyContent: 'center',
   },
   quickIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   quickLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: colors.body,
     textAlign: 'center',

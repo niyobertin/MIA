@@ -2,7 +2,7 @@ import { generateUUID } from '@/utils/uuid';
 import { StockMovement, StockMovementType, ReferenceType, UserRole } from '@/types';
 import { productRepository, stockMovementRepository } from '@/repositories/products/products';
 import { queueSync } from '@/services/sync/queue';
-import { assertDayIsOpen } from './guards';
+import { requireOpenSession } from './session';
 import { applyStockDelta } from './stockDelta';
 import { canAdjustStock, canRecordOperationalStock, canReverseStock } from '@/utils/permissions';
 import { getTodayDateString } from '@/utils/formatters';
@@ -24,6 +24,8 @@ export async function recordStockMovement(input: {
   reason?: string | null;
   reversalOf?: string | null;
   businessDate?: string;
+  /** When already known (e.g. parent sale/purchase); otherwise resolved from open session. */
+  sessionId?: string | null;
 }): Promise<StockMovement> {
   if (!Number.isInteger(input.quantity) || input.quantity < 1) {
     throw new Error('INVALID_QUANTITY');
@@ -43,8 +45,10 @@ export async function recordStockMovement(input: {
   if (!product) throw new Error('PRODUCT_NOT_FOUND');
   if (!product.track_inventory) throw new Error('NOT_TRACKED');
 
-  const businessDate = input.businessDate ?? getTodayDateString();
-  await assertDayIsOpen(input.businessId, businessDate);
+  const sessionId =
+    input.sessionId ?? (await requireOpenSession(input.businessId)).id;
+  // Keep calendar date for inventory day reports; membership is session_id.
+  void (input.businessDate ?? getTodayDateString());
 
   const previous = await productRepository.getStockBalance(input.productId, input.businessId);
   const next = applyStockDelta(previous, input.type, input.quantity);
@@ -58,6 +62,7 @@ export async function recordStockMovement(input: {
     id: generateUUID(),
     business_id: input.businessId,
     product_id: input.productId,
+    session_id: sessionId,
     type: input.type,
     quantity: input.quantity,
     unit_cost: input.unitCost,

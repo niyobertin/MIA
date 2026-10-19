@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 12;
+export const DATABASE_VERSION = 13;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  session_id TEXT,
   type TEXT NOT NULL CHECK (type IN ('opening', 'purchase', 'sale', 'return_in', 'return_out', 'adjustment_in', 'adjustment_out', 'damaged')),
   quantity INTEGER NOT NULL,
   unit_cost INTEGER NOT NULL DEFAULT 0,
@@ -119,6 +120,7 @@ CREATE TABLE IF NOT EXISTS purchases (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   supplier_id TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  session_id TEXT,
   reference_number TEXT,
   total_amount INTEGER NOT NULL DEFAULT 0,
   paid_amount INTEGER NOT NULL DEFAULT 0,
@@ -150,6 +152,7 @@ CREATE TABLE IF NOT EXISTS sales (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL,
+  session_id TEXT,
   reference_number TEXT,
   subtotal INTEGER NOT NULL DEFAULT 0,
   discount_amount INTEGER NOT NULL DEFAULT 0,
@@ -187,6 +190,7 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS expenses (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  session_id TEXT,
   category TEXT NOT NULL CHECK (category IN ('transport', 'rent', 'electricity', 'water', 'food', 'salary', 'communication', 'maintenance', 'tax', 'other')),
   amount INTEGER NOT NULL,
   payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'mobile_money', 'bank', 'credit')),
@@ -204,6 +208,7 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  session_id TEXT,
   type TEXT NOT NULL CHECK (type IN ('customer_payment', 'supplier_payment', 'sale_payment', 'purchase_payment', 'expense_payment', 'withdrawal', 'other_income')),
   payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'mobile_money', 'bank', 'credit')),
   amount INTEGER NOT NULL,
@@ -219,11 +224,12 @@ CREATE TABLE IF NOT EXISTS payments (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Daily closings table
+-- Daily closings table (= trading sessions: open when started, closed only explicitly)
 CREATE TABLE IF NOT EXISTS daily_closings (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   business_date TEXT NOT NULL,
+  session_number INTEGER NOT NULL DEFAULT 1,
   opening_cash INTEGER NOT NULL DEFAULT 0,
   cash_sales INTEGER NOT NULL DEFAULT 0,
   customer_cash_payments INTEGER NOT NULL DEFAULT 0,
@@ -318,27 +324,34 @@ CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(bu
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_occurred_at ON stock_movements(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_sync_status ON stock_movements(sync_status);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_session_id ON stock_movements(session_id);
 CREATE INDEX IF NOT EXISTS idx_purchases_business_id ON purchases(business_id);
 CREATE INDEX IF NOT EXISTS idx_purchases_supplier_id ON purchases(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_purchases_purchase_date ON purchases(purchase_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_sync_status ON purchases(sync_status);
+CREATE INDEX IF NOT EXISTS idx_purchases_session_id ON purchases(session_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items(purchase_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_items_product_id ON purchase_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_sales_business_id ON sales(business_id);
 CREATE INDEX IF NOT EXISTS idx_sales_customer_id ON sales(customer_id);
 CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date);
 CREATE INDEX IF NOT EXISTS idx_sales_sync_status ON sales(sync_status);
+CREATE INDEX IF NOT EXISTS idx_sales_session_id ON sales(session_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_business_id ON expenses(business_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_expense_date ON expenses(expense_date);
 CREATE INDEX IF NOT EXISTS idx_expenses_sync_status ON expenses(sync_status);
+CREATE INDEX IF NOT EXISTS idx_expenses_session_id ON expenses(session_id);
 CREATE INDEX IF NOT EXISTS idx_payments_business_id ON payments(business_id);
 CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON payments(payment_date);
 CREATE INDEX IF NOT EXISTS idx_payments_sync_status ON payments(sync_status);
 CREATE INDEX IF NOT EXISTS idx_payments_reference ON payments(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_payments_session_id ON payments(session_id);
 CREATE INDEX IF NOT EXISTS idx_daily_closings_business_id ON daily_closings(business_id);
 CREATE INDEX IF NOT EXISTS idx_daily_closings_business_date ON daily_closings(business_date);
+CREATE INDEX IF NOT EXISTS idx_daily_closings_status ON daily_closings(business_id, status);
+CREATE INDEX IF NOT EXISTS idx_daily_closings_session_number ON daily_closings(business_id, session_number);
 CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_business_date ON daily_stock_lines(business_id, business_date);
 CREATE INDEX IF NOT EXISTS idx_daily_stock_lines_product ON daily_stock_lines(product_id);
 CREATE INDEX IF NOT EXISTS idx_sync_records_business_id ON sync_records(business_id);

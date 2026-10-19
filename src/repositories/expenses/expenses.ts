@@ -5,7 +5,7 @@ import { getDatabase } from '../../db/database';
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected tableName = 'expenses';
   protected columns = [
-    'id', 'business_id', 'category', 'amount', 'payment_method',
+    'id', 'business_id', 'session_id', 'category', 'amount', 'payment_method',
     'description', 'expense_date', 'reference_number', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at'
   ];
 
@@ -24,6 +24,15 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       [businessId, ...period.params]
     );
     return rows.map(row => this.mapRow(row));
+  }
+
+  async findBySession(businessId: string, sessionId: string): Promise<Expense[]> {
+    return this.findAll(businessId, {
+      where: { session_id: sessionId },
+      limit: 10000,
+      orderBy: 'created_at',
+      orderDirection: 'DESC',
+    });
   }
 
   async getTotalExpenses(businessId: string, startDate: string, endDate: string): Promise<number> {
@@ -46,6 +55,28 @@ export class ExpenseRepository extends BaseRepository<Expense> {
        FROM ${this.tableName}
        WHERE business_id = ? AND expense_date BETWEEN ? AND ? AND payment_method = 'cash'`,
       [businessId, startDate, endDate]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getTotalExpensesForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ?`,
+      [businessId, sessionId]
+    );
+    return row?.total ?? 0;
+  }
+
+  async getCashExpensesForSession(businessId: string, sessionId: string): Promise<number> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM ${this.tableName}
+       WHERE business_id = ? AND session_id = ? AND payment_method = 'cash'`,
+      [businessId, sessionId]
     );
     return row?.total ?? 0;
   }

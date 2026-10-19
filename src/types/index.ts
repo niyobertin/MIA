@@ -81,6 +81,7 @@ export interface StockMovement {
   id: string;
   business_id: string;
   product_id: string;
+  session_id: string | null;
   type: StockMovementType;
   quantity: number;
   unit_cost: number;
@@ -120,6 +121,7 @@ export interface Purchase {
   id: string;
   business_id: string;
   supplier_id: string;
+  session_id: string | null;
   reference_number: string | null;
   total_amount: number;
   paid_amount: number;
@@ -151,6 +153,7 @@ export interface Sale {
   id: string;
   business_id: string;
   customer_id: string | null;
+  session_id: string | null;
   reference_number: string | null;
   subtotal: number;
   discount_amount: number;
@@ -189,6 +192,7 @@ export interface SaleItem {
 export interface Expense {
   id: string;
   business_id: string;
+  session_id: string | null;
   category: ExpenseCategory;
   amount: number;
   payment_method: PaymentMethod;
@@ -217,6 +221,7 @@ export type ExpenseCategory =
 export interface Payment {
   id: string;
   business_id: string;
+  session_id: string | null;
   type: PaymentType;
   payment_method: PaymentMethod;
   amount: number;
@@ -256,6 +261,8 @@ export interface DailyClosing {
   id: string;
   business_id: string;
   business_date: string;
+  /** Human-friendly per-business sequence (Session #1, #2, …). */
+  session_number: number;
   opening_cash: number;
   cash_sales: number;
   customer_cash_payments: number;

@@ -1,7 +1,7 @@
 import { saleRepository } from '@/repositories/sales/sales';
 import { stockMovementRepository } from '@/repositories/products/products';
 import { queueSync } from '@/services/sync/queue';
-import { assertDayIsOpen } from './guards';
+import { assertSessionMutable } from './session';
 import { settleCustomerAccount } from './settle';
 import { recordStockMovement } from './recordStockMovement';
 import { audit } from './audit';
@@ -19,7 +19,8 @@ export async function voidSale(input: {
   if (!sale) throw new Error('SALE_NOT_FOUND');
   if (sale.voided) throw new Error('ALREADY_VOID');
 
-  await assertDayIsOpen(input.businessId, sale.sale_date);
+  // Closed sessions are history-locked — post a correction in the open session instead.
+  await assertSessionMutable(input.businessId, sale.session_id);
 
   const recorded = await stockMovementRepository.findByReference('sale', sale.id, input.businessId);
   const now = new Date().toISOString();

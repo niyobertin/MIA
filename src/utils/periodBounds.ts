@@ -63,6 +63,23 @@ export function buildPeriodWhere(
   };
 }
 
+/** Prefer session_id when set; otherwise fall back to calendar period. */
+export function buildSessionOrPeriodWhere(
+  sessionColumn: string,
+  dateColumn: string,
+  dateTimeColumn: string,
+  opts: { sessionId?: string | null; start?: string; end?: string }
+): { clause: string; params: string[] } {
+  if (opts.sessionId) {
+    return { clause: `${sessionColumn} = ?`, params: [opts.sessionId] };
+  }
+  if (!opts.start || !opts.end) {
+    throw new Error('PERIOD_REQUIRED');
+  }
+  const period = buildPeriodWhere(dateColumn, dateTimeColumn, opts.start, opts.end);
+  return { clause: period.clause, params: [...period.params] };
+}
+
 export function combineDateAndTime(date: string, time: string, fallbackTime: string): string {
   const d = date.trim().slice(0, 10);
   const t = (time.trim() || fallbackTime).slice(0, 5);

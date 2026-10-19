@@ -51,19 +51,19 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'active', 'created_at', 'updated_at',
   ]),
   stock_movements: new Set([
-    'id', 'business_id', 'product_id', 'type', 'quantity', 'unit_cost', 'reference_type', 'reference_id',
+    'id', 'business_id', 'product_id', 'session_id', 'type', 'quantity', 'unit_cost', 'reference_type', 'reference_id',
     'occurred_at', 'created_by', 'previous_quantity', 'new_quantity', 'reason', 'reversal_of',
     'device_id', 'sync_status', 'created_at', 'updated_at',
   ]),
   purchases: new Set([
-    'id', 'business_id', 'supplier_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
+    'id', 'business_id', 'supplier_id', 'session_id', 'reference_number', 'total_amount', 'paid_amount', 'status',
     'purchase_date', 'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ]),
   purchase_items: new Set([
     'id', 'business_id', 'purchase_id', 'product_id', 'quantity', 'unit_cost', 'total_cost', 'created_at', 'updated_at',
   ]),
   sales: new Set([
-    'id', 'business_id', 'customer_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
+    'id', 'business_id', 'customer_id', 'session_id', 'reference_number', 'subtotal', 'discount_amount', 'tax_amount',
     'total_amount', 'paid_amount', 'voided', 'payment_status', 'sale_date', 'notes', 'created_by', 'device_id',
     'sync_status', 'created_at', 'updated_at',
   ]),
@@ -72,15 +72,15 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'discount_amount', 'tax_amount', 'total_amount', 'created_at', 'updated_at',
   ]),
   expenses: new Set([
-    'id', 'business_id', 'category', 'amount', 'payment_method', 'description', 'expense_date',
+    'id', 'business_id', 'session_id', 'category', 'amount', 'payment_method', 'description', 'expense_date',
     'reference_number', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ]),
   payments: new Set([
-    'id', 'business_id', 'type', 'payment_method', 'amount', 'reference_type', 'reference_id',
+    'id', 'business_id', 'session_id', 'type', 'payment_method', 'amount', 'reference_type', 'reference_id',
     'party_id', 'payment_date', 'notes', 'created_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ]),
   daily_closings: new Set([
-    'id', 'business_id', 'business_date', 'opening_cash', 'cash_sales', 'customer_cash_payments',
+    'id', 'business_id', 'business_date', 'session_number', 'opening_cash', 'cash_sales', 'customer_cash_payments',
     'other_cash_income', 'cash_purchases', 'cash_expenses', 'supplier_cash_payments', 'withdrawals',
     'expected_cash', 'actual_cash', 'cash_variance', 'total_sales', 'cogs', 'gross_profit', 'expenses',
     'net_profit', 'opening_stock_qty', 'opening_stock_value', 'closing_stock_qty', 'closing_stock_value',
@@ -505,6 +505,57 @@ export class SyncEngine {
       const { applyCloudPull } = await import('@/services/auth/hydrateSession');
       await syncRepository.delete(recordId, businessId);
       await applyCloudPull({ user: null, business: null, tables: { [tableName]: [data.data] } });
+      await refreshPendingCountLocal(businessId);
+      return { success: true, synced: 1, failed: 0, errors: [] };
+    } catch (error) {
+      return { success: false, synced: 0, failed: 1, errors: [formatCloudError(error)] };
+    }
+  }
+
+  /**
+   * Resolve concurrent open-session conflict: abandon the local open that the
+   * server rejected, adopt the server open session. Offline sales keep their
+   * original session_id (no automatic merge of two opens).
+   */
+  async keepServerOpenSession(
+    localSessionId: string,
+    businessId: string,
+    errorMessage?: string | null
+  ): Promise<SyncResult> {
+    try {
+      const { parseConflictSessionId } = await import('./conflicts');
+      const { dailyClosingRepository } = await import('@/repositories/reports/dailyClosing');
+      const { audit } = await import('@/services/books/audit');
+      const { applyCloudPull, pullCloudData } = await import('@/services/auth/hydrateSession');
+
+      const conflictId = parseConflictSessionId(errorMessage);
+      await syncRepository.delete(localSessionId, businessId);
+      await dailyClosingRepository.abandonLocalOpen(localSessionId, businessId);
+      await audit({
+        businessId,
+        action: 'session.abandon_local',
+        entity: 'daily_closing',
+        entityId: localSessionId,
+        before: { local_session_id: localSessionId },
+        after: { conflict_session_id: conflictId },
+        reason: 'Kept server open trading session after offline conflict',
+      });
+
+      if (conflictId) {
+        const data = await apiFetch<{ data: Record<string, unknown> }>(
+          `/sync/daily_closings/${encodeURIComponent(conflictId)}`
+        );
+        if (data?.data) {
+          await applyCloudPull({
+            user: null,
+            business: null,
+            tables: { daily_closings: [data.data] },
+          });
+        }
+      } else {
+        await pullCloudData();
+      }
+
       await refreshPendingCountLocal(businessId);
       return { success: true, synced: 1, failed: 0, errors: [] };
     } catch (error) {

@@ -76,27 +76,39 @@ export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false
 
   if (compact) {
     return (
-      <View style={styles.compactContainer}>
-        <Animated.View
-          style={[
-            styles.compactIcon,
-            { backgroundColor: config.color },
-          ]}
-        >
-          {config.animate ? (
-            <Animated.View
-              style={[
-                styles.spinner,
-                { transform: [{ rotate: spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] },
-              ]}
-            >
-              <Ionicons name={config.icon} size={14} color="#fff" />
-            </Animated.View>
-          ) : (
-            <Ionicons name={config.icon} size={14} color="#fff" />
-          )}
-        </Animated.View>
-        <Text style={[styles.compactLabel, { color: config.color }]}>{config.label}</Text>
+      <View
+        style={[styles.compactIcon, { backgroundColor: config.color }]}
+        accessibilityLabel={config.label}
+        accessibilityRole="image"
+      >
+        {config.animate ? (
+          <Animated.View
+            style={[
+              styles.spinner,
+              {
+                transform: [
+                  {
+                    rotate: spinAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '360deg'],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Ionicons name={config.icon as any} size={16} color="#fff" />
+          </Animated.View>
+        ) : (
+          <Ionicons name={config.icon as any} size={16} color="#fff" />
+        )}
+        {pendingCount > 0 && syncStatus !== 'syncing' && syncStatus !== 'synced' ? (
+          <View style={styles.compactBadge}>
+            <Text style={styles.compactBadgeText}>
+              {pendingCount > 9 ? '9+' : pendingCount}
+            </Text>
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -138,11 +150,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  compactContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   iconContainer: {
     width: 36,
     height: 36,
@@ -151,22 +158,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   compactIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
   spinner: {
     width: 20,
     height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   label: {
     fontSize: 13,
-    fontWeight: '500',
-  },
-  compactLabel: {
-    fontSize: 12,
     fontWeight: '500',
   },
   badge: {
@@ -181,6 +186,25 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: '700',
+    color: '#fff',
+  },
+  compactBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  compactBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
     color: '#fff',
   },
 });

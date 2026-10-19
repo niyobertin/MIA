@@ -51,6 +51,7 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
     await migrateDailyStockLinesUnique(database);
     await migrateAuditAndCountedQty(database);
     await migratePreferredSupplier(database);
+    await migrateSessionIds(database);
   }
 }
 
@@ -96,6 +97,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion < 12) {
       await migratePreferredSupplier(database);
+    }
+    if (fromVersion < 13) {
+      await migrateSessionIds(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -511,6 +515,82 @@ async function migratePreferredSupplier(database: SQLite.SQLiteDatabase): Promis
   }
   await database.execAsync(
     `CREATE INDEX IF NOT EXISTS idx_products_preferred_supplier ON products(preferred_supplier_id)`
+  );
+}
+
+/**
+ * v13 — Bind every transaction to a trading session (daily_closings.id).
+ * Calendar dates stay on sale_date/purchase_date/…; session_id is the open→close period.
+ */
+async function migrateSessionIds(database: SQLite.SQLiteDatabase): Promise<void> {
+  const closingCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(daily_closings)');
+  if (closingCols.length > 0 && !closingCols.some((c) => c.name === 'session_number')) {
+    await database.execAsync(
+      `ALTER TABLE daily_closings ADD COLUMN session_number INTEGER NOT NULL DEFAULT 1`
+    );
+    // Number sessions per business by opened_at order.
+    const businesses = await database.getAllAsync<{ business_id: string }>(
+      `SELECT DISTINCT business_id FROM daily_closings`
+    );
+    for (const b of businesses) {
+      const rows = await database.getAllAsync<{ id: string }>(
+        `SELECT id FROM daily_closings
+         WHERE business_id = ?
+         ORDER BY COALESCE(opened_at, created_at) ASC`,
+        [b.business_id]
+      );
+      let n = 1;
+      for (const row of rows) {
+        await database.runAsync(
+          `UPDATE daily_closings SET session_number = ? WHERE id = ?`,
+          [n++, row.id]
+        );
+      }
+    }
+  }
+
+  const tables = ['sales', 'purchases', 'expenses', 'payments', 'stock_movements'] as const;
+  for (const table of tables) {
+    const exists = await database.getFirstAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+      [table]
+    );
+    if (!exists) continue;
+    const cols = await database.getAllAsync<ColumnInfo>(`PRAGMA table_info(${table})`);
+    if (!cols.some((c) => c.name === 'session_id')) {
+      await database.execAsync(`ALTER TABLE ${table} ADD COLUMN session_id TEXT`);
+    }
+    await database.execAsync(
+      `CREATE INDEX IF NOT EXISTS idx_${table}_session_id ON ${table}(session_id)`
+    );
+  }
+
+  // Backfill: attach each row to the session whose time window contains created_at/occurred_at.
+  // Prefer the session open at the event time; fall back to business_date match.
+  for (const table of tables) {
+    const timeCol = table === 'stock_movements' ? 'occurred_at' : 'created_at';
+    await database.execAsync(`
+      UPDATE ${table}
+      SET session_id = (
+        SELECT c.id FROM daily_closings c
+        WHERE c.business_id = ${table}.business_id
+          AND COALESCE(c.opened_at, c.created_at) <= COALESCE(${table}.${timeCol}, ${table}.created_at)
+          AND (
+            c.closed_at IS NULL
+            OR c.closed_at >= COALESCE(${table}.${timeCol}, ${table}.created_at)
+          )
+        ORDER BY COALESCE(c.opened_at, c.created_at) DESC
+        LIMIT 1
+      )
+      WHERE session_id IS NULL
+    `);
+  }
+
+  await database.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_daily_closings_status ON daily_closings(business_id, status)`
+  );
+  await database.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_daily_closings_session_number ON daily_closings(business_id, session_number)`
   );
 }
 

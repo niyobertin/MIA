@@ -14,6 +14,7 @@ import { financialService } from '@/services/financial';
 import { queueSync } from '@/services/sync/queue';
 import { getDatabase } from '@/db/database';
 import { assertDayIsOpen, assertSaleAllowed } from '@/services/books/guards';
+import { requireOpenSession, nextSessionNumber } from '@/services/books/session';
 import { calculateExpectedCash } from '@/services/financial/calculations';
 import { settleCustomerAccount, settleSupplierAccount } from '@/services/books/settle';
 import { voidSale } from '@/services/books/voidSale';
@@ -90,68 +91,96 @@ export function useCustomers() {
   });
 }
 
-export function usePurchases(dateRange?: { start: string; end: string }) {
+export function usePurchases(
+  dateRange?: { start: string; end: string; sessionId?: string | null } | null
+) {
   const businessId = getBusinessId();
   return useQuery({
     queryKey: ['purchases', businessId, dateRange ?? 'all'],
-    queryFn: () =>
-      dateRange
-        ? purchaseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-        : purchaseRepository.findAll(businessId, {
-            limit: 10000,
-            orderBy: 'created_at',
-            orderDirection: 'DESC',
-          }),
-    enabled: !!businessId,
+    queryFn: () => {
+      if (!dateRange) {
+        return purchaseRepository.findAll(businessId, {
+          limit: 10000,
+          orderBy: 'created_at',
+          orderDirection: 'DESC',
+        });
+      }
+      if (dateRange.sessionId) {
+        return purchaseRepository.findBySession(businessId, dateRange.sessionId);
+      }
+      return purchaseRepository.findByDateRange(businessId, dateRange.start, dateRange.end);
+    },
+    enabled: !!businessId && dateRange !== null,
   });
 }
 
-export function useSales(dateRange?: { start: string; end: string } | null) {
+export function useSales(
+  dateRange?: { start: string; end: string; sessionId?: string | null } | null
+) {
   const businessId = getBusinessId();
   return useQuery({
     queryKey: ['sales', businessId, dateRange ?? 'all'],
-    queryFn: () =>
-      dateRange
-        ? saleRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-        : saleRepository.findAll(businessId, {
-            limit: 10000,
-            orderBy: 'created_at',
-            orderDirection: 'DESC',
-          }),
+    queryFn: () => {
+      if (!dateRange) {
+        return saleRepository.findAll(businessId, {
+          limit: 10000,
+          orderBy: 'created_at',
+          orderDirection: 'DESC',
+        });
+      }
+      if (dateRange.sessionId) {
+        return saleRepository.findBySession(businessId, dateRange.sessionId);
+      }
+      return saleRepository.findByDateRange(businessId, dateRange.start, dateRange.end);
+    },
     // null = no open day / no range yet (skip). undefined = load all.
     enabled: !!businessId && dateRange !== null,
   });
 }
 
-export function useExpenses(dateRange?: { start: string; end: string }) {
+export function useExpenses(
+  dateRange?: { start: string; end: string; sessionId?: string | null } | null
+) {
   const businessId = getBusinessId();
   return useQuery({
     queryKey: ['expenses', businessId, dateRange ?? 'all'],
-    queryFn: () =>
-      dateRange
-        ? expenseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-        : expenseRepository.findAll(businessId, {
-            limit: 10000,
-            orderBy: 'created_at',
-            orderDirection: 'DESC',
-          }),
-    enabled: !!businessId,
+    queryFn: () => {
+      if (!dateRange) {
+        return expenseRepository.findAll(businessId, {
+          limit: 10000,
+          orderBy: 'created_at',
+          orderDirection: 'DESC',
+        });
+      }
+      if (dateRange.sessionId) {
+        return expenseRepository.findBySession(businessId, dateRange.sessionId);
+      }
+      return expenseRepository.findByDateRange(businessId, dateRange.start, dateRange.end);
+    },
+    enabled: !!businessId && dateRange !== null,
   });
 }
 
-export function usePayments(dateRange?: { start: string; end: string }) {
+export function usePayments(
+  dateRange?: { start: string; end: string; sessionId?: string | null } | null
+) {
   const businessId = getBusinessId();
   return useQuery({
     queryKey: ['payments', businessId, dateRange ?? 'all'],
-    queryFn: () =>
-      dateRange
-        ? paymentRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-        : paymentRepository.findAll(businessId, {
-            limit: 10000,
-            orderBy: 'created_at',
-            orderDirection: 'DESC',
-          }),
-    enabled: !!businessId,
+    queryFn: () => {
+      if (!dateRange) {
+        return paymentRepository.findAll(businessId, {
+          limit: 10000,
+          orderBy: 'created_at',
+          orderDirection: 'DESC',
+        });
+      }
+      if (dateRange.sessionId) {
+        return paymentRepository.findBySession(businessId, dateRange.sessionId);
+      }
+      return paymentRepository.findByDateRange(businessId, dateRange.start, dateRange.end);
+    },
+    enabled: !!businessId && dateRange !== null,
   });
 }
 
@@ -189,10 +218,13 @@ export function useDashboardStats() {
       // Daily dashboard numbers follow the current open business day only —
       // never a calendar "today" fallback when no day is open.
       if (!openDay) {
+        const calendarToday = await financialService.calculateDailyFinancials(businessId, today, today);
         return {
           hasOpenDay: false,
           sessionStart: null as string | null,
           sessionEnd: null as string | null,
+          sessionSales: 0,
+          calendarTodaySales: calendarToday.totalSales,
           todaySales: 0,
           todayGrossProfit: 0,
           todayNetProfit: 0,
@@ -208,37 +240,46 @@ export function useDashboardStats() {
 
       const sessionStart = (openDay.business_date ?? today).slice(0, 10);
       const sessionEnd = today;
-      const [financials, itemsSold] = await Promise.all([
-        financialService.calculateDailyFinancials(businessId, sessionStart, sessionEnd),
-        financialService.getTotalItemsSold(businessId, sessionStart, sessionEnd),
+      const [sessionFinancials, calendarToday, itemsSold] = await Promise.all([
+        financialService.calculateSessionFinancials(businessId, openDay.id),
+        financialService.calculateDailyFinancials(businessId, today, today),
+        financialService.getTotalItemsSoldForSession(businessId, openDay.id),
       ]);
       const previousDaySales = previousClosed?.total_sales ?? 0;
 
       return {
         hasOpenDay: true,
+        sessionId: openDay.id,
+        sessionNumber: openDay.session_number ?? 1,
+        sessionOpenedAt: openDay.opened_at,
         sessionStart,
         sessionEnd,
-        todaySales: financials.totalSales,
-        todayGrossProfit: financials.grossProfit,
-        todayNetProfit: financials.netProfit,
-        todayExpenses: financials.expenses,
+        /** Current trading session totals (may span midnight). */
+        sessionSales: sessionFinancials.totalSales,
+        /** Hero "open day" figure — always session, never calendar alone. */
+        todaySales: sessionFinancials.totalSales,
+        /** Local calendar-date sales only (device timezone). */
+        calendarTodaySales: calendarToday.totalSales,
+        todayGrossProfit: sessionFinancials.grossProfit,
+        todayNetProfit: sessionFinancials.netProfit,
+        todayExpenses: sessionFinancials.expenses,
         itemsSold,
         stockValue,
-        cashSales: financials.cashSales,
+        cashSales: sessionFinancials.cashSales,
         previousDaySales,
         salesDelta:
           previousDaySales > 0
-            ? (financials.totalSales - previousDaySales) / previousDaySales
+            ? (sessionFinancials.totalSales - previousDaySales) / previousDaySales
             : null,
         cashBalance: calculateExpectedCash(
           openDay.opening_cash ?? 0,
-          financials.cashSales,
-          financials.customerCashPayments,
-          financials.otherCashIncome,
-          financials.cashPurchases,
-          financials.cashExpenses,
-          financials.supplierCashPayments,
-          financials.withdrawals
+          sessionFinancials.cashSales,
+          sessionFinancials.customerCashPayments,
+          sessionFinancials.otherCashIncome,
+          sessionFinancials.cashPurchases,
+          sessionFinancials.cashExpenses,
+          sessionFinancials.supplierCashPayments,
+          sessionFinancials.withdrawals
         ),
       };
     },
@@ -423,6 +464,8 @@ export function useStockSnapshot() {
 export interface PeriodRange {
   start: string;
   end: string;
+  /** When set, books/sales query by trading session, not calendar bounds. */
+  sessionId?: string | null;
 }
 
 /**
@@ -432,8 +475,19 @@ export interface PeriodRange {
 export function usePeriodBooks(range: PeriodRange | null, openingCash = 0) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['periodBooks', businessId, range?.start, range?.end, openingCash],
-    queryFn: () => financialService.buildPeriodBooks(businessId, range!.start, range!.end, { openingCash }),
+    queryKey: [
+      'periodBooks',
+      businessId,
+      range?.start,
+      range?.end,
+      range?.sessionId ?? null,
+      openingCash,
+    ],
+    queryFn: () =>
+      financialService.buildPeriodBooks(businessId, range!.start, range!.end, {
+        openingCash,
+        sessionId: range?.sessionId ?? null,
+      }),
     enabled: !!businessId && !!range,
   });
 }
@@ -469,8 +523,18 @@ export function usePeriodStats(range: PeriodRange | null) {
 export function useTopProducts(range: PeriodRange | null, limit = 5) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['topProducts', businessId, range?.start, range?.end, limit],
-    queryFn: () => financialService.getTopProducts(businessId, range!.start, range!.end, limit),
+    queryKey: [
+      'topProducts',
+      businessId,
+      range?.start,
+      range?.end,
+      range?.sessionId ?? null,
+      limit,
+    ],
+    queryFn: () =>
+      financialService.getTopProducts(businessId, range!.start, range!.end, limit, {
+        sessionId: range?.sessionId ?? null,
+      }),
     enabled: !!businessId && !!range,
   });
 }
@@ -922,7 +986,7 @@ export function useCreateSale() {
       let sale: Sale | null = null;
       await db.withTransactionAsync(async () => {
         const today = getTodayDateString();
-        await assertDayIsOpen(bid, today);
+        const session = await requireOpenSession(bid);
         const totals = await financialService.calculateSaleTotals(
           data.items.map(item => ({
             product_id: item.productId,
@@ -944,6 +1008,7 @@ export function useCreateSale() {
           id: saleId,
           business_id: bid,
           customer_id: data.customerId,
+          session_id: session.id,
           reference_number: `SALE-${Date.now().toString(36).toUpperCase()}`,
           subtotal: totals.subtotal,
           discount_amount: totals.discountAmount,
@@ -997,6 +1062,7 @@ export function useCreateSale() {
           const payment = await paymentRepository.create({
             id: generateUUID(),
             business_id: bid,
+            session_id: session.id,
             type: 'sale_payment',
             payment_method: data.paymentMethod,
             amount: totals.totalAmount,
@@ -1064,7 +1130,7 @@ export function useCreatePurchase() {
       let purchase: Purchase | null = null;
       await db.withTransactionAsync(async () => {
         const today = getTodayDateString();
-        await assertDayIsOpen(bid, today);
+        const session = await requireOpenSession(bid);
         const totals = await financialService.calculatePurchaseTotals(
           data.items.map(item => ({
             product_id: item.productId,
@@ -1079,6 +1145,7 @@ export function useCreatePurchase() {
           id: purchaseId,
           business_id: bid,
           supplier_id: data.supplierId,
+          session_id: session.id,
           reference_number: data.referenceNumber ?? `PUR-${Date.now().toString(36).toUpperCase()}`,
           total_amount: totals.totalAmount,
           paid_amount: data.paymentMethod === 'credit' ? 0 : totals.totalAmount,
@@ -1132,6 +1199,7 @@ export function useCreatePurchase() {
           const payment = await paymentRepository.create({
             id: generateUUID(),
             business_id: bid,
+            session_id: session.id,
             type: 'purchase_payment',
             payment_method: data.paymentMethod,
             amount: totals.totalAmount,
@@ -1190,13 +1258,14 @@ export function useCreateExpense() {
     }) => {
       const { businessId: bid, userId, deviceId } = requireAuthContext();
       if (!Number.isInteger(data.amount) || data.amount < 1) throw new Error('INVALID_PRICE');
-      await assertDayIsOpen(bid, data.expenseDate);
+      const session = await requireOpenSession(bid);
       const db = await getDatabase();
       let expense: Expense | null = null;
       await db.withTransactionAsync(async () => {
         const created = await expenseRepository.create({
           id: generateUUID(),
           business_id: bid,
+          session_id: session.id,
           category: data.category,
           amount: data.amount,
           payment_method: data.paymentMethod,
@@ -1211,6 +1280,7 @@ export function useCreateExpense() {
         const payment = await paymentRepository.create({
           id: generateUUID(),
           business_id: bid,
+          session_id: session.id,
           type: 'expense_payment',
           payment_method: data.paymentMethod,
           amount: data.amount,
@@ -1361,7 +1431,7 @@ export function useCreatePayment() {
     }) => {
       const { businessId: bid } = requireAuthContext();
       if (!Number.isInteger(data.amount) || data.amount < 1) throw new Error('INVALID_PRICE');
-      await assertDayIsOpen(bid, data.paymentDate);
+      const session = await requireOpenSession(bid);
       if (data.type === 'customer_payment') {
         const { assertCustomerPaymentAllowed } = await import('@/services/books/guards');
         await assertCustomerPaymentAllowed(bid, data.partyId, data.amount, data.paymentDate);
@@ -1376,6 +1446,7 @@ export function useCreatePayment() {
       const created = await paymentRepository.create({
         id: generateUUID(),
         business_id: bid,
+        session_id: session.id,
         type: data.type,
         payment_method: data.paymentMethod,
         amount: data.amount,
@@ -1434,16 +1505,16 @@ export function useStartDay() {
   return useMutation({
     mutationFn: async (data: { businessDate: string; openingCash: number; notes?: string }) => {
       const { userId } = requireAuthContext();
-      const open = await dailyClosingRepository.findOpenDay(businessId);
-      if (open) {
-        throw new Error('DAY_ALREADY_OPEN');
-      }
+      const { assertSingleOpenSession } = await import('@/services/books/session');
+      await assertSingleOpenSession(businessId);
 
       const snapshot = await productRepository.getStockSnapshot(businessId);
+      const sessionNumber = await nextSessionNumber(businessId);
       const closing = await dailyClosingRepository.create({
         id: generateUUID(),
         business_id: businessId,
         business_date: data.businessDate,
+        session_number: sessionNumber,
         opening_cash: data.openingCash,
         cash_sales: 0,
         customer_cash_payments: 0,
@@ -1532,19 +1603,15 @@ export function useCloseDay() {
       if (!existing) throw new Error('DAY_NOT_OPEN');
       if (existing.status === 'closed') throw new Error('DAY_ALREADY_CLOSED');
 
-      const startDate = existing.business_date.slice(0, 10);
-      const endDate = today;
-      const reconciliation = await financialService.calculateCashReconciliation(
+      const reconciliation = await financialService.calculateCashReconciliationForSession(
         businessId,
-        startDate,
+        existing.id,
         data.openingCash,
-        data.actualCash,
-        endDate
+        data.actualCash
       );
-      const financials = await financialService.calculateDailyFinancials(
+      const financials = await financialService.calculateSessionFinancials(
         businessId,
-        startDate,
-        endDate
+        existing.id
       );
       const snapshot = await productRepository.getStockSnapshot(businessId);
       const businessDate = existing.business_date.slice(0, 10);
@@ -1725,6 +1792,43 @@ export function useVoidPurchase() {
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
       queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+    },
+  });
+}
+
+export function usePostHistoryCorrection() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+
+  return useMutation({
+    mutationFn: async (data: {
+      kind: 'cash_in' | 'cash_out' | 'stock_in' | 'stock_out' | 'stock_damage';
+      reason: string;
+      amount?: number;
+      productId?: string;
+      quantity?: number;
+      originalEntity?: string | null;
+      originalEntityId?: string | null;
+    }) => {
+      const { businessId: bid, userId, deviceId } = requireAuthContext();
+      const { postHistoryCorrection } = await import('@/services/books/historyCorrection');
+      return postHistoryCorrection({
+        businessId: bid,
+        userId,
+        deviceId,
+        role: getRole(),
+        ...data,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['periodBooks', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['stockMovements', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['recentAudit', businessId] });
     },
   });
 }
