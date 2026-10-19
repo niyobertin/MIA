@@ -17,10 +17,15 @@ cp .env.example .env
 createdb mia
 
 npm install
-npm run db:init   # TypeORM synchronize schema
-npm run db:seed   # demo shop + users + products
+npm run db:migrate   # TypeORM synchronize schema (same as db:init)
+npm run db:seed      # demo shop + users + products
 npm run dev
 ```
+
+**Schema sync is automatic:**
+- `npm start` runs `db:migrate` first (`prestart`), then boots the API
+- API boot also synchronizes entities → Postgres unless `TYPEORM_SYNC=false`
+- On push to `main` (when `backend/**` changes), GitHub Action `.github/workflows/migrate-backend.yml` runs migrate if secret `DATABASE_URL` is set
 
 API: `http://localhost:4000`  
 On a phone (same Wi‑Fi): `http://YOUR_LAN_IP:4000`

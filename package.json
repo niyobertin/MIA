@@ -18,6 +18,7 @@
     "build:apk:local": "eas build --platform android --profile preview --local",
     "backend:dev": "npm --prefix backend run dev",
     "backend:init-db": "npm --prefix backend run db:init",
+    "backend:migrate": "npm --prefix backend run db:migrate",
     "backend:seed": "npm --prefix backend run db:seed"
   },
   "dependencies": {

@@ -9,6 +9,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "db:init": "tsx src/scripts/initDb.ts",
+    "db:migrate": "tsx src/scripts/initDb.ts",
+    "prestart": "npm run db:migrate",
     "db:seed": "tsx src/scripts/seed.ts",
     "seed": "tsx src/scripts/seed.ts",
     "backend:seed": "tsx src/scripts/seed.ts",

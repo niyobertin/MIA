@@ -9,8 +9,14 @@ import { syncRouter } from './routes/sync';
 dotenv.config();
 
 async function main() {
+  // Schema sync on every boot (entities → Postgres). Set TYPEORM_SYNC=false to skip.
   const syncOnBoot = process.env.TYPEORM_SYNC !== 'false';
   await initDatabase({ synchronize: syncOnBoot });
+  if (syncOnBoot) {
+    console.log('PostgreSQL schema synchronized (TypeORM).');
+  } else {
+    console.log('TYPEORM_SYNC=false — skipped schema sync. Run npm run db:migrate after deploy.');
+  }
 
   const app = express();
   const PORT = Number(process.env.PORT ?? 4000);
@@ -20,7 +26,13 @@ async function main() {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'mia-backend', orm: 'typeorm', db: 'postgres' });
+    res.json({
+      ok: true,
+      service: 'mia-backend',
+      orm: 'typeorm',
+      db: 'postgres',
+      schemaSync: syncOnBoot,
+    });
   });
 
   app.use('/auth', authRouter);
