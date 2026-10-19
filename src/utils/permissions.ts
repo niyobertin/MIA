@@ -8,6 +8,11 @@ export function canCloseDay(role?: UserRole | null): boolean {
   return role === 'OWNER' || role === 'MANAGER';
 }
 
+/** Issue / pay / return waiter tabs (same gate as close day). */
+export function canManageWaiterTabs(role?: UserRole | null): boolean {
+  return canCloseDay(role);
+}
+
 export function canManageUsers(role?: UserRole | null): boolean {
   return role === 'OWNER';
 }

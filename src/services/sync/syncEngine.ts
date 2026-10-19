@@ -28,6 +28,8 @@ const SYNC_ORDER = [
   'stock_movements',
   'daily_closings',
   'daily_stock_lines',
+  'waiter_tabs',
+  'waiter_tab_items',
   'audit_logs',
 ];
 
@@ -48,7 +50,8 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
   ]),
   suppliers: new Set(['id', 'business_id', 'name', 'phone', 'email', 'address', 'active', 'created_at', 'updated_at']),
   customers: new Set([
-    'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'active', 'created_at', 'updated_at',
+    'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'linked_user_id',
+    'active', 'created_at', 'updated_at',
   ]),
   stock_movements: new Set([
     'id', 'business_id', 'product_id', 'session_id', 'type', 'quantity', 'unit_cost', 'reference_type', 'reference_id',
@@ -90,6 +93,15 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'id', 'business_id', 'daily_closing_id', 'business_date', 'product_id',
     'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty',
     'created_at', 'updated_at',
+  ]),
+  waiter_tabs: new Set([
+    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'sale_id',
+    'status', 'paid_amount', 'notes', 'issued_by', 'device_id', 'sync_status',
+    'created_at', 'updated_at',
+  ]),
+  waiter_tab_items: new Set([
+    'id', 'business_id', 'tab_id', 'product_id', 'quantity', 'selling_price',
+    'unit_cost', 'quantity_outstanding', 'created_at', 'updated_at',
   ]),
   audit_logs: new Set([
     'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',

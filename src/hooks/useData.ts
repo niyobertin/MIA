@@ -720,6 +720,7 @@ export function useCreateCustomer() {
         email: data.email?.trim() || null,
         address: data.address?.trim() || null,
         credit_limit: data.credit_limit ?? 0,
+        linked_user_id: null,
         active: true,
       });
       await queueSync('customers', created.id, 'insert', created as unknown as Record<string, unknown>, businessId);
@@ -1603,6 +1604,16 @@ export function useCloseDay() {
       if (!existing) throw new Error('DAY_NOT_OPEN');
       if (existing.status === 'closed') throw new Error('DAY_ALREADY_CLOSED');
 
+      // Unpaid / partially paid waiter tabs → credit sales + debt before seal.
+      const { convertOpenWaiterDraftsToDebt } = await import('@/services/books/waiterTabs');
+      await convertOpenWaiterDraftsToDebt({
+        businessId,
+        sessionId: existing.id,
+        userId,
+        deviceId: getDeviceId(),
+        role: getRole(),
+      });
+
       const reconciliation = await financialService.calculateCashReconciliationForSession(
         businessId,
         existing.id,
@@ -1713,6 +1724,10 @@ export function useCloseDay() {
       queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dayStockLines', businessId] });
       queryClient.invalidateQueries({ queryKey: ['trackedStock', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['waiterTabs', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['waiterTab', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['sales', businessId] });
+      queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
     },
   });
 }
@@ -1899,5 +1914,165 @@ export function useAdjustStock() {
       queryClient.invalidateQueries({ queryKey: ['stockBalance', businessId] });
       queryClient.invalidateQueries({ queryKey: ['dailyClosing', businessId] });
     },
+  });
+}
+
+function invalidateWaiterQueries(queryClient: ReturnType<typeof useQueryClient>, businessId: string) {
+  queryClient.invalidateQueries({ queryKey: ['waiterTabs', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['waiterTab', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['products', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['dashboardStats', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['sales', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['payments', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['customersWithBalances', businessId] });
+  queryClient.invalidateQueries({ queryKey: ['stockSnapshot', businessId] });
+}
+
+export function useWaiterTabs() {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['waiterTabs', businessId],
+    queryFn: async () => {
+      const { waiterTabRepository } = await import('@/repositories/waiters/waiterTabs');
+      return waiterTabRepository.findAllWithMeta(businessId);
+    },
+    enabled: !!businessId,
+  });
+}
+
+export function useWaiterTab(tabId: string | null) {
+  const businessId = getBusinessId();
+  return useQuery({
+    queryKey: ['waiterTab', businessId, tabId],
+    queryFn: async () => {
+      if (!tabId) return null;
+      const { waiterTabRepository, waiterTabItemRepository } = await import(
+        '@/repositories/waiters/waiterTabs'
+      );
+      const tab = await waiterTabRepository.findByIdWithMeta(tabId, businessId);
+      if (!tab) return null;
+      const items = await waiterTabItemRepository.findByTab(tabId, businessId);
+      return { ...tab, items };
+    },
+    enabled: !!businessId && !!tabId,
+  });
+}
+
+export function useIssueWaiterTab() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: {
+      waiterUserId: string;
+      lines: Array<{ productId: string; quantity: number; sellingPrice?: number }>;
+      notes?: string;
+    }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { issueWaiterTab } = await import('@/services/books/waiterTabs');
+      return issueWaiterTab({
+        businessId,
+        userId,
+        deviceId,
+        role: getRole(),
+        waiterUserId: data.waiterUserId,
+        lines: data.lines,
+        notes: data.notes,
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
+  });
+}
+
+export function useAddWaiterTabItems() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: {
+      tabId: string;
+      lines: Array<{ productId: string; quantity: number; sellingPrice?: number }>;
+    }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { addItemsToWaiterTab } = await import('@/services/books/waiterTabs');
+      return addItemsToWaiterTab({
+        businessId,
+        tabId: data.tabId,
+        userId,
+        deviceId,
+        role: getRole(),
+        lines: data.lines,
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
+  });
+}
+
+export function useReturnWaiterTabItems() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: {
+      tabId: string;
+      returns: Array<{ itemId: string; quantity: number }>;
+      reason?: string;
+    }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { returnWaiterTabItems } = await import('@/services/books/waiterTabs');
+      return returnWaiterTabItems({
+        businessId,
+        tabId: data.tabId,
+        userId,
+        deviceId,
+        role: getRole(),
+        returns: data.returns,
+        reason: data.reason,
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
+  });
+}
+
+/** Record a full or partial payment against a waiter tab. */
+export function useRecordWaiterPayment() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: {
+      tabId: string;
+      amount: number;
+      paymentMethod: 'cash' | 'mobile_money' | 'bank';
+    }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { recordWaiterPayment } = await import('@/services/books/waiterTabs');
+      return recordWaiterPayment({
+        businessId,
+        tabId: data.tabId,
+        userId,
+        deviceId,
+        role: getRole(),
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
+  });
+}
+
+export function useReturnPaidWaiterTab() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: { tabId: string; reason: string }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { returnPaidWaiterTab } = await import('@/services/books/waiterTabs');
+      return returnPaidWaiterTab({
+        businessId,
+        tabId: data.tabId,
+        userId,
+        deviceId,
+        role: getRole(),
+        reason: data.reason,
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
   });
 }

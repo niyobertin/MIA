@@ -72,9 +72,52 @@ export interface Customer {
   email: string | null;
   address: string | null;
   credit_limit: number;
+  /** When set, this customer is the debt ledger for a STAFF/waiter user. */
+  linked_user_id: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export type WaiterTabStatus = 'draft' | 'partial' | 'paid' | 'debt' | 'cancelled';
+
+/** Items issued to a STAFF waiter before they settle as a sale. */
+export interface WaiterTab {
+  id: string;
+  business_id: string;
+  session_id: string;
+  waiter_user_id: string;
+  customer_id: string | null;
+  sale_id: string | null;
+  status: WaiterTabStatus;
+  /** Cumulative amount recorded against this tab (manual / partial payments). */
+  paid_amount: number;
+  notes: string | null;
+  issued_by: string;
+  device_id: string;
+  sync_status: SyncStatus;
+  created_at: string;
+  updated_at: string;
+  items?: WaiterTabItem[];
+  waiter_name?: string;
+  total_amount?: number;
+  /** total_amount - paid_amount when loaded with totals. */
+  balance_due?: number;
+}
+
+export interface WaiterTabItem {
+  id: string;
+  business_id: string;
+  tab_id: string;
+  product_id: string;
+  quantity: number;
+  selling_price: number;
+  unit_cost: number;
+  /** Qty still outstanding (not returned). */
+  quantity_outstanding: number;
+  created_at: string;
+  updated_at: string;
+  product_name?: string;
 }
 
 export interface StockMovement {

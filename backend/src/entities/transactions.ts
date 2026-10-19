@@ -508,6 +508,88 @@ export class DailyStockLine {
   updated_at!: Date;
 }
 
+@Entity('waiter_tabs')
+export class WaiterTab {
+  @PrimaryColumn('uuid')
+  id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  business_id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  session_id!: string;
+
+  @Column({ type: 'uuid' })
+  waiter_user_id!: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  customer_id!: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  sale_id!: string | null;
+
+  @Column({ type: 'text', default: 'draft' })
+  status!: string;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  paid_amount!: number;
+
+  @Column({ type: 'text', nullable: true })
+  notes!: string | null;
+
+  @Column({ type: 'uuid' })
+  issued_by!: string;
+
+  @Column({ type: 'text' })
+  device_id!: string;
+
+  @Column({ type: 'text', default: 'pending' })
+  sync_status!: string;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updated_at!: Date;
+}
+
+@Entity('waiter_tab_items')
+export class WaiterTabItem {
+  @PrimaryColumn('uuid')
+  id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  business_id!: string;
+
+  @Index()
+  @Column({ type: 'uuid' })
+  tab_id!: string;
+
+  @Column({ type: 'uuid' })
+  product_id!: string;
+
+  @Column({ type: 'bigint', transformer: bigIntNumber })
+  quantity!: number;
+
+  @Column({ type: 'bigint', transformer: bigIntNumber })
+  selling_price!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  unit_cost!: number;
+
+  @Column({ type: 'bigint', transformer: bigIntNumber })
+  quantity_outstanding!: number;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  created_at!: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updated_at!: Date;
+}
+
 @Entity('audit_logs')
 export class AuditLog {
   @PrimaryColumn('uuid')

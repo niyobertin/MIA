@@ -69,11 +69,15 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="reports"
+          name="waiter-tabs"
           options={{
-            title: t('navigation.reports'),
+            title: t('navigation.waiter'),
             tabBarIcon: ({ focused, color }) => (
-              <Ionicons name={focused ? 'bar-chart' : 'bar-chart-outline'} size={22} color={color} />
+              <Ionicons
+                name={focused ? 'people-circle' : 'people-circle-outline'}
+                size={22}
+                color={color}
+              />
             ),
           }}
         />
@@ -86,6 +90,7 @@ export default function TabsLayout() {
             ),
           }}
         />
+        <Tabs.Screen name="reports" options={{ href: null }} />
         <Tabs.Screen name="closing" options={{ href: null }} />
         <Tabs.Screen name="stock-report" options={{ href: null }} />
         <Tabs.Screen name="stock-movements" options={{ href: null }} />

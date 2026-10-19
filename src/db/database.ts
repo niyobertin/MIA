@@ -52,6 +52,7 @@ async function initializeDatabase(database: SQLite.SQLiteDatabase): Promise<void
     await migrateAuditAndCountedQty(database);
     await migratePreferredSupplier(database);
     await migrateSessionIds(database);
+    await migrateWaiterTabs(database);
   }
 }
 
@@ -100,6 +101,9 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     }
     if (fromVersion < 13) {
       await migrateSessionIds(database);
+    }
+    if (fromVersion < 14) {
+      await migrateWaiterTabs(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
   } catch (error) {
@@ -592,6 +596,62 @@ async function migrateSessionIds(database: SQLite.SQLiteDatabase): Promise<void>
   await database.execAsync(
     `CREATE INDEX IF NOT EXISTS idx_daily_closings_session_number ON daily_closings(business_id, session_number)`
   );
+}
+
+/** v14 — Waiter tabs + customer.linked_user_id for STAFF debt ledger. */
+async function migrateWaiterTabs(database: SQLite.SQLiteDatabase): Promise<void> {
+  const customerCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(customers)');
+  if (customerCols.length > 0 && !customerCols.some((c) => c.name === 'linked_user_id')) {
+    await database.execAsync(`ALTER TABLE customers ADD COLUMN linked_user_id TEXT`);
+  }
+  await database.execAsync(
+    `CREATE INDEX IF NOT EXISTS idx_customers_linked_user ON customers(business_id, linked_user_id)`
+  );
+
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS waiter_tabs (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      waiter_user_id TEXT NOT NULL REFERENCES users(id),
+      customer_id TEXT REFERENCES customers(id),
+      sale_id TEXT,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'partial', 'paid', 'debt', 'cancelled')),
+      paid_amount INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      issued_by TEXT NOT NULL REFERENCES users(id),
+      device_id TEXT NOT NULL,
+      sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending', 'syncing', 'synced', 'failed')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS waiter_tab_items (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      tab_id TEXT NOT NULL REFERENCES waiter_tabs(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      quantity INTEGER NOT NULL,
+      selling_price INTEGER NOT NULL,
+      unit_cost INTEGER NOT NULL DEFAULT 0,
+      quantity_outstanding INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  const tabCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(waiter_tabs)');
+  if (tabCols.length > 0 && !tabCols.some((c) => c.name === 'paid_amount')) {
+    await database.execAsync(
+      `ALTER TABLE waiter_tabs ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0`
+    );
+  }
+
+  await database.execAsync(`CREATE INDEX IF NOT EXISTS idx_waiter_tabs_business ON waiter_tabs(business_id)`);
+  await database.execAsync(`CREATE INDEX IF NOT EXISTS idx_waiter_tabs_status ON waiter_tabs(business_id, status)`);
+  await database.execAsync(`CREATE INDEX IF NOT EXISTS idx_waiter_tabs_session ON waiter_tabs(session_id)`);
+  await database.execAsync(`CREATE INDEX IF NOT EXISTS idx_waiter_tabs_waiter ON waiter_tabs(waiter_user_id)`);
+  await database.execAsync(`CREATE INDEX IF NOT EXISTS idx_waiter_tab_items_tab ON waiter_tab_items(tab_id)`);
 }
 
 export async function resetDatabase(): Promise<void> {

@@ -199,6 +199,11 @@ export class Customer {
   @Column({ type: 'bigint', default: 0, transformer: { to: (v: number) => String(v ?? 0), from: (v: string) => Number(v) } })
   credit_limit!: number;
 
+  /** When set, this customer is the debt ledger for a STAFF/waiter user. */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  linked_user_id!: string | null;
+
   @Column({ type: 'boolean', default: true })
   active!: boolean;
 

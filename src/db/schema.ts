@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 13;
+export const DATABASE_VERSION = 14;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -87,7 +87,39 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT,
   address TEXT,
   credit_limit INTEGER NOT NULL DEFAULT 0,
+  linked_user_id TEXT,
   active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Waiter tabs: stock issued to STAFF, settled as sale or debt on close
+CREATE TABLE IF NOT EXISTS waiter_tabs (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  waiter_user_id TEXT NOT NULL REFERENCES users(id),
+  customer_id TEXT REFERENCES customers(id),
+  sale_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'partial', 'paid', 'debt', 'cancelled')),
+  paid_amount INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  issued_by TEXT NOT NULL REFERENCES users(id),
+  device_id TEXT NOT NULL,
+  sync_status TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending', 'syncing', 'synced', 'failed')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS waiter_tab_items (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  tab_id TEXT NOT NULL REFERENCES waiter_tabs(id) ON DELETE CASCADE,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  quantity INTEGER NOT NULL,
+  selling_price INTEGER NOT NULL,
+  unit_cost INTEGER NOT NULL DEFAULT 0,
+  quantity_outstanding INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -320,6 +352,12 @@ CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
 CREATE INDEX IF NOT EXISTS idx_suppliers_business_id ON suppliers(business_id);
 CREATE INDEX IF NOT EXISTS idx_customers_business_id ON customers(business_id);
+CREATE INDEX IF NOT EXISTS idx_customers_linked_user ON customers(business_id, linked_user_id);
+CREATE INDEX IF NOT EXISTS idx_waiter_tabs_business ON waiter_tabs(business_id);
+CREATE INDEX IF NOT EXISTS idx_waiter_tabs_status ON waiter_tabs(business_id, status);
+CREATE INDEX IF NOT EXISTS idx_waiter_tabs_session ON waiter_tabs(session_id);
+CREATE INDEX IF NOT EXISTS idx_waiter_tabs_waiter ON waiter_tabs(waiter_user_id);
+CREATE INDEX IF NOT EXISTS idx_waiter_tab_items_tab ON waiter_tab_items(tab_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_business_id ON stock_movements(business_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product_id ON stock_movements(product_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_occurred_at ON stock_movements(occurred_at);
@@ -365,6 +403,8 @@ export const DROP_TABLES_SQL = `
 DROP TABLE IF EXISTS app_settings;
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS sync_records;
+DROP TABLE IF EXISTS waiter_tab_items;
+DROP TABLE IF EXISTS waiter_tabs;
 DROP TABLE IF EXISTS daily_stock_lines;
 DROP TABLE IF EXISTS daily_closings;
 DROP TABLE IF EXISTS payments;

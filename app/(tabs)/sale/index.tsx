@@ -26,17 +26,31 @@ import { BottomSheet, SegmentedControl } from '@/components/SegmentedControl';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { showToast } from '@/stores/toastStore';
-import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale, useOpenDailyClosing } from '@/hooks/useData';
+import {
+  useProducts,
+  useCustomers,
+  useCreateSale,
+  useSales,
+  useSaleItems,
+  useCreateCustomer,
+  useVoidSale,
+  useOpenDailyClosing,
+  useBusinessUsers,
+  useIssueWaiterTab,
+} from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
 import { debounce, formatNumber, formatTime, getInitials, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
 import { toLocalDateString } from '@/utils/periodBounds';
 import { PAYMENT_METHODS } from '@/constants';
-import { Customer, Product } from '@/types';
+import { Customer, Product, User } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
+import { canManageWaiterTabs } from '@/utils/permissions';
+import { router } from 'expo-router';
 
 type PayMethod = 'cash' | 'mobile_money' | 'bank' | 'credit';
+type CheckoutMode = 'sale' | 'waiter';
 type HistoryFilter = 'openDay' | 'today' | 'week' | 'month' | 'all';
 const PRODUCT_PAGE_SIZE = 100;
 
@@ -52,8 +66,10 @@ export default function NewSaleScreen() {
   const productColumns = width >= 980 ? 4 : width >= 680 ? 3 : 2;
   const { data: products, isLoading } = useProducts({ active: true });
   const { data: customers, refetch: refetchCustomers } = useCustomers();
+  const { data: businessUsers } = useBusinessUsers();
   const createSaleMutation = useCreateSale();
   const voidSaleMutation = useVoidSale();
+  const issueWaiterMutation = useIssueWaiterTab();
   const createCustomer = useCreateCustomer();
   const [showAddCustomer, setShowAddCustomer] = React.useState(false);
 
@@ -81,6 +97,9 @@ export default function NewSaleScreen() {
   const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
   const [showCartSheet, setShowCartSheet] = React.useState(false);
   const [showCustomerSheet, setShowCustomerSheet] = React.useState(false);
+  const [showWaiterSheet, setShowWaiterSheet] = React.useState(false);
+  const [checkoutMode, setCheckoutMode] = React.useState<CheckoutMode>('sale');
+  const [selectedWaiter, setSelectedWaiter] = React.useState<User | null>(null);
   const [tab, setTab] = React.useState<'new' | 'history'>('new');
   const [success, setSuccess] = React.useState<{
     total: number;
@@ -138,12 +157,22 @@ export default function NewSaleScreen() {
 
   const startCheckout = () => {
     if (cart.length === 0) return;
+    setCheckoutMode('sale');
+    setSelectedWaiter(null);
     setShowCartSheet(false);
     setShowPaymentSheet(true);
   };
 
   const { user } = useAuthStore();
   const canOverridePrice = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const canIssueWaiter = canManageWaiterTabs(user?.role);
+  const waiters = React.useMemo(
+    () =>
+      (businessUsers ?? []).filter(
+        (u) => u.active && (u.role === 'STAFF' || u.role === 'CASHIER')
+      ),
+    [businessUsers]
+  );
 
   const submitSale = async (allowBelowCost = false) => {
     await createSaleMutation.mutateAsync({
@@ -161,7 +190,37 @@ export default function NewSaleScreen() {
     });
   };
 
+  const confirmIssueToWaiter = async () => {
+    if (!selectedWaiter) {
+      showToast(t('sales.waiterRequired'), 'error');
+      setShowWaiterSheet(true);
+      return;
+    }
+    try {
+      const issued = await issueWaiterMutation.mutateAsync({
+        waiterUserId: selectedWaiter.id,
+        lines: cart.map((item) => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+          sellingPrice: item.sellingPrice,
+        })),
+      });
+      clearCart();
+      setShowPaymentSheet(false);
+      setCheckoutMode('sale');
+      setSelectedWaiter(null);
+      showToast(t('sales.issuedToWaiter'), 'success');
+      router.push(`/waiter-tabs/${issued.id}`);
+    } catch {
+      showToast(t('sales.issueToWaiterFailed'), 'error');
+    }
+  };
+
   const confirmSale = async () => {
+    if (checkoutMode === 'waiter') {
+      await confirmIssueToWaiter();
+      return;
+    }
     if (paymentMethod === 'credit' && !customerId) {
       showToast(t('sales.customerRequired'), 'error');
       setShowCustomerSheet(true);
@@ -464,8 +523,12 @@ export default function NewSaleScreen() {
 
       <BottomSheet
         visible={showPaymentSheet}
-        onClose={() => setShowPaymentSheet(false)}
-        title={t('sales.completeSale')}
+        onClose={() => {
+          setShowPaymentSheet(false);
+          setCheckoutMode('sale');
+          setSelectedWaiter(null);
+        }}
+        title={checkoutMode === 'waiter' ? t('sales.issueToWaiter') : t('sales.completeSale')}
       >
         <View style={styles.sheetBody}>
           <View style={styles.summaryCard}>
@@ -478,11 +541,16 @@ export default function NewSaleScreen() {
               <Text style={styles.totalLabel}>{t('sales.total')}</Text>
               <MoneyText amount={getTotal()} size={22} weight="800" color={colors.ink} />
             </View>
-            <View style={styles.profitRow}>
-              <Text style={styles.profitLabel}>{t('sales.profitOnSale')}</Text>
-              <MoneyText amount={cartProfit} size={14} weight="700" />
-            </View>
-            {cart.some((item) => {
+            {checkoutMode === 'sale' ? (
+              <View style={styles.profitRow}>
+                <Text style={styles.profitLabel}>{t('sales.profitOnSale')}</Text>
+                <MoneyText amount={cartProfit} size={14} weight="700" />
+              </View>
+            ) : (
+              <Text style={styles.belowCostHint}>{t('sales.issueToWaiterHint')}</Text>
+            )}
+            {checkoutMode === 'sale' &&
+            cart.some((item) => {
               const cost = item.product.track_inventory ? (item.product.average_cost ?? 0) : 0;
               if (cost <= 0 || item.quantity <= 0) return false;
               return Math.round((item.quantity * item.sellingPrice - item.discountAmount) / item.quantity) < cost;
@@ -491,58 +559,181 @@ export default function NewSaleScreen() {
             ) : null}
           </View>
 
-          <Text style={styles.sheetLabel}>{t('sales.paymentMethod')}</Text>
-          <View style={styles.methodGrid}>
-            {PAYMENT_METHODS.map((m) => {
-              const active = paymentMethod === m.value;
-              return (
+          {canIssueWaiter ? (
+            <View style={styles.checkoutModeRow}>
+              <TouchableOpacity
+                style={[styles.checkoutModeChip, checkoutMode === 'sale' && styles.checkoutModeChipActive]}
+                onPress={() => setCheckoutMode('sale')}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="cash-outline"
+                  size={18}
+                  color={checkoutMode === 'sale' ? colors.primary : colors.muted}
+                />
+                <Text
+                  style={[
+                    styles.checkoutModeLabel,
+                    checkoutMode === 'sale' && styles.checkoutModeLabelActive,
+                  ]}
+                >
+                  {t('sales.payNow')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.checkoutModeChip, checkoutMode === 'waiter' && styles.checkoutModeChipActive]}
+                onPress={() => setCheckoutMode('waiter')}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="people-circle-outline"
+                  size={18}
+                  color={checkoutMode === 'waiter' ? colors.primary : colors.muted}
+                />
+                <Text
+                  style={[
+                    styles.checkoutModeLabel,
+                    checkoutMode === 'waiter' && styles.checkoutModeLabelActive,
+                  ]}
+                >
+                  {t('sales.issueToWaiter')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {checkoutMode === 'sale' ? (
+            <>
+              <Text style={styles.sheetLabel}>{t('sales.paymentMethod')}</Text>
+              <View style={styles.methodGrid}>
+                {PAYMENT_METHODS.map((m) => {
+                  const active = paymentMethod === m.value;
+                  return (
+                    <TouchableOpacity
+                      key={m.value}
+                      style={[styles.method, active && styles.methodActive]}
+                      onPress={() => setPaymentMethod(m.value as PayMethod)}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons
+                        name={
+                          m.value === 'cash'
+                            ? 'cash'
+                            : m.value === 'mobile_money'
+                              ? 'phone-portrait'
+                              : m.value === 'bank'
+                                ? 'card'
+                                : 'person'
+                        }
+                        size={22}
+                        color={active ? colors.primary : colors.muted}
+                      />
+                      <Text style={[styles.methodLabel, active && styles.methodLabelActive]}>
+                        {t(`sales.${m.value === 'mobile_money' ? 'mobileMoney' : m.value}` as any)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {paymentMethod === 'credit' ? (
                 <TouchableOpacity
-                  key={m.value}
-                  style={[styles.method, active && styles.methodActive]}
-                  onPress={() => setPaymentMethod(m.value as PayMethod)}
+                  style={styles.customerRow}
+                  onPress={() => setShowCustomerSheet(true)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name={
-                      m.value === 'cash' ? 'cash' : m.value === 'mobile_money' ? 'phone-portrait' : m.value === 'bank' ? 'card' : 'person'
-                    }
-                    size={22}
-                    color={active ? colors.primary : colors.muted}
-                  />
-                  <Text style={[styles.methodLabel, active && styles.methodLabelActive]}>
-                    {t(`sales.${m.value === 'mobile_money' ? 'mobileMoney' : m.value}` as any)}
-                  </Text>
+                  <Ionicons name="person-circle-outline" size={28} color={colors.primary} />
+                  <View style={styles.customerInfo}>
+                    <Text style={styles.customerName}>
+                      {selectedCustomer ? selectedCustomer.name : t('sales.selectCustomer')}
+                    </Text>
+                    {selectedCustomer?.phone ? (
+                      <Text style={styles.customerPhone}>{selectedCustomer.phone}</Text>
+                    ) : null}
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={colors.faint} />
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {paymentMethod === 'credit' ? (
-            <TouchableOpacity style={styles.customerRow} onPress={() => setShowCustomerSheet(true)} activeOpacity={0.8}>
-              <Ionicons name="person-circle-outline" size={28} color={colors.primary} />
+              ) : null}
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.customerRow}
+              onPress={() => setShowWaiterSheet(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="people-circle-outline" size={28} color={colors.primary} />
               <View style={styles.customerInfo}>
                 <Text style={styles.customerName}>
-                  {selectedCustomer ? selectedCustomer.name : t('sales.selectCustomer')}
+                  {selectedWaiter ? selectedWaiter.name : t('sales.selectWaiter')}
                 </Text>
-                {selectedCustomer?.phone ? (
-                  <Text style={styles.customerPhone}>{selectedCustomer.phone}</Text>
+                {selectedWaiter?.role ? (
+                  <Text style={styles.customerPhone}>
+                    {t(`users.${selectedWaiter.role.toLowerCase()}` as any)}
+                  </Text>
                 ) : null}
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.faint} />
             </TouchableOpacity>
-          ) : null}
+          )}
 
           <Button
             variant="primary"
             size="lg"
             fullWidth
-            loading={createSaleMutation.isPending}
+            loading={
+              checkoutMode === 'waiter'
+                ? issueWaiterMutation.isPending
+                : createSaleMutation.isPending
+            }
             onPress={confirmSale}
           >
-            {t('sales.completeSale')}
+            {checkoutMode === 'waiter' ? t('sales.issueToWaiter') : t('sales.completeSale')}
           </Button>
           <View style={styles.sheetSpacer} />
         </View>
+      </BottomSheet>
+
+      <BottomSheet
+        visible={showWaiterSheet}
+        onClose={() => setShowWaiterSheet(false)}
+        title={t('sales.selectWaiter')}
+      >
+        {waiters.length === 0 ? (
+          <Text style={styles.noCustomers}>{t('waiterTabs.noWaiters')}</Text>
+        ) : (
+          <FlatList
+            data={waiters}
+            keyExtractor={(item) => item.id}
+            style={styles.customerList}
+            renderItem={({ item }) => {
+              const active = selectedWaiter?.id === item.id;
+              return (
+                <TouchableOpacity
+                  style={[styles.customerOption, active && styles.customerOptionActive]}
+                  onPress={() => {
+                    setSelectedWaiter(item);
+                    setShowWaiterSheet(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.customerAvatar}>
+                    <Text style={styles.customerAvatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.customerInfo}>
+                    <Text style={styles.customerName}>{item.name}</Text>
+                    {item.role ? (
+                      <Text style={styles.customerPhone}>
+                        {t(`users.${item.role.toLowerCase()}` as any)}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {active ? <Ionicons name="checkmark-circle" size={22} color={colors.primary} /> : null}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        )}
+        <View style={styles.sheetSpacer} />
       </BottomSheet>
 
       <BottomSheet
@@ -1731,6 +1922,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: colors.muted,
+  },
+  checkoutModeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  checkoutModeChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.card,
+  },
+  checkoutModeChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft ?? colors.card,
+  },
+  checkoutModeLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  checkoutModeLabelActive: {
+    color: colors.primary,
   },
   methodGrid: {
     flexDirection: 'row',

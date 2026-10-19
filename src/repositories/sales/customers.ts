@@ -3,7 +3,10 @@ import { Customer } from '@/types';
 
 export class CustomerRepository extends BaseRepository<Customer> {
   protected tableName = 'customers';
-  protected columns = ['id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'active', 'created_at', 'updated_at'];
+  protected columns = [
+    'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit',
+    'linked_user_id', 'active', 'created_at', 'updated_at',
+  ];
 
   async findActive(businessId: string): Promise<Customer[]> {
     return this.findAll(businessId, { where: { active: 1 }, limit: 5000, orderBy: 'name', orderDirection: 'ASC' });

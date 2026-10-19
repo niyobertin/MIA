@@ -17,6 +17,8 @@ import {
   Payment,
   DailyClosing,
   DailyStockLine,
+  WaiterTab,
+  WaiterTabItem,
   AuditLog,
 } from './entities';
 
@@ -44,6 +46,8 @@ export const AppDataSource = new DataSource({
     Payment,
     DailyClosing,
     DailyStockLine,
+    WaiterTab,
+    WaiterTabItem,
     AuditLog,
   ],
   synchronize: false,

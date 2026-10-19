@@ -17,5 +17,7 @@ export {
   Payment,
   DailyClosing,
   DailyStockLine,
+  WaiterTab,
+  WaiterTabItem,
   AuditLog,
 } from './transactions';

@@ -17,6 +17,8 @@ import {
   Payment,
   DailyClosing,
   DailyStockLine,
+  WaiterTab,
+  WaiterTabItem,
   AuditLog,
 } from '../entities';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
@@ -39,6 +41,8 @@ const ENTITY_BY_TABLE: Record<string, EntityTarget<ObjectLiteral>> = {
   payments: Payment,
   daily_closings: DailyClosing,
   daily_stock_lines: DailyStockLine,
+  waiter_tabs: WaiterTab,
+  waiter_tab_items: WaiterTabItem,
   audit_logs: AuditLog,
 };
 
@@ -55,7 +59,7 @@ const TABLE_COLUMNS: Record<string, string[]> = {
   ],
   suppliers: ['id', 'business_id', 'name', 'phone', 'email', 'address', 'active', 'created_at', 'updated_at'],
   customers: [
-    'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'active',
+    'id', 'business_id', 'name', 'phone', 'email', 'address', 'credit_limit', 'linked_user_id', 'active',
     'created_at', 'updated_at',
   ],
   stock_movements: [
@@ -100,6 +104,15 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty',
     'created_at', 'updated_at',
   ],
+  waiter_tabs: [
+    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'sale_id',
+    'status', 'paid_amount', 'notes', 'issued_by', 'device_id', 'sync_status',
+    'created_at', 'updated_at',
+  ],
+  waiter_tab_items: [
+    'id', 'business_id', 'tab_id', 'product_id', 'quantity', 'selling_price',
+    'unit_cost', 'quantity_outstanding', 'created_at', 'updated_at',
+  ],
   audit_logs: [
     'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',
     'before_state', 'after_state', 'reason', 'device_id', 'created_at',
@@ -143,6 +156,8 @@ const NON_NEGATIVE_MONEY: Record<string, string[]> = {
   stock_movements: ['quantity', 'unit_cost', 'previous_quantity', 'new_quantity'],
   customers: ['credit_limit'],
   daily_stock_lines: ['opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty'],
+  waiter_tabs: ['paid_amount'],
+  waiter_tab_items: ['quantity', 'selling_price', 'unit_cost', 'quantity_outstanding'],
 };
 
 const POSITIVE_REQUIRED: Record<string, string[]> = {
@@ -177,6 +192,18 @@ function validateSyncPayload(table: string, payload: Record<string, unknown>): s
     if (!['paid', 'partial', 'unpaid', 'credit'].includes(String(payload.payment_status))) {
       return 'invalid payment_status';
     }
+  }
+  if (table === 'waiter_tabs' && payload.status != null) {
+    if (!['draft', 'partial', 'paid', 'debt', 'cancelled'].includes(String(payload.status))) {
+      return 'invalid waiter tab status';
+    }
+  }
+  if (
+    (table === 'waiter_tab_items') &&
+    payload.quantity != null &&
+    (typeof payload.quantity !== 'number' || payload.quantity < 1)
+  ) {
+    return 'quantity must be at least 1';
   }
   if (table === 'audit_logs') {
     for (const key of ['action', 'entity']) {
