@@ -39,6 +39,20 @@ interface DayForm {
   notes?: string;
 }
 
+/** Keep digits and an optional leading minus so open/close cash can be negative. */
+function sanitizeSignedCashInput(value: string): string {
+  const negative = value.trimStart().startsWith('-');
+  const digits = value.replace(/[^\d]/g, '');
+  return negative ? `-${digits}` : digits;
+}
+
+function parseSignedCash(value: string | undefined): number {
+  const cleaned = sanitizeSignedCashInput(value ?? '');
+  if (!cleaned || cleaned === '-') return 0;
+  const n = parseInt(cleaned, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function ClosingScreen() {
   const { t } = useTranslation();
   const { user } = useAuthStore();
@@ -179,8 +193,8 @@ export default function ClosingScreen() {
     }
   };
 
-  const openingCash = parseInt(watch('openingCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
-  const actualCash = parseInt(watch('actualCash')?.replace(/[^\d]/g, '') || '0', 10) || 0;
+  const openingCash = parseSignedCash(watch('openingCash'));
+  const actualCash = parseSignedCash(watch('actualCash'));
 
   const expectedCash =
     openingCash +
@@ -211,7 +225,7 @@ export default function ClosingScreen() {
 
   const doStart = async (values: DayForm) => {
     try {
-      const cash = parseInt(values.openingCash?.replace(/[^\d]/g, '') || '0', 10) || 0;
+      const cash = parseSignedCash(values.openingCash);
       await startDayMutation.mutateAsync({
         businessDate: today,
         openingCash: cash,
@@ -356,8 +370,8 @@ export default function ClosingScreen() {
                 name="openingCash"
                 label={t('cash.openingCash')}
                 placeholder={t('cash.openingCashPlaceholder')}
-                keyboardType="numeric"
-                parseValue={(v: string) => v.replace(/[^\d]/g, '')}
+                keyboardType="numbers-and-punctuation"
+                parseValue={sanitizeSignedCashInput}
               />
               <FormInput
                 control={control}
@@ -505,16 +519,16 @@ export default function ClosingScreen() {
                 name="openingCash"
                 label={t('cash.openingCash')}
                 placeholder={t('cash.openingCashPlaceholder')}
-                keyboardType="numeric"
-                parseValue={(v: string) => v.replace(/[^\d]/g, '')}
+                keyboardType="numbers-and-punctuation"
+                parseValue={sanitizeSignedCashInput}
               />
               <FormInput
                 control={control}
                 name="actualCash"
                 label={t('cash.actualCash')}
                 placeholder={t('cash.actualCashPlaceholder')}
-                keyboardType="numeric"
-                parseValue={(v: string) => v.replace(/[^\d]/g, '')}
+                keyboardType="numbers-and-punctuation"
+                parseValue={sanitizeSignedCashInput}
               />
               <FormInput
                 control={control}

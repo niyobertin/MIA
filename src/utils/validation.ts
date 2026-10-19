@@ -86,8 +86,8 @@ export const createPaymentSchema = z.object({
 
 export const closeDaySchema = z.object({
   business_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  opening_cash: z.number().int().nonnegative('Opening cash must be non-negative'),
-  actual_cash: z.number().int().nonnegative('Actual cash must be non-negative'),
+  opening_cash: z.number().int('Opening cash must be a whole number'),
+  actual_cash: z.number().int('Actual cash must be a whole number'),
   notes: z.string().optional(),
 });
 

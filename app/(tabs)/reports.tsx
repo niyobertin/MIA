@@ -17,6 +17,7 @@ import { MoneyText } from '@/components/MoneyText';
 import { FilterChip } from '@/components/FilterChip';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { StatusBadge } from '@/components/StatusBadge';
 import { canSeeProfit } from '@/utils/permissions';
 import {
   usePeriodStats,
@@ -25,16 +26,35 @@ import {
   usePaymentBreakdown,
   useBusinessHealth,
   useSales,
+  useCustomers,
+  useSuppliers,
+  usePurchases,
+  useExpenses,
+  usePayments,
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
-import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
+import { formatTime, getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
 import { shareReportPdf } from '@/utils/reportExport';
 import { showToast } from '@/stores/toastStore';
 import { seriesForPeriod } from '@/services/financial/books';
 
-type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
+type Period = 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' | 'custom';
+type TxKind = 'all' | 'sale' | 'purchase' | 'expense' | 'payment';
+
+type TxRow = {
+  id: string;
+  kind: Exclude<TxKind, 'all'>;
+  title: string;
+  party: string;
+  amount: number;
+  outflow: boolean;
+  at: string;
+  status: string;
+  voided?: boolean;
+  searchText: string;
+};
 
 function isoDaysAgo(offset: number): string {
   const d = new Date();
@@ -58,6 +78,12 @@ function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
       const first = toLocalDateString(new Date(d.getFullYear(), d.getMonth(), 1));
       return { start: first, end: today };
     }
+    case 'year': {
+      const d = new Date();
+      return { start: toLocalDateString(new Date(d.getFullYear(), 0, 1)), end: today };
+    }
+    case 'all':
+      return { start: '2000-01-01', end: today };
     case 'custom':
       return custom ?? { start: today, end: today };
     default:
@@ -65,10 +91,50 @@ function rangeFor(period: Period, custom: PeriodRange | null): PeriodRange {
   }
 }
 
-function formatPeriodLabel(range: PeriodRange): string {
+function formatPeriodLabel(range: PeriodRange, period: Period, allLabel: string): string {
+  if (period === 'all') return allLabel;
   const start = range.start.replace('T', ' ').slice(0, 16);
   const end = range.end.replace('T', ' ').slice(0, 16);
   return `${start} → ${end}`;
+}
+
+function minutesFromClock(value: string): number | null {
+  const match = value.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h > 23 || m > 59) return null;
+  return h * 60 + m;
+}
+
+function minutesFromTimestamp(value: string): number {
+  const match = value.replace('T', ' ').match(/(\d{2}):(\d{2})/);
+  if (!match) return 0;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function paymentTypeLabel(
+  type: string,
+  t: (key: string) => string
+): string {
+  switch (type) {
+    case 'customer_payment':
+      return t('navigation.customerPayment');
+    case 'supplier_payment':
+      return t('navigation.supplierPayment');
+    case 'withdrawal':
+      return t('cash.withdrawals');
+    case 'other_income':
+      return t('reports.otherIncome');
+    case 'sale_payment':
+      return t('sales.completeSale');
+    case 'purchase_payment':
+      return t('purchases.newPurchase');
+    case 'expense_payment':
+      return t('navigation.expense');
+    default:
+      return type;
+  }
 }
 
 export default function ReportsScreen() {
@@ -77,6 +143,10 @@ export default function ReportsScreen() {
   const [period, setPeriod] = React.useState<Period>('week');
   const [refreshing, setRefreshing] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
+  const [txType, setTxType] = React.useState<TxKind>('all');
+  const [txSearch, setTxSearch] = React.useState('');
+  const [historyStartTime, setHistoryStartTime] = React.useState('00:00');
+  const [historyEndTime, setHistoryEndTime] = React.useState('23:59');
 
   const [startDate, setStartDate] = React.useState(todayIso());
   const [endDate, setEndDate] = React.useState(todayIso());
@@ -103,31 +173,185 @@ export default function ReportsScreen() {
   const payQuery = usePaymentBreakdown(range);
   const healthQuery = useBusinessHealth();
   const salesInRangeQuery = useSales(range);
+  const purchasesQuery = usePurchases(range);
+  const expensesQuery = useExpenses(range);
+  const paymentsQuery = usePayments(range);
+  const customersQuery = useCustomers();
+  const suppliersQuery = useSuppliers();
 
   const stats = statsQuery.data;
   const books = booksQuery.data;
   const top = topQuery.data ?? [];
   const pay = payQuery.data;
   const health = healthQuery.data;
-  const chartData = React.useMemo(
-    () =>
-      seriesForPeriod(
-        (salesInRangeQuery.data ?? []).map((s) => ({
-          sale_date: s.sale_date,
-          created_at: s.created_at,
-          total_amount: s.total_amount,
-          voided: s.voided,
-        })),
-        range.start,
-        range.end,
-        todayIso()
-      ),
-    [salesInRangeQuery.data, range.start, range.end]
+  const customerNameOf = React.useCallback(
+    (id: string | null) => {
+      if (!id) return t('sales.walkInCustomer');
+      return customersQuery.data?.find((c) => c.id === id)?.name ?? t('sales.walkInCustomer');
+    },
+    [customersQuery.data, t]
   );
+  const supplierNameOf = React.useCallback(
+    (id: string | null) => {
+      if (!id) return t('suppliers.suppliers');
+      return suppliersQuery.data?.find((s) => s.id === id)?.name ?? t('suppliers.suppliers');
+    },
+    [suppliersQuery.data, t]
+  );
+
+  const allTransactions = React.useMemo(() => {
+    const rows: TxRow[] = [];
+
+    for (const sale of salesInRangeQuery.data ?? []) {
+      const ref = sale.reference_number ?? sale.id.slice(0, 8).toUpperCase();
+      const party = customerNameOf(sale.customer_id);
+      const status = sale.voided
+        ? t('sales.voided')
+        : sale.payment_status === 'paid'
+          ? t('sales.paid')
+          : sale.payment_status === 'partial'
+            ? t('sales.partial')
+            : sale.payment_status === 'unpaid'
+              ? t('sales.unpaid')
+              : t('sales.credit');
+      rows.push({
+        id: `sale-${sale.id}`,
+        kind: 'sale',
+        title: ref,
+        party,
+        amount: sale.total_amount,
+        outflow: false,
+        at: sale.created_at || sale.sale_date,
+        status,
+        voided: sale.voided === true,
+        searchText: `${ref} ${party} ${status}`.toLowerCase(),
+      });
+    }
+
+    for (const purchase of purchasesQuery.data ?? []) {
+      const ref = purchase.reference_number ?? purchase.id.slice(0, 8).toUpperCase();
+      const party = supplierNameOf(purchase.supplier_id);
+      rows.push({
+        id: `purchase-${purchase.id}`,
+        kind: 'purchase',
+        title: ref,
+        party,
+        amount: purchase.total_amount,
+        outflow: true,
+        at: purchase.created_at || purchase.purchase_date,
+        status: purchase.status,
+        searchText: `${ref} ${party} ${purchase.status}`.toLowerCase(),
+      });
+    }
+
+    for (const expense of expensesQuery.data ?? []) {
+      const ref = expense.reference_number ?? expense.description ?? expense.category;
+      rows.push({
+        id: `expense-${expense.id}`,
+        kind: 'expense',
+        title: ref || t('navigation.expense'),
+        party: expense.category,
+        amount: expense.amount,
+        outflow: true,
+        at: expense.created_at || expense.expense_date,
+        status: expense.payment_method,
+        searchText: `${ref} ${expense.category} ${expense.description ?? ''}`.toLowerCase(),
+      });
+    }
+
+    for (const payment of paymentsQuery.data ?? []) {
+      if (payment.type === 'sale_payment' || payment.type === 'purchase_payment' || payment.type === 'expense_payment') {
+        continue;
+      }
+      const title = paymentTypeLabel(payment.type, t);
+      const party =
+        payment.type === 'supplier_payment'
+          ? supplierNameOf(payment.party_id)
+          : payment.type === 'customer_payment'
+            ? customerNameOf(payment.party_id)
+            : payment.notes?.trim() || payment.payment_method;
+      const outflow =
+        payment.type === 'supplier_payment' || payment.type === 'withdrawal';
+      rows.push({
+        id: `payment-${payment.id}`,
+        kind: 'payment',
+        title,
+        party,
+        amount: payment.amount,
+        outflow,
+        at: payment.created_at || payment.payment_date,
+        status: payment.payment_method,
+        searchText: `${title} ${party} ${payment.notes ?? ''} ${payment.payment_method}`.toLowerCase(),
+      });
+    }
+
+    return rows.sort((a, b) => (b.at > a.at ? 1 : -1));
+  }, [
+    salesInRangeQuery.data,
+    purchasesQuery.data,
+    expensesQuery.data,
+    paymentsQuery.data,
+    customerNameOf,
+    supplierNameOf,
+    t,
+  ]);
+
+  const filteredTransactions = React.useMemo(() => {
+    const q = txSearch.trim().toLowerCase();
+    const fromMin = minutesFromClock(historyStartTime) ?? 0;
+    const toMin = minutesFromClock(historyEndTime) ?? 23 * 60 + 59;
+    return allTransactions.filter((row) => {
+      if (txType !== 'all' && row.kind !== txType) return false;
+      if (q && !row.searchText.includes(q)) return false;
+      const mins = minutesFromTimestamp(row.at);
+      if (fromMin <= toMin) {
+        if (mins < fromMin || mins > toMin) return false;
+      } else if (mins < fromMin && mins > toMin) {
+        return false;
+      }
+      return true;
+    });
+  }, [allTransactions, txType, txSearch, historyStartTime, historyEndTime]);
+
+  const chartData = React.useMemo(() => {
+    const series = seriesForPeriod(
+      (salesInRangeQuery.data ?? []).map((s) => ({
+        sale_date: s.sale_date,
+        created_at: s.created_at,
+        total_amount: s.total_amount,
+        voided: s.voided,
+      })),
+      range.start,
+      range.end,
+      todayIso()
+    );
+    if (series.length <= 45) return series;
+    const byMonth = new Map<string, { total: number; isToday: boolean }>();
+    const todayMonth = todayIso().slice(0, 7);
+    for (const bar of series) {
+      const key = bar.date.slice(0, 7);
+      const prev = byMonth.get(key);
+      byMonth.set(key, {
+        total: (prev?.total ?? 0) + bar.total,
+        isToday: key === todayMonth,
+      });
+    }
+    return [...byMonth.entries()].map(([month, value]) => ({
+      date: month,
+      label: month.slice(2),
+      total: value.total,
+      isToday: value.isToday,
+    }));
+  }, [salesInRangeQuery.data, range.start, range.end]);
   const chartLoading = salesInRangeQuery.isLoading;
   const maxDay = Math.max(1, ...chartData.map((d) => d.total));
   const showProfit = canSeeProfit(user?.role);
   const loading = statsQuery.isLoading && !statsQuery.data;
+  const historyLoading =
+    salesInRangeQuery.isLoading ||
+    purchasesQuery.isLoading ||
+    expensesQuery.isLoading ||
+    paymentsQuery.isLoading;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -138,6 +362,9 @@ export default function ReportsScreen() {
       payQuery.refetch(),
       healthQuery.refetch(),
       salesInRangeQuery.refetch(),
+      purchasesQuery.refetch(),
+      expensesQuery.refetch(),
+      paymentsQuery.refetch(),
     ]);
     setRefreshing(false);
   };
@@ -179,7 +406,7 @@ export default function ReportsScreen() {
         businessName: business?.name ?? 'MIA',
         businessCode: business?.business_code,
         currency: business?.currency ?? 'RWF',
-        periodLabel: formatPeriodLabel(range),
+        periodLabel: formatPeriodLabel(range, period, t('sales.allTime')),
         generatedAt: new Date().toLocaleString(),
         totalSales: stats.totalSales,
         itemsSold: stats.itemsSold,
@@ -208,8 +435,20 @@ export default function ReportsScreen() {
     { value: 'yesterday', label: t('reports.yesterday') },
     { value: 'week', label: t('reports.thisWeek') },
     { value: 'month', label: t('reports.thisMonth') },
+    { value: 'year', label: t('dashboard.thisYear') },
+    { value: 'all', label: t('sales.allTime') },
     { value: 'custom', label: t('reports.customRange') },
   ];
+
+  const txTypes: Array<{ value: TxKind; label: string }> = [
+    { value: 'all', label: t('reports.typeAll') },
+    { value: 'sale', label: t('reports.typeSales') },
+    { value: 'purchase', label: t('reports.typePurchases') },
+    { value: 'expense', label: t('reports.typeExpenses') },
+    { value: 'payment', label: t('reports.typePayments') },
+  ];
+
+  const periodLabel = formatPeriodLabel(range, period, t('sales.allTime'));
 
   const collectedTotal =
     (pay?.collections.cash ?? 0) + (pay?.collections.mobileMoney ?? 0) + (pay?.collections.bank ?? 0);
@@ -228,7 +467,7 @@ export default function ReportsScreen() {
     <View style={styles.screen}>
       <ScreenHeader
         title={t('reports.reports')}
-        subtitle={formatPeriodLabel(range)}
+        subtitle={periodLabel}
         showBack={false}
         right={
           <TouchableOpacity
@@ -347,7 +586,7 @@ export default function ReportsScreen() {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('reports.salesTrend')}</Text>
-              <Text style={styles.cardHint}>{formatPeriodLabel(range)}</Text>
+              <Text style={styles.cardHint}>{periodLabel}</Text>
               {chartLoading ? (
                 <Skeleton height={120} />
               ) : chartData.length === 0 || chartData.every((d) => d.total === 0) ? (
@@ -385,6 +624,129 @@ export default function ReportsScreen() {
               ) : null}
               <StatCard title={t('reports.totalExpenses')} value={stats?.expenses ?? 0} color={colors.danger} icon="wallet" />
               <StatCard title={t('reports.stockValue')} value={stats?.stockValue ?? 0} color={colors.warning} icon="cube" />
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>{t('reports.transactionHistory')}</Text>
+                <Text style={styles.historyCount}>
+                  {t('reports.showingCount', { count: filteredTransactions.length })}
+                </Text>
+              </View>
+              <Text style={styles.cardHint}>{periodLabel}</Text>
+
+              <TextInput
+                style={styles.searchInput}
+                value={txSearch}
+                onChangeText={setTxSearch}
+                placeholder={t('reports.searchTransactions')}
+                placeholderTextColor={colors.faint}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={styles.filterLabel}>{t('reports.filterByType')}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.typeFilters}
+              >
+                {txTypes.map((item) => (
+                  <FilterChip
+                    key={item.value}
+                    label={item.label}
+                    selected={txType === item.value}
+                    onPress={() => setTxType(item.value)}
+                  />
+                ))}
+              </ScrollView>
+
+              <Text style={styles.filterLabel}>{t('reports.filterByTime')}</Text>
+              <View style={styles.customRow}>
+                <View style={styles.customField}>
+                  <Text style={styles.fieldLabel}>{t('reports.startTime')}</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={historyStartTime}
+                    onChangeText={setHistoryStartTime}
+                    placeholder="HH:mm"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <View style={styles.customField}>
+                  <Text style={styles.fieldLabel}>{t('reports.endTime')}</Text>
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={historyEndTime}
+                    onChangeText={setHistoryEndTime}
+                    placeholder="HH:mm"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+
+              {historyLoading ? (
+                <Skeleton height={120} />
+              ) : filteredTransactions.length === 0 ? (
+                <Text style={styles.muted}>{t('reports.noTransactionsInFilter')}</Text>
+              ) : (
+                filteredTransactions.map((row) => {
+                  const icon =
+                    row.kind === 'sale'
+                      ? 'cart-outline'
+                      : row.kind === 'purchase'
+                        ? 'cube-outline'
+                        : row.kind === 'expense'
+                          ? 'wallet-outline'
+                          : 'cash-outline';
+                  const tone = row.voided
+                    ? 'neutral'
+                    : row.outflow
+                      ? 'danger'
+                      : 'success';
+                  const day = row.at.slice(0, 10);
+                  const clock = formatTime(row.at);
+                  return (
+                    <View
+                      key={row.id}
+                      style={[styles.historyRow, row.voided && styles.historyRowVoided]}
+                    >
+                      <View style={[styles.historyIcon, row.voided && styles.historyIconVoided]}>
+                        <Ionicons
+                          name={icon as any}
+                          size={18}
+                          color={row.voided ? colors.muted : colors.primary}
+                        />
+                      </View>
+                      <View style={styles.historyInfo}>
+                        <Text
+                          style={[styles.historyRef, row.voided && styles.historyRefVoided]}
+                          numberOfLines={1}
+                        >
+                          {row.title}
+                        </Text>
+                        <Text style={styles.historySub} numberOfLines={1}>
+                          {row.party}
+                        </Text>
+                        <Text style={styles.historyTime}>
+                          {day} · {clock}
+                        </Text>
+                      </View>
+                      <View style={styles.historyRight}>
+                        <MoneyText
+                          amount={row.outflow ? -Math.abs(row.amount) : row.amount}
+                          size={14}
+                          weight="800"
+                          color={row.voided ? colors.muted : row.outflow ? colors.danger : colors.successText}
+                        />
+                        <StatusBadge label={row.status} tone={tone} />
+                      </View>
+                    </View>
+                  );
+                })
+              )}
             </View>
 
             <View style={styles.card}>
@@ -730,6 +1092,88 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 14,
     color: colors.muted,
+  },
+  historyCount: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primary,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    overflow: 'hidden',
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+    backgroundColor: colors.background,
+    marginBottom: spacing.sm,
+  },
+  filterLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  typeFilters: {
+    paddingBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  historyRowVoided: {
+    opacity: 0.7,
+  },
+  historyIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyIconVoided: {
+    backgroundColor: colors.borderSoft,
+  },
+  historyInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyRef: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  historyRefVoided: {
+    textDecorationLine: 'line-through',
+    color: colors.muted,
+  },
+  historySub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  historyTime: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primaryText,
+    marginTop: 2,
+  },
+  historyRight: {
+    alignItems: 'flex-end',
+    gap: 4,
   },
   chart: {
     flexDirection: 'row',

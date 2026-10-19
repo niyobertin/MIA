@@ -93,10 +93,15 @@ export function useCustomers() {
 export function usePurchases(dateRange?: { start: string; end: string }) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['purchases', businessId, dateRange],
-    queryFn: () => dateRange 
-      ? purchaseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-      : purchaseRepository.findAll(businessId),
+    queryKey: ['purchases', businessId, dateRange ?? 'all'],
+    queryFn: () =>
+      dateRange
+        ? purchaseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
+        : purchaseRepository.findAll(businessId, {
+            limit: 10000,
+            orderBy: 'created_at',
+            orderDirection: 'DESC',
+          }),
     enabled: !!businessId,
   });
 }
@@ -104,11 +109,15 @@ export function usePurchases(dateRange?: { start: string; end: string }) {
 export function useSales(dateRange?: { start: string; end: string } | null) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['sales', businessId, dateRange],
+    queryKey: ['sales', businessId, dateRange ?? 'all'],
     queryFn: () =>
       dateRange
         ? saleRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-        : saleRepository.findAll(businessId),
+        : saleRepository.findAll(businessId, {
+            limit: 10000,
+            orderBy: 'created_at',
+            orderDirection: 'DESC',
+          }),
     // null = no open day / no range yet (skip). undefined = load all.
     enabled: !!businessId && dateRange !== null,
   });
@@ -117,10 +126,15 @@ export function useSales(dateRange?: { start: string; end: string } | null) {
 export function useExpenses(dateRange?: { start: string; end: string }) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['expenses', businessId, dateRange],
-    queryFn: () => dateRange
-      ? expenseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-      : expenseRepository.findAll(businessId, { limit: 500, orderBy: 'expense_date', orderDirection: 'DESC' }),
+    queryKey: ['expenses', businessId, dateRange ?? 'all'],
+    queryFn: () =>
+      dateRange
+        ? expenseRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
+        : expenseRepository.findAll(businessId, {
+            limit: 10000,
+            orderBy: 'created_at',
+            orderDirection: 'DESC',
+          }),
     enabled: !!businessId,
   });
 }
@@ -128,10 +142,15 @@ export function useExpenses(dateRange?: { start: string; end: string }) {
 export function usePayments(dateRange?: { start: string; end: string }) {
   const businessId = getBusinessId();
   return useQuery({
-    queryKey: ['payments', businessId, dateRange],
-    queryFn: () => dateRange
-      ? paymentRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
-      : paymentRepository.findAll(businessId),
+    queryKey: ['payments', businessId, dateRange ?? 'all'],
+    queryFn: () =>
+      dateRange
+        ? paymentRepository.findByDateRange(businessId, dateRange.start, dateRange.end)
+        : paymentRepository.findAll(businessId, {
+            limit: 10000,
+            orderBy: 'created_at',
+            orderDirection: 'DESC',
+          }),
     enabled: !!businessId,
   });
 }

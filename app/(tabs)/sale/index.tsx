@@ -21,6 +21,7 @@ import { MoneyText } from '@/components/MoneyText';
 import { SearchBar } from '@/components/SearchBar';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
+import { FilterChip } from '@/components/FilterChip';
 import { BottomSheet, SegmentedControl } from '@/components/SegmentedControl';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -28,14 +29,21 @@ import { showToast } from '@/stores/toastStore';
 import { useProducts, useCustomers, useCreateSale, useSales, useSaleItems, useCreateCustomer, useVoidSale, useOpenDailyClosing } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
-import { debounce, formatNumber, getInitials, getTodayDateString } from '@/utils/formatters';
+import { debounce, formatNumber, formatTime, getInitials, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
+import { toLocalDateString } from '@/utils/periodBounds';
 import { PAYMENT_METHODS } from '@/constants';
 import { Customer, Product } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 
 type PayMethod = 'cash' | 'mobile_money' | 'bank' | 'credit';
+type HistoryFilter = 'openDay' | 'today' | 'week' | 'month' | 'all';
 const PRODUCT_PAGE_SIZE = 100;
+
+function monthStartIso(): string {
+  const d = new Date();
+  return toLocalDateString(new Date(d.getFullYear(), d.getMonth(), 1));
+}
 
 export default function NewSaleScreen() {
   const { t } = useTranslation();
@@ -210,16 +218,46 @@ export default function NewSaleScreen() {
   const today = getTodayDateString();
   const openClosingQuery = useOpenDailyClosing();
   const activeOpen = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
-  const historyStart = activeOpen?.business_date?.slice(0, 10) ?? today;
-  const historyQuery = useSales({ start: historyStart, end: today });
+  const openDayStart = activeOpen?.business_date?.slice(0, 10) ?? null;
+  const [historyFilterChoice, setHistoryFilterChoice] = React.useState<HistoryFilter | null>(null);
+  const historyFilter: HistoryFilter =
+    historyFilterChoice === 'openDay' && !openDayStart
+      ? 'today'
+      : historyFilterChoice ?? (openDayStart ? 'openDay' : 'today');
+
+  const historyRange = React.useMemo(() => {
+    switch (historyFilter) {
+      case 'openDay':
+        return openDayStart ? { start: openDayStart, end: today } : { start: today, end: today };
+      case 'today':
+        return { start: today, end: today };
+      case 'week':
+        return { start: getWeekStartDateString(), end: today };
+      case 'month':
+        return { start: monthStartIso(), end: today };
+      case 'all':
+        return undefined;
+    }
+  }, [historyFilter, openDayStart, today]);
+
+  const historyQuery = useSales(historyRange);
   const { business } = useAuthStore();
-  const todaysSales = [...(historyQuery.data ?? [])].sort((a, b) =>
+  const historySales = [...(historyQuery.data ?? [])].sort((a, b) =>
     (b.created_at > a.created_at ? 1 : -1)
   );
+  const historySubtitle = React.useMemo(() => {
+    if (historyFilter === 'all') return t('sales.allTime');
+    if (historyFilter === 'openDay' && openDayStart && openDayStart !== today) {
+      return `${t('sales.openDayFilter')} · ${openDayStart} → ${today}`;
+    }
+    if (historyRange) return `${historyRange.start} → ${historyRange.end}`;
+    return t('sales.salesHistory');
+  }, [historyFilter, openDayStart, today, historyRange, t]);
   const customerNameOf = (id: string | null) =>
     id ? (customers?.find((c) => c.id === id)?.name ?? t('sales.walkInCustomer')) : t('sales.walkInCustomer');
   const productNameOf = (id: string) =>
     products?.find((p) => p.id === id)?.name ?? t('sales.items');
+  const showHistoryDate = historyFilter !== 'today' && !(historyFilter === 'openDay' && openDayStart === today);
 
   const shareReceipt = async () => {
     if (!success) return;
@@ -249,11 +287,7 @@ export default function NewSaleScreen() {
         <View>
           <Text style={styles.title}>{t('sales.newSale')}</Text>
           <Text style={styles.subtitle}>
-            {tab === 'new'
-              ? `${getItemCount()} ${t('sales.items')}`
-              : historyStart !== today
-                ? `${t('sales.todaysSales')} · ${historyStart} → ${today}`
-                : t('sales.todaysSales')}
+            {tab === 'new' ? `${getItemCount()} ${t('sales.items')}` : historySubtitle}
           </Text>
         </View>
         {tab === 'new' ? (
@@ -286,8 +320,12 @@ export default function NewSaleScreen() {
 
       {tab === 'history' ? (
         <SaleHistoryList
-          sales={todaysSales}
+          sales={historySales}
           loading={historyQuery.isLoading}
+          showDate={showHistoryDate}
+          filter={historyFilter}
+          hasOpenDay={!!openDayStart}
+          onFilterChange={setHistoryFilterChoice}
           customerNameOf={customerNameOf}
           productNameOf={productNameOf}
           voiding={voidSaleMutation.isPending}
@@ -643,10 +681,16 @@ export default function NewSaleScreen() {
                   </View>
                 ))}
                 <View style={styles.successActions}>
-                  <Button variant="outline" size="lg" fullWidth onPress={shareReceipt} leftIcon={<Ionicons name="share-outline" size={18} color={colors.primary} />}>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onPress={shareReceipt}
+                    style={styles.successActionBtn}
+                    leftIcon={<Ionicons name="share-outline" size={18} color={colors.primary} />}
+                  >
                     {t('sales.sharePdf80')}
                   </Button>
-                  <Button variant="primary" size="lg" fullWidth onPress={closeSuccess}>
+                  <Button variant="primary" size="lg" onPress={closeSuccess} style={styles.successActionBtn}>
                     {t('common.done')}
                   </Button>
                 </View>
@@ -840,16 +884,36 @@ function CartLine({
   );
 }
 
+type HistorySale = {
+  id: string;
+  reference_number: string | null;
+  total_amount: number;
+  paid_amount?: number;
+  payment_status: string;
+  customer_id: string | null;
+  created_at: string;
+  sale_date?: string;
+  voided?: boolean;
+};
+
 function SaleHistoryList({
   sales,
   loading,
+  showDate,
+  filter,
+  hasOpenDay,
+  onFilterChange,
   customerNameOf,
   productNameOf,
   voiding,
   onVoid,
 }: {
-  sales: Array<{ id: string; reference_number: string | null; total_amount: number; payment_status: string; customer_id: string | null; created_at: string; voided?: boolean }>;
+  sales: HistorySale[];
   loading: boolean;
+  showDate: boolean;
+  filter: HistoryFilter;
+  hasOpenDay: boolean;
+  onFilterChange: (filter: HistoryFilter) => void;
   customerNameOf: (id: string | null) => string;
   productNameOf: (id: string) => string;
   voiding: boolean;
@@ -859,22 +923,123 @@ function SaleHistoryList({
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [pendingVoidId, setPendingVoidId] = React.useState<string | null>(null);
 
+  const filters: Array<{ value: HistoryFilter; label: string }> = [
+    ...(hasOpenDay ? [{ value: 'openDay' as const, label: t('sales.openDayFilter') }] : []),
+    { value: 'today', label: t('reports.today') },
+    { value: 'week', label: t('reports.thisWeek') },
+    { value: 'month', label: t('reports.thisMonth') },
+    { value: 'all', label: t('sales.allTime') },
+  ];
+
+  const stats = React.useMemo(() => {
+    const active = sales.filter((s) => !s.voided);
+    const voidedCount = sales.length - active.length;
+    const total = active.reduce((sum, s) => sum + (s.total_amount ?? 0), 0);
+    const credit = active
+      .filter((s) => s.payment_status === 'credit' || s.payment_status === 'partial' || s.payment_status === 'unpaid')
+      .reduce((sum, s) => sum + Math.max(0, (s.total_amount ?? 0) - (s.paid_amount ?? 0)), 0);
+    const count = active.length;
+    return {
+      total,
+      count,
+      credit,
+      average: count > 0 ? Math.round(total / count) : 0,
+      voidedCount,
+    };
+  }, [sales]);
+
+  const listHeader = (
+    <View style={styles.historyHeader}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.historyFilters}
+      >
+        {filters.map((item) => (
+          <FilterChip
+            key={item.value}
+            label={item.label}
+            selected={filter === item.value}
+            onPress={() => onFilterChange(item.value)}
+          />
+        ))}
+      </ScrollView>
+
+      <View style={styles.statsGrid}>
+        <View style={[styles.statCard, styles.statCardHero]}>
+          <Text style={styles.statLabel}>{t('sales.periodSales')}</Text>
+          {loading ? (
+            <Skeleton height={28} style={styles.statSkel} />
+          ) : (
+            <MoneyText amount={stats.total} size={22} weight="800" color={colors.white} />
+          )}
+          <Text style={styles.statHint}>
+            {loading ? '—' : `${stats.count} ${t('sales.periodCount').toLowerCase()}`}
+          </Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabelDark}>{t('sales.periodCount')}</Text>
+          {loading ? (
+            <Skeleton height={22} style={styles.statSkel} />
+          ) : (
+            <Text style={styles.statNumber}>{formatNumber(stats.count)}</Text>
+          )}
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabelDark}>{t('sales.periodAverage')}</Text>
+          {loading ? (
+            <Skeleton height={22} style={styles.statSkel} />
+          ) : (
+            <MoneyText amount={stats.average} size={16} weight="800" color={colors.ink} />
+          )}
+        </View>
+        <View style={styles.statCard}>
+          <Text style={styles.statLabelDark}>{t('sales.periodCredit')}</Text>
+          {loading ? (
+            <Skeleton height={22} style={styles.statSkel} />
+          ) : (
+            <MoneyText amount={stats.credit} size={16} weight="800" color={stats.credit > 0 ? colors.warningText : colors.ink} />
+          )}
+        </View>
+        {stats.voidedCount > 0 ? (
+          <View style={[styles.statCard, styles.statCardWide]}>
+            <Text style={styles.statLabelDark}>{t('sales.periodVoided')}</Text>
+            <Text style={styles.statNumberMuted}>{formatNumber(stats.voidedCount)}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {!loading && sales.length > 0 ? (
+        <Text style={styles.historyListTitle}>{t('sales.salesHistory')}</Text>
+      ) : null}
+    </View>
+  );
+
   if (loading) {
     return (
-      <View style={styles.list}>
-        <Skeleton height={68} style={styles.skel} />
-        <Skeleton height={68} style={styles.skel} />
+      <View style={styles.flex}>
+        <View style={styles.list}>
+          {listHeader}
+          <Skeleton height={76} style={styles.skel} />
+          <Skeleton height={76} style={styles.skel} />
+          <Skeleton height={76} style={styles.skel} />
+        </View>
       </View>
     );
   }
 
   if (sales.length === 0) {
     return (
-      <EmptyState
-        icon="receipt-outline"
-        title={t('dashboard.noSalesYet')}
-        message={t('dashboard.noSalesMessage')}
-      />
+      <View style={styles.flex}>
+        <View style={styles.list}>
+          {listHeader}
+          <EmptyState
+            icon="receipt-outline"
+            title={t('dashboard.noSalesYet')}
+            message={t('sales.noSalesInFilter')}
+          />
+        </View>
+      </View>
     );
   }
 
@@ -882,11 +1047,13 @@ function SaleHistoryList({
     <FlatList
       data={sales}
       keyExtractor={(item) => item.id}
+      ListHeaderComponent={listHeader}
       renderItem={({ item }) => (
         <SaleHistoryRow
           sale={item}
           customerName={customerNameOf(item.customer_id)}
           productNameOf={productNameOf}
+          showDate={showDate}
           expanded={expandedId === item.id}
           onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
           onVoid={() => setPendingVoidId(item.id)}
@@ -914,17 +1081,27 @@ function SaleHistoryList({
   );
 }
 
+function paymentStatusLabel(status: string, t: (key: string) => string): string {
+  if (status === 'paid') return t('sales.paid');
+  if (status === 'partial') return t('sales.partial');
+  if (status === 'unpaid') return t('sales.unpaid');
+  if (status === 'credit') return t('sales.credit');
+  return status;
+}
+
 function SaleHistoryRow({
   sale,
   customerName,
   productNameOf,
+  showDate,
   expanded,
   onToggle,
   onVoid,
 }: {
-  sale: { id: string; reference_number: string | null; total_amount: number; payment_status: string; voided?: boolean };
+  sale: HistorySale;
   customerName: string;
   productNameOf: (id: string) => string;
+  showDate: boolean;
   expanded: boolean;
   onToggle: () => void;
   onVoid: () => void;
@@ -932,17 +1109,47 @@ function SaleHistoryRow({
   const { t } = useTranslation();
   const { data: items } = useSaleItems(expanded ? sale.id : null);
   const voided = sale.voided === true;
-  const tone = voided ? 'neutral' : sale.payment_status === 'paid' ? 'success' : sale.payment_status === 'credit' || sale.payment_status === 'partial' ? 'warning' : 'neutral';
-  const statusLabel = voided ? t('sales.voided') : sale.payment_status;
+  const tone = voided
+    ? 'neutral'
+    : sale.payment_status === 'paid'
+      ? 'success'
+      : sale.payment_status === 'credit' || sale.payment_status === 'partial' || sale.payment_status === 'unpaid'
+        ? 'warning'
+        : 'neutral';
+  const statusLabel = voided ? t('sales.voided') : paymentStatusLabel(sale.payment_status, t);
+  const saleDay = (sale.sale_date ?? sale.created_at).slice(0, 10);
+  const timeLabel = formatTime(sale.created_at);
   return (
-    <TouchableOpacity style={styles.historyCard} onPress={onToggle} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={[styles.historyCard, voided && styles.historyCardVoided, expanded && styles.historyCardExpanded]}
+      onPress={onToggle}
+      activeOpacity={0.85}
+    >
       <View style={styles.historyTop}>
+        <View style={[styles.historyIcon, voided && styles.historyIconVoided]}>
+          <Ionicons
+            name={voided ? 'close-circle-outline' : 'receipt-outline'}
+            size={18}
+            color={voided ? colors.muted : colors.primary}
+          />
+        </View>
         <View style={styles.historyInfo}>
-          <Text style={styles.historyRef} numberOfLines={1}>{sale.reference_number ?? sale.id.slice(0, 8)}</Text>
-          <Text style={styles.historySub}>{customerName}</Text>
+          <Text style={[styles.historyRef, voided && styles.historyRefVoided]} numberOfLines={1}>
+            {sale.reference_number ?? sale.id.slice(0, 8).toUpperCase()}
+          </Text>
+          <Text style={styles.historySub} numberOfLines={1}>
+            {customerName}
+            {showDate ? ` · ${saleDay}` : ''}
+            {` · ${timeLabel}`}
+          </Text>
         </View>
         <View style={styles.historyRight}>
-          <MoneyText amount={sale.total_amount} size={16} weight="800" color={colors.ink} />
+          <MoneyText
+            amount={sale.total_amount}
+            size={16}
+            weight="800"
+            color={voided ? colors.muted : colors.ink}
+          />
           <StatusBadge label={statusLabel} tone={tone} />
         </View>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.faint} />
@@ -1060,6 +1267,78 @@ const styles = StyleSheet.create({
   tabWrap: {
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.sm,
+  },
+  historyHeader: {
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  historyFilters: {
+    paddingBottom: 2,
+    gap: spacing.xs,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  statCard: {
+    width: '48%',
+    flexGrow: 1,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: 4,
+    ...shadows.card,
+  },
+  statCardHero: {
+    width: '100%',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  statCardWide: {
+    width: '100%',
+  },
+  statLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.8)',
+    letterSpacing: 0.2,
+  },
+  statLabelDark: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    letterSpacing: 0.2,
+  },
+  statHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 2,
+  },
+  statNumber: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  statNumberMuted: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.muted,
+    fontVariant: ['tabular-nums'],
+  },
+  statSkel: {
+    borderRadius: radius.sm,
+    marginTop: 4,
+  },
+  historyListTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.muted,
+    marginTop: spacing.xs,
   },
   cartRow: {
     paddingVertical: spacing.md,
@@ -1324,24 +1603,48 @@ const styles = StyleSheet.create({
   },
   historyCard: {
     backgroundColor: colors.card,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.sm,
+    ...shadows.card,
+  },
+  historyCardExpanded: {
+    borderColor: colors.primary,
+  },
+  historyCardVoided: {
+    opacity: 0.72,
+    backgroundColor: colors.inputBg,
   },
   historyTop: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
+  historyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyIconVoided: {
+    backgroundColor: colors.borderSoft,
+  },
   historyInfo: {
     flex: 1,
+    minWidth: 0,
   },
   historyRef: {
     fontSize: 14,
     fontWeight: '700',
     color: colors.ink,
+  },
+  historyRefVoided: {
+    textDecorationLine: 'line-through',
+    color: colors.muted,
   },
   historySub: {
     fontSize: 12,
@@ -1353,11 +1656,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   historyItems: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
+    marginLeft: 48,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
-    gap: 4,
+    gap: 6,
   },
   historyItem: {
     flexDirection: 'row',
@@ -1384,10 +1688,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     alignSelf: 'flex-start',
     paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.dangerSoft,
   },
   voidButtonText: {
-    color: colors.danger,
-    fontSize: 14,
+    color: colors.dangerText,
+    fontSize: 13,
     fontWeight: '700',
   },
   totalRow: {
@@ -1594,7 +1901,12 @@ const styles = StyleSheet.create({
   },
   successActions: {
     width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
     marginTop: spacing.lg,
+  },
+  successActionBtn: {
+    flex: 1,
   },
 });

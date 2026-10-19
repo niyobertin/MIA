@@ -1,5 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, useWindowDimensions } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  TouchableOpacity,
+  useWindowDimensions,
+  TextInput,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -10,20 +19,26 @@ import { MoneyText } from '@/components/MoneyText';
 import { StatusBadge } from '@/components/StatusBadge';
 import { SkeletonCard, Skeleton } from '@/components/Skeleton';
 import { BottomSheet } from '@/components/SegmentedControl';
-import { getInitials, formatTime } from '@/utils/formatters';
+import { getInitials, formatTime, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
+import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
 import { canSeeProfit } from '@/utils/permissions';
+import { seriesForPeriod } from '@/services/financial/books';
 import {
   useDashboardStats,
   useLowStockProducts,
-  useWeeklySales,
-  useMonthlySales,
   useBusinessHealth,
   useTopProducts,
   usePaymentBreakdown,
   useSales,
   useCustomersWithBalances,
+  usePeriodStats,
+  useOpenDailyClosing,
+  PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
+import { showToast } from '@/stores/toastStore';
+
+type DashPeriod = 'today' | 'openDay' | 'week' | 'month' | 'year' | 'custom';
 
 function greetingKey(): 'dashboard.greetingMorning' | 'dashboard.greetingAfternoon' | 'dashboard.greetingEvening' {
   const hour = new Date().getHours();
@@ -32,41 +47,124 @@ function greetingKey(): 'dashboard.greetingMorning' | 'dashboard.greetingAfterno
   return 'dashboard.greetingEvening';
 }
 
+function yearStartIso(): string {
+  const d = new Date();
+  return toLocalDateString(new Date(d.getFullYear(), 0, 1));
+}
+
+function monthStartIso(): string {
+  const d = new Date();
+  return toLocalDateString(new Date(d.getFullYear(), d.getMonth(), 1));
+}
+
+function rangeForPeriod(
+  period: DashPeriod,
+  openDayStart: string | null,
+  custom: PeriodRange | null
+): PeriodRange | null {
+  const today = getTodayDateString();
+  switch (period) {
+    case 'openDay':
+      return openDayStart ? { start: openDayStart, end: today } : null;
+    case 'today':
+      return { start: today, end: today };
+    case 'week':
+      return { start: getWeekStartDateString(), end: today };
+    case 'month':
+      return { start: monthStartIso(), end: today };
+    case 'year':
+      return { start: yearStartIso(), end: today };
+    case 'custom':
+      return custom ?? { start: today, end: today };
+  }
+}
+
+function compressChartBars(
+  bars: Array<{ date: string; label: string; total: number; isToday: boolean }>
+) {
+  if (bars.length <= 45) return bars.map((b) => ({ ...b, displayLabel: b.label }));
+  const byMonth = new Map<string, number>();
+  for (const bar of bars) {
+    const key = bar.date.slice(0, 7);
+    byMonth.set(key, (byMonth.get(key) ?? 0) + bar.total);
+  }
+  const todayMonth = getTodayDateString().slice(0, 7);
+  return [...byMonth.entries()].map(([month, total]) => ({
+    date: month,
+    label: month.slice(5),
+    displayLabel: month.slice(5),
+    total,
+    isToday: month === todayMonth,
+  }));
+}
+
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { width } = useWindowDimensions();
   const { business, user } = useAuthStore();
-  const statsQuery = useDashboardStats();
-  const sessionRange = React.useMemo(() => {
-    const start = statsQuery.data?.sessionStart;
-    const end = statsQuery.data?.sessionEnd;
-    if (!start || !end) return null;
-    return { start, end };
-  }, [statsQuery.data?.sessionStart, statsQuery.data?.sessionEnd]);
+  const today = getTodayDateString();
 
+  const [period, setPeriod] = React.useState<DashPeriod>('openDay');
+  const [showPeriodSheet, setShowPeriodSheet] = React.useState(false);
+  const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [startDate, setStartDate] = React.useState(today);
+  const [endDate, setEndDate] = React.useState(today);
+  const [customApplied, setCustomApplied] = React.useState<PeriodRange | null>(null);
+
+  const openClosingQuery = useOpenDailyClosing();
+  const openDayStart =
+    openClosingQuery.data?.status === 'open'
+      ? openClosingQuery.data.business_date?.slice(0, 10) ?? null
+      : null;
+
+  React.useEffect(() => {
+    if (period === 'openDay' && !openDayStart && openClosingQuery.isFetched) {
+      setPeriod('today');
+    }
+  }, [period, openDayStart, openClosingQuery.isFetched]);
+
+  const customDraft = React.useMemo(
+    () => ({
+      start: combineDateAndTime(startDate, '00:00', '00:00'),
+      end: combineDateAndTime(endDate, '23:59', '23:59'),
+    }),
+    [startDate, endDate]
+  );
+
+  const range = React.useMemo(
+    () => rangeForPeriod(period, openDayStart, period === 'custom' ? (customApplied ?? customDraft) : null),
+    [period, openDayStart, customApplied, customDraft]
+  );
+
+  const statsQuery = useDashboardStats();
+  const periodStatsQuery = usePeriodStats(range);
   const lowStockQuery = useLowStockProducts();
-  const weeklyQuery = useWeeklySales();
-  const monthlyQuery = useMonthlySales();
   const healthQuery = useBusinessHealth();
-  const topQuery = useTopProducts(sessionRange, 5);
-  const paymentsQuery = usePaymentBreakdown(sessionRange);
-  const salesQuery = useSales(sessionRange);
+  const topQuery = useTopProducts(range, 5);
+  const paymentsQuery = usePaymentBreakdown(range);
+  const salesQuery = useSales(range);
   const debtQuery = useCustomersWithBalances();
 
-  const [refreshing, setRefreshing] = React.useState(false);
-  const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
-  const [chartMode, setChartMode] = React.useState<'week' | 'month'>('week');
-
-  const stats = statsQuery.data;
+  const dashStats = statsQuery.data;
+  const periodStats = periodStatsQuery.data;
   const health = healthQuery.data;
   const lowStock = lowStockQuery.data ?? [];
-  const week = weeklyQuery.data ?? [];
-  const month = monthlyQuery.data ?? [];
-  const loading = statsQuery.isLoading && !statsQuery.data;
+  const loading =
+    (period === 'openDay' ? statsQuery.isLoading && !dashStats : periodStatsQuery.isLoading && !periodStats);
   const payments = paymentsQuery.data;
   const topProducts = topQuery.data ?? [];
   const recentSales = (salesQuery.data ?? []).filter((sale) => !sale.voided).slice(0, 6);
   const debtors = (debtQuery.data?.rows ?? []).filter((row) => row.outstanding > 0).slice(0, 5);
+
+  const salesTotal = period === 'openDay' ? (dashStats?.todaySales ?? 0) : (periodStats?.totalSales ?? 0);
+  const grossProfit = period === 'openDay' ? (dashStats?.todayGrossProfit ?? 0) : (periodStats?.grossProfit ?? 0);
+  const netProfit = period === 'openDay' ? (dashStats?.todayNetProfit ?? 0) : (periodStats?.netProfit ?? 0);
+  const expenses = period === 'openDay' ? (dashStats?.todayExpenses ?? 0) : (periodStats?.expenses ?? 0);
+  const itemsSold = period === 'openDay' ? (dashStats?.itemsSold ?? 0) : (periodStats?.itemsSold ?? 0);
+  const stockValue = periodStats?.stockValue ?? dashStats?.stockValue ?? 0;
+  const cashBalance = dashStats?.cashBalance ?? 0;
+  const hasOpenDay = !!openDayStart || !!dashStats?.hasOpenDay;
 
   const showProfit = canSeeProfit(user?.role);
   const firstName = user?.name?.split(' ')[0] ?? '';
@@ -75,13 +173,29 @@ export default function HomeScreen() {
   const statColumns = width >= 1100 ? 4 : width >= 720 ? 3 : 2;
   const statWidth = statColumns === 4 ? '23.5%' : statColumns === 3 ? '31%' : '47.5%';
 
+  const periodOptions: Array<{ value: DashPeriod; label: string; hidden?: boolean }> = [
+    { value: 'openDay', label: t('sales.openDayFilter'), hidden: !openDayStart && period !== 'openDay' },
+    { value: 'today', label: t('reports.today') },
+    { value: 'week', label: t('dashboard.thisWeek') },
+    { value: 'month', label: t('dashboard.thisMonth') },
+    { value: 'year', label: t('dashboard.thisYear') },
+    { value: 'custom', label: t('reports.customRange') },
+  ];
+  const periodLabel =
+    periodOptions.find((o) => o.value === period)?.label ?? t('dashboard.periodFilter');
+  const periodSubtitle = range
+    ? period === 'custom' || (range.start !== range.end)
+      ? `${range.start.slice(0, 10)} → ${range.end.slice(0, 10)}`
+      : range.start.slice(0, 10)
+    : t('dashboard.openDayRequired');
+
   const onRefresh = async () => {
     setRefreshing(true);
     await Promise.all([
       statsQuery.refetch(),
+      periodStatsQuery.refetch(),
+      openClosingQuery.refetch(),
       lowStockQuery.refetch(),
-      weeklyQuery.refetch(),
-      monthlyQuery.refetch(),
       healthQuery.refetch(),
       topQuery.refetch(),
       salesQuery.refetch(),
@@ -93,13 +207,40 @@ export default function HomeScreen() {
 
   const go = (path: string) => router.push(path as any);
 
-  const weekTotal = week.reduce((sum, d) => sum + d.total, 0);
-  const monthTotal = month.reduce((sum, d) => sum + d.total, 0);
-  const chartData = chartMode === 'week' ? week : month;
-  const chartTotal = chartMode === 'week' ? weekTotal : monthTotal;
-  const chartLoading = chartMode === 'week' ? weeklyQuery.isLoading : monthlyQuery.isLoading;
-  const maxDay = Math.max(1, ...chartData.map((d) => d.total));
-  const delta = stats?.salesDelta ?? null;
+  const applyCustom = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      showToast(t('reports.invalidDate'), 'error');
+      return;
+    }
+    if (startDate > endDate) {
+      showToast(t('reports.invalidRange'), 'error');
+      return;
+    }
+    setCustomApplied(customDraft);
+    setPeriod('custom');
+    setShowPeriodSheet(false);
+  };
+
+  const chartSource = React.useMemo(() => {
+    if (!range) return [];
+    return compressChartBars(
+      seriesForPeriod(
+        (salesQuery.data ?? []).map((s) => ({
+          sale_date: s.sale_date,
+          created_at: s.created_at,
+          total_amount: s.total_amount,
+          voided: s.voided,
+        })),
+        range.start,
+        range.end,
+        today
+      )
+    );
+  }, [salesQuery.data, range, today]);
+  const chartTotal = chartSource.reduce((sum, d) => sum + d.total, 0);
+  const chartLoading = salesQuery.isLoading;
+  const maxDay = Math.max(1, ...chartSource.map((d) => d.total));
+  const delta = period === 'openDay' || period === 'today' ? (dashStats?.salesDelta ?? null) : null;
   const collections =
     (payments?.collections?.cash ?? 0) +
     (payments?.collections?.mobileMoney ?? 0) +
@@ -148,11 +289,25 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               ) : null}
 
+              <TouchableOpacity
+                style={styles.periodDropdown}
+                onPress={() => setShowPeriodSheet(true)}
+                activeOpacity={0.85}
+                accessibilityLabel={t('dashboard.selectPeriod')}
+              >
+                <View style={styles.periodDropdownCopy}>
+                  <Text style={styles.periodDropdownLabel}>{t('dashboard.periodFilter')}</Text>
+                  <Text style={styles.periodDropdownValue}>{periodLabel}</Text>
+                  <Text style={styles.periodDropdownRange}>{periodSubtitle}</Text>
+                </View>
+                <Ionicons name="chevron-down" size={20} color={colors.primary} />
+              </TouchableOpacity>
+
               <View style={styles.hero}>
                 <View style={styles.heroTop}>
                   <View style={styles.heroCopy}>
-                    <Text style={styles.heroLabel}>{t('dashboard.openDaySales')}</Text>
-                    <MoneyText amount={stats?.todaySales ?? 0} size={wide ? 36 : 32} weight="800" color="#fff" />
+                    <Text style={styles.heroLabel}>{`${periodLabel} · ${t('dashboard.sales')}`}</Text>
+                    <MoneyText amount={salesTotal} size={wide ? 36 : 32} weight="800" color="#fff" />
                   </View>
                   <View style={styles.heroBadge}>
                     <Ionicons name="cart" size={22} color={colors.primary} />
@@ -161,15 +316,15 @@ export default function HomeScreen() {
                 <View style={styles.heroMeta}>
                   {showProfit ? (
                     <Text style={styles.heroMetaText}>
-                      {t('dashboard.grossProfit')}: <Text style={styles.heroMetaStrong}>{(stats?.todayGrossProfit ?? 0).toLocaleString()} RWF</Text>
-                      {'  ·  '}{stats?.itemsSold ?? 0} {t('dashboard.itemsSold').toLowerCase()}
+                      {t('dashboard.grossProfit')}: <Text style={styles.heroMetaStrong}>{grossProfit.toLocaleString()} RWF</Text>
+                      {'  ·  '}{itemsSold} {t('dashboard.itemsSold').toLowerCase()}
                     </Text>
                   ) : (
                     <Text style={styles.heroMetaText}>
-                      {stats?.itemsSold ?? 0} {t('dashboard.itemsSold').toLowerCase()}
+                      {itemsSold} {t('dashboard.itemsSold').toLowerCase()}
                     </Text>
                   )}
-                  {delta !== null && stats?.hasOpenDay ? (
+                  {delta !== null && hasOpenDay ? (
                     <View style={styles.deltaRow}>
                       <Ionicons
                         name={delta >= 0 ? 'trending-up' : 'trending-down'}
@@ -182,10 +337,10 @@ export default function HomeScreen() {
                     </View>
                   ) : null}
                 </View>
-                {!stats?.hasOpenDay ? (
+                {period === 'openDay' && !hasOpenDay ? (
                   <Text style={styles.heroEmpty}>{t('dashboard.openDayRequired')}</Text>
-                ) : (stats?.todaySales ?? 0) === 0 ? (
-                  <Text style={styles.heroEmpty}>{t('dashboard.noSalesMessage')}</Text>
+                ) : salesTotal === 0 ? (
+                  <Text style={styles.heroEmpty}>{t('dashboard.noSalesInPeriod')}</Text>
                 ) : null}
                 <TouchableOpacity style={styles.heroButton} onPress={() => go('/sale')} activeOpacity={0.85}>
                   <Ionicons name="add" size={20} color={colors.primary} />
@@ -196,20 +351,20 @@ export default function HomeScreen() {
               <View style={styles.grid}>
                 {showProfit ? (
                   <View style={[styles.statWrap, { width: statWidth }]}>
-                    <StatCard title={t('dashboard.netProfit')} value={stats?.todayNetProfit ?? 0} color={colors.success} icon="trending-up" onPress={() => go('/reports')} />
+                    <StatCard title={t('dashboard.netProfit')} value={netProfit} color={colors.success} icon="trending-up" onPress={() => go('/reports')} />
                   </View>
                 ) : null}
                 <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.expenses')} value={stats?.todayExpenses ?? 0} color={colors.danger} icon="wallet" onPress={() => go('/expense')} />
+                  <StatCard title={t('dashboard.expenses')} value={expenses} color={colors.danger} icon="wallet" onPress={() => go('/expense')} />
                 </View>
                 <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.itemsSold')} value={stats?.itemsSold ?? 0} currency="" color={colors.warning} icon="bag" />
+                  <StatCard title={t('dashboard.itemsSold')} value={itemsSold} currency="" color={colors.warning} icon="bag" />
                 </View>
                 <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.stockValue')} value={stats?.stockValue ?? 0} color={colors.primary} icon="cube" onPress={() => go('/stock')} />
+                  <StatCard title={t('dashboard.stockValue')} value={stockValue} color={colors.primary} icon="cube" onPress={() => go('/stock')} />
                 </View>
                 <View style={[styles.statWrap, { width: statWidth }]}>
-                  <StatCard title={t('dashboard.cashBalance')} value={stats?.cashBalance ?? 0} color={colors.info} icon="cash" onPress={() => go('/closing')} />
+                  <StatCard title={t('dashboard.cashBalance')} value={cashBalance} color={colors.info} icon="cash" onPress={() => go('/closing')} />
                 </View>
                 {showProfit ? (
                   <View style={[styles.statWrap, { width: statWidth }]}>
@@ -246,22 +401,17 @@ export default function HomeScreen() {
                 <View style={split ? styles.columnMain : undefined}>
                   <View style={styles.card}>
                     <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{chartMode === 'week' ? t('dashboard.thisWeek') : t('dashboard.last30Days')}</Text>
+                      <Text style={styles.cardTitle}>{periodLabel}</Text>
                       <MoneyText amount={chartTotal} size={15} weight="700" color={colors.ink} />
                     </View>
-                    <View style={styles.chartModes}>
-                      <TouchableOpacity style={[styles.modeChip, chartMode === 'week' && styles.modeChipActive]} onPress={() => setChartMode('week')}>
-                        <Text style={[styles.modeText, chartMode === 'week' && styles.modeTextActive]}>{t('dashboard.days7')}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.modeChip, chartMode === 'month' && styles.modeChipActive]} onPress={() => setChartMode('month')}>
-                        <Text style={[styles.modeText, chartMode === 'month' && styles.modeTextActive]}>{t('dashboard.days30')}</Text>
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={styles.cardHint}>{periodSubtitle}</Text>
                     {chartLoading ? (
                       <Skeleton height={110} />
-                    ) : chartMode === 'week' || width >= 1100 ? (
+                    ) : chartSource.length === 0 || chartSource.every((d) => d.total === 0) ? (
+                      <Text style={styles.muted}>{t('dashboard.noSalesInPeriod')}</Text>
+                    ) : chartSource.length <= 14 || width >= 1100 ? (
                       <View style={styles.chart}>
-                        {chartData.map((d) => (
+                        {chartSource.map((d) => (
                           <View key={d.date} style={styles.barCol}>
                             <View style={styles.barTrack}>
                               <View
@@ -275,7 +425,7 @@ export default function HomeScreen() {
                               />
                             </View>
                             <Text style={[styles.barLabel, d.isToday && styles.barLabelToday]} numberOfLines={1}>
-                              {chartMode === 'week' ? d.weekday : d.dayLabel}
+                              {d.displayLabel}
                             </Text>
                           </View>
                         ))}
@@ -283,7 +433,7 @@ export default function HomeScreen() {
                     ) : (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                         <View style={styles.chartWide}>
-                          {chartData.map((d, i) => (
+                          {chartSource.map((d, i) => (
                             <View key={d.date} style={styles.barColNarrow}>
                               <View style={styles.barTrack}>
                                 <View
@@ -297,7 +447,7 @@ export default function HomeScreen() {
                                 />
                               </View>
                               <Text style={[styles.barLabel, d.isToday && styles.barLabelToday]}>
-                                {i % 5 === 0 || d.isToday ? d.dayLabel : ''}
+                                {i % 5 === 0 || d.isToday ? d.displayLabel : ''}
                               </Text>
                             </View>
                           ))}
@@ -517,6 +667,72 @@ export default function HomeScreen() {
         />
         <View style={styles.sheetSpacer} />
       </BottomSheet>
+
+      <BottomSheet
+        visible={showPeriodSheet}
+        onClose={() => setShowPeriodSheet(false)}
+        title={t('dashboard.selectPeriod')}
+      >
+        {periodOptions
+          .filter((option) => !option.hidden)
+          .map((option) => {
+            const active = period === option.value;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.periodOption, active && styles.periodOptionActive]}
+                onPress={() => {
+                  if (option.value === 'custom') {
+                    setPeriod('custom');
+                    return;
+                  }
+                  setPeriod(option.value);
+                  setShowPeriodSheet(false);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.periodOptionLabel, active && styles.periodOptionLabelActive]}>
+                  {option.label}
+                </Text>
+                {active ? <Ionicons name="checkmark-circle" size={20} color={colors.primary} /> : null}
+              </TouchableOpacity>
+            );
+          })}
+
+        {period === 'custom' ? (
+          <View style={styles.customPeriodBox}>
+            <Text style={styles.customPeriodHint}>{t('reports.dateTimeHint')}</Text>
+            <View style={styles.customPeriodRow}>
+              <View style={styles.customPeriodField}>
+                <Text style={styles.customPeriodLabel}>{t('reports.startDate')}</Text>
+                <TextInput
+                  style={styles.customPeriodInput}
+                  value={startDate}
+                  onChangeText={setStartDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={styles.customPeriodField}>
+                <Text style={styles.customPeriodLabel}>{t('reports.endDate')}</Text>
+                <TextInput
+                  style={styles.customPeriodInput}
+                  value={endDate}
+                  onChangeText={setEndDate}
+                  placeholder="YYYY-MM-DD"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+            <TouchableOpacity style={styles.customPeriodApply} onPress={applyCustom} activeOpacity={0.85}>
+              <Text style={styles.customPeriodApplyText}>{t('reports.applyRange')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        <View style={styles.sheetSpacer} />
+      </BottomSheet>
     </View>
   );
 }
@@ -622,6 +838,111 @@ const styles = StyleSheet.create({
   heroSkeleton: {
     borderRadius: radius.lg,
     marginBottom: spacing.lg,
+  },
+  periodDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.card,
+  },
+  periodDropdownCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  periodDropdownLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.muted,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  periodDropdownValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  periodDropdownRange: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  periodOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+  },
+  periodOptionActive: {
+    backgroundColor: colors.primarySoft,
+    marginHorizontal: -spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderBottomColor: 'transparent',
+  },
+  periodOptionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  periodOptionLabelActive: {
+    color: colors.primaryText,
+    fontWeight: '800',
+  },
+  customPeriodBox: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  customPeriodHint: {
+    fontSize: 12,
+    color: colors.muted,
+  },
+  customPeriodRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  customPeriodField: {
+    flex: 1,
+    gap: 4,
+  },
+  customPeriodLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  customPeriodInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+    backgroundColor: colors.inputBg,
+  },
+  customPeriodApply: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  customPeriodApplyText: {
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  cardHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: spacing.sm,
   },
   dayBanner: {
     flexDirection: 'row',

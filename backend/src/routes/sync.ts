@@ -142,7 +142,6 @@ const NON_NEGATIVE_MONEY: Record<string, string[]> = {
   payments: ['amount'],
   stock_movements: ['quantity', 'unit_cost', 'previous_quantity', 'new_quantity'],
   customers: ['credit_limit'],
-  daily_closings: ['opening_cash', 'actual_cash', 'expected_cash'],
   daily_stock_lines: ['opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty'],
 };
 
