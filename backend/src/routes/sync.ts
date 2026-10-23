@@ -183,7 +183,18 @@ function validateSyncPayload(table: string, payload: Record<string, unknown>): s
       return `${key} must be positive`;
     }
   }
-  if ((table === 'purchase_items' || table === 'sale_items' || table === 'stock_movements') && payload.quantity != null) {
+  if (table === 'purchase_items' && payload.quantity != null) {
+    if (typeof payload.quantity !== 'number' || payload.quantity < 1) {
+      return 'quantity must be at least 1';
+    }
+  }
+  // sale_items qty may be 0 after a waiter line is fully returned/reduced.
+  if (table === 'sale_items' && payload.quantity != null) {
+    if (typeof payload.quantity !== 'number' || !Number.isInteger(payload.quantity) || payload.quantity < 0) {
+      return 'quantity must be a whole non-negative number';
+    }
+  }
+  if (table === 'stock_movements' && payload.quantity != null) {
     if (typeof payload.quantity !== 'number' || payload.quantity < 1) {
       return 'quantity must be at least 1';
     }
@@ -198,12 +209,22 @@ function validateSyncPayload(table: string, payload: Record<string, unknown>): s
       return 'invalid waiter tab status';
     }
   }
-  if (
-    (table === 'waiter_tab_items') &&
-    payload.quantity != null &&
-    (typeof payload.quantity !== 'number' || payload.quantity < 1)
-  ) {
-    return 'quantity must be at least 1';
+  if (table === 'waiter_tab_items') {
+    if (payload.quantity != null) {
+      if (typeof payload.quantity !== 'number' || !Number.isInteger(payload.quantity) || payload.quantity < 1) {
+        return 'quantity must be at least 1';
+      }
+    }
+    // outstanding may drop to 0 when stock is returned / qty reduced.
+    if (payload.quantity_outstanding != null) {
+      if (
+        typeof payload.quantity_outstanding !== 'number' ||
+        !Number.isInteger(payload.quantity_outstanding) ||
+        payload.quantity_outstanding < 0
+      ) {
+        return 'quantity_outstanding must be a whole non-negative number';
+      }
+    }
   }
   if (table === 'audit_logs') {
     for (const key of ['action', 'entity']) {

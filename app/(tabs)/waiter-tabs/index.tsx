@@ -87,7 +87,7 @@ export default function WaiterTabsScreen() {
                   <Text style={styles.meta}>{t('waiterTabs.balanceDue')}</Text>
                   <MoneyText
                     amount={item.balance_due ?? 0}
-                    size={18}
+                    size={15}
                     weight="800"
                     color={colors.ink}
                   />
@@ -97,7 +97,7 @@ export default function WaiterTabsScreen() {
                     <Text style={styles.meta}>{t('waiterTabs.paidSoFar')}</Text>
                     <MoneyText
                       amount={item.paid_amount ?? 0}
-                      size={14}
+                      size={12}
                       weight="600"
                       color={colors.body}
                     />
@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     gap: spacing.sm,
   },
-  waiterName: { flex: 1, fontSize: 16, fontWeight: '700', color: colors.ink },
+  waiterName: { flex: 1, fontSize: 14, fontWeight: '700', color: colors.ink },
   cardBottom: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -149,5 +149,5 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   paidBlock: { alignItems: 'flex-end', flex: 1 },
-  meta: { fontSize: 11, fontWeight: '600', color: colors.faint, marginBottom: 2 },
+  meta: { fontSize: 10, fontWeight: '600', color: colors.faint, marginBottom: 2 },
 });

@@ -182,7 +182,7 @@ export default function IssueWaiterTabScreen() {
           onChangeText={setNotes}
         />
         <View style={styles.footerRow}>
-          <MoneyText amount={total} size={22} weight="800" color={colors.ink} />
+          <MoneyText amount={total} size={16} weight="800" color={colors.ink} />
           <Button
             title={t('waiterTabs.issueStock')}
             onPress={() => setConfirm(true)}
@@ -245,8 +245,8 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   waiterInfo: { flex: 1 },
-  waiterLabel: { fontSize: 11, fontWeight: '600', color: colors.faint },
-  waiterName: { fontSize: 16, fontWeight: '700', color: colors.ink },
+  waiterLabel: { fontSize: 10, fontWeight: '600', color: colors.faint },
+  waiterName: { fontSize: 14, fontWeight: '700', color: colors.ink },
   searchWrap: { paddingHorizontal: spacing.md, marginBottom: spacing.sm },
   list: { paddingHorizontal: spacing.md, paddingBottom: 160 },
   productRow: {
@@ -257,9 +257,9 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     gap: spacing.sm,
   },
-  productName: { fontSize: 15, fontWeight: '600', color: colors.ink },
+  productName: { fontSize: 13, fontWeight: '600', color: colors.ink },
   qtyControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  qty: { minWidth: 24, textAlign: 'center', fontWeight: '700', fontSize: 16, color: colors.ink },
+  qty: { minWidth: 22, textAlign: 'center', fontWeight: '700', fontSize: 13, color: colors.ink },
   footer: {
     position: 'absolute',
     left: 0,
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    fontSize: 14,
+    fontSize: 13,
     color: colors.ink,
   },
   footerRow: {
@@ -286,12 +286,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
-  emptyWaiters: { padding: spacing.md, color: colors.body, textAlign: 'center' },
+  emptyWaiters: { padding: spacing.md, color: colors.body, textAlign: 'center', fontSize: 13 },
   waiterOption: {
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  waiterOptionName: { fontSize: 16, fontWeight: '600', color: colors.ink },
-  waiterOptionRole: { fontSize: 12, color: colors.faint, marginTop: 2 },
+  waiterOptionName: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  waiterOptionRole: { fontSize: 11, color: colors.faint, marginTop: 2 },
 });

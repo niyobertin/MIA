@@ -16,7 +16,7 @@ import {
   waiterTabItemRepository,
 } from '@/repositories/waiters/waiterTabs';
 import { queueSync } from '@/services/sync/queue';
-import { requireOpenSession } from './session';
+import { getOpenSession, requireOpenSession } from './session';
 import { recordStockMovement } from './recordStockMovement';
 import { settleCustomerAccount } from './settle';
 import { audit } from './audit';
@@ -308,7 +308,278 @@ export async function addItemsToWaiterTab(input: {
   return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId))!;
 }
 
-/** Return outstanding qty from draft (or unpaid debt before settle) — stock comes back. */
+/**
+ * Bump or reduce qty on an open tab line (±1 typical).
+ * Decrease returns stock; increase issues more. Blocks if reducing would
+ * drop the tab total below what has already been paid.
+ */
+export async function adjustWaiterTabItemQuantity(input: {
+  businessId: string;
+  tabId: string;
+  itemId: string;
+  delta: number;
+  userId: string;
+  deviceId: string;
+  role: UserRole | null;
+}): Promise<WaiterTab> {
+  if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
+  if (!Number.isInteger(input.delta) || input.delta === 0) {
+    throw guardError('INVALID_QUANTITY');
+  }
+
+  const session = await requireOpenSession(input.businessId);
+  const { tab, items } = await loadTabBundle(input.tabId, input.businessId);
+  if (tab.status !== 'draft' && tab.status !== 'partial') {
+    throw guardError('TAB_NOT_OPEN');
+  }
+
+  const item = items.find((i) => i.id === input.itemId);
+  if (!item) throw guardError('ITEM_NOT_FOUND');
+
+  const nextOutstanding = item.quantity_outstanding + input.delta;
+  if (nextOutstanding < 0) throw guardError('RETURN_EXCEEDS');
+
+  const otherTotal = items
+    .filter((i) => i.id !== item.id)
+    .reduce((s, i) => s + i.quantity_outstanding * i.selling_price, 0);
+  const nextTabTotal = otherTotal + nextOutstanding * item.selling_price;
+  if (nextTabTotal < (tab.paid_amount ?? 0)) {
+    throw guardError('BELOW_PAID_AMOUNT');
+  }
+
+  const product = await productRepository.findById(item.product_id, input.businessId);
+  const abs = Math.abs(input.delta);
+
+  if (input.delta > 0) {
+    if (product?.track_inventory) {
+      await recordStockMovement({
+        businessId: input.businessId,
+        productId: item.product_id,
+        userId: input.userId,
+        deviceId: input.deviceId,
+        role: input.role,
+        type: 'adjustment_out',
+        quantity: abs,
+        unitCost: item.unit_cost,
+        referenceType: 'adjustment',
+        referenceId: tab.id,
+        sessionId: session.id,
+        reason: 'Waiter qty increase',
+      });
+    }
+    const updatedItem = await waiterTabItemRepository.update(item.id, input.businessId, {
+      quantity: item.quantity + abs,
+      quantity_outstanding: nextOutstanding,
+    });
+    if (updatedItem) {
+      await queueSync(
+        'waiter_tab_items',
+        item.id,
+        'update',
+        updatedItem as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+    if (tab.sale_id) {
+      await bumpLinkedSaleLine({
+        businessId: input.businessId,
+        saleId: tab.sale_id,
+        customerId: tab.customer_id,
+        productId: item.product_id,
+        sellingPrice: item.selling_price,
+        unitCost: item.unit_cost,
+        deltaQty: abs,
+      });
+    }
+  } else {
+    if (product?.track_inventory) {
+      await recordStockMovement({
+        businessId: input.businessId,
+        productId: item.product_id,
+        userId: input.userId,
+        deviceId: input.deviceId,
+        role: input.role,
+        type: 'adjustment_in',
+        quantity: abs,
+        unitCost: item.unit_cost,
+        referenceType: 'adjustment',
+        referenceId: tab.id,
+        sessionId: session.id,
+        reason: 'Waiter qty decrease',
+      });
+    }
+    const updatedItem = await waiterTabItemRepository.update(item.id, input.businessId, {
+      quantity_outstanding: nextOutstanding,
+    });
+    if (updatedItem) {
+      await queueSync(
+        'waiter_tab_items',
+        item.id,
+        'update',
+        updatedItem as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+    if (tab.sale_id) {
+      await bumpLinkedSaleLine({
+        businessId: input.businessId,
+        saleId: tab.sale_id,
+        customerId: tab.customer_id,
+        productId: item.product_id,
+        sellingPrice: item.selling_price,
+        unitCost: item.unit_cost,
+        deltaQty: -abs,
+      });
+    }
+  }
+
+  const remaining = await waiterTabItemRepository.findByTab(tab.id, input.businessId);
+  const stillOut = remaining.reduce((s, i) => s + i.quantity_outstanding, 0);
+  if (stillOut === 0 && (tab.paid_amount ?? 0) === 0 && tab.status === 'draft') {
+    const cancelled = await waiterTabRepository.update(tab.id, input.businessId, {
+      status: 'cancelled',
+      sync_status: 'pending',
+    });
+    if (cancelled) {
+      await queueSync(
+        'waiter_tabs',
+        tab.id,
+        'update',
+        cancelled as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+  } else {
+    const refreshed = await waiterTabRepository.update(tab.id, input.businessId, {
+      sync_status: 'pending',
+    });
+    if (refreshed) {
+      await queueSync(
+        'waiter_tabs',
+        tab.id,
+        'update',
+        refreshed as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+  }
+
+  await audit({
+    businessId: input.businessId,
+    userId: input.userId,
+    role: input.role,
+    action: 'waiter.adjust_qty',
+    entity: 'waiter_tab',
+    entityId: tab.id,
+    after: { item_id: item.id, delta: input.delta },
+    deviceId: input.deviceId,
+  });
+
+  return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId))!;
+}
+
+async function bumpLinkedSaleLine(input: {
+  businessId: string;
+  saleId: string;
+  customerId: string | null;
+  productId: string;
+  sellingPrice: number;
+  unitCost: number;
+  deltaQty: number;
+}): Promise<void> {
+  const sale = await saleRepository.findById(input.saleId, input.businessId);
+  if (!sale || sale.voided) return;
+
+  const moneyDelta = input.deltaQty * input.sellingPrice;
+  const saleItems = await saleItemRepository.findBySale(input.saleId, input.businessId);
+  const match = saleItems.find((si) => si.product_id === input.productId);
+
+  if (input.deltaQty > 0) {
+    if (match) {
+      const nextQty = match.quantity + input.deltaQty;
+      const nextLine = nextQty * match.selling_price;
+      const updated = await saleItemRepository.update(match.id, input.businessId, {
+        quantity: nextQty,
+        total_amount: nextLine,
+      });
+      if (updated) {
+        await queueSync(
+          'sale_items',
+          match.id,
+          'update',
+          updated as unknown as Record<string, unknown>,
+          input.businessId
+        );
+      }
+    } else {
+      const saleItem = await saleItemRepository.create({
+        id: generateUUID(),
+        business_id: input.businessId,
+        sale_id: input.saleId,
+        product_id: input.productId,
+        quantity: input.deltaQty,
+        selling_price: input.sellingPrice,
+        unit_cost: input.unitCost,
+        discount_amount: 0,
+        tax_amount: 0,
+        total_amount: moneyDelta,
+      });
+      await queueSync(
+        'sale_items',
+        saleItem.id,
+        'insert',
+        saleItem as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+  } else if (match) {
+    const nextQty = Math.max(0, match.quantity + input.deltaQty);
+    const updated = await saleItemRepository.update(match.id, input.businessId, {
+      quantity: nextQty,
+      total_amount: nextQty * match.selling_price,
+    });
+    if (updated) {
+      await queueSync(
+        'sale_items',
+        match.id,
+        'update',
+        updated as unknown as Record<string, unknown>,
+        input.businessId
+      );
+    }
+  }
+
+  const nextTotal = Math.max(0, sale.total_amount + moneyDelta);
+  const nextSub = Math.max(0, sale.subtotal + moneyDelta);
+  const updatedSale = await saleRepository.update(input.saleId, input.businessId, {
+    subtotal: nextSub,
+    total_amount: nextTotal,
+    payment_status:
+      sale.paid_amount >= nextTotal && nextTotal > 0
+        ? 'paid'
+        : sale.paid_amount > 0
+          ? 'partial'
+          : 'credit',
+    sync_status: 'pending',
+  });
+  if (updatedSale) {
+    await queueSync(
+      'sales',
+      input.saleId,
+      'update',
+      updatedSale as unknown as Record<string, unknown>,
+      input.businessId
+    );
+  }
+  if (input.customerId) {
+    await settleCustomerAccount(input.businessId, input.customerId);
+  }
+}
+
+/**
+ * Partial or full return of outstanding lines. Stock always comes back
+ * (adjustment_in / return_in). Linked credit sale totals are reduced when present.
+ */
 export async function returnWaiterTabItems(input: {
   businessId: string;
   tabId: string;
@@ -319,9 +590,16 @@ export async function returnWaiterTabItems(input: {
   reason?: string;
 }): Promise<WaiterTab> {
   if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
+  if (!input.returns.length) throw guardError('ITEMS_REQUIRED');
+
   const session = await requireOpenSession(input.businessId);
   const { tab, items } = await loadTabBundle(input.tabId, input.businessId);
-  if (tab.status !== 'draft' && tab.status !== 'partial' && tab.status !== 'debt') {
+  if (
+    tab.status !== 'draft' &&
+    tab.status !== 'partial' &&
+    tab.status !== 'debt' &&
+    tab.status !== 'paid'
+  ) {
     throw guardError('TAB_NOT_RETURNABLE');
   }
 
@@ -348,40 +626,90 @@ export async function returnWaiterTabItems(input: {
       );
     }
 
+    // Stock must return to inventory for every returned unit.
     if (product?.track_inventory) {
+      const hasSale = !!tab.sale_id;
       await recordStockMovement({
         businessId: input.businessId,
         productId: item.product_id,
         userId: input.userId,
         deviceId: input.deviceId,
         role: input.role,
-        type: 'adjustment_in',
+        type: hasSale ? 'return_in' : 'adjustment_in',
         quantity: ret.quantity,
         unitCost: item.unit_cost,
-        referenceType: 'adjustment',
-        referenceId: tab.id,
+        referenceType: hasSale ? 'sale_return' : 'adjustment',
+        referenceId: hasSale ? tab.sale_id : tab.id,
         sessionId: session.id,
         reason: input.reason?.trim() || 'Waiter return',
       });
     }
+
+    if (tab.sale_id) {
+      await bumpLinkedSaleLine({
+        businessId: input.businessId,
+        saleId: tab.sale_id,
+        customerId: tab.customer_id,
+        productId: item.product_id,
+        sellingPrice: item.selling_price,
+        unitCost: item.unit_cost,
+        deltaQty: -ret.quantity,
+      });
+    }
+
+    item.quantity_outstanding = nextOutstanding;
   }
 
   const remaining = await waiterTabItemRepository.findByTab(tab.id, input.businessId);
   const stillOut = remaining.reduce((s, i) => s + i.quantity_outstanding, 0);
-  if (stillOut === 0 && tab.status === 'draft') {
-    const cancelled = await waiterTabRepository.update(tab.id, input.businessId, {
-      status: 'cancelled',
-      sync_status: 'pending',
-    });
-    if (cancelled) {
-      await queueSync(
-        'waiter_tabs',
-        tab.id,
-        'update',
-        cancelled as unknown as Record<string, unknown>,
-        input.businessId
-      );
+  const nextTotal = remaining.reduce(
+    (s, i) => s + i.quantity_outstanding * i.selling_price,
+    0
+  );
+
+  let nextStatus: WaiterTab['status'] = tab.status;
+  if (stillOut === 0) {
+    nextStatus = 'cancelled';
+    if (tab.sale_id) {
+      const sale = await saleRepository.findById(tab.sale_id, input.businessId);
+      if (sale && !sale.voided) {
+        const voided = await saleRepository.update(tab.sale_id, input.businessId, {
+          voided: true,
+          sync_status: 'pending',
+        });
+        if (voided) {
+          await queueSync(
+            'sales',
+            tab.sale_id,
+            'update',
+            voided as unknown as Record<string, unknown>,
+            input.businessId
+          );
+        }
+      }
+      if (tab.customer_id) {
+        await settleCustomerAccount(input.businessId, tab.customer_id);
+      }
     }
+  } else if (tab.status === 'paid' || tab.status === 'partial' || tab.status === 'debt') {
+    const paid = tab.paid_amount ?? 0;
+    if (paid <= 0) nextStatus = tab.status === 'debt' ? 'debt' : 'draft';
+    else if (paid >= nextTotal) nextStatus = 'paid';
+    else nextStatus = tab.status === 'debt' ? 'debt' : 'partial';
+  }
+
+  const updated = await waiterTabRepository.update(tab.id, input.businessId, {
+    status: nextStatus,
+    sync_status: 'pending',
+  });
+  if (updated) {
+    await queueSync(
+      'waiter_tabs',
+      tab.id,
+      'update',
+      updated as unknown as Record<string, unknown>,
+      input.businessId
+    );
   }
 
   await audit({
@@ -391,7 +719,7 @@ export async function returnWaiterTabItems(input: {
     action: 'waiter.return',
     entity: 'waiter_tab',
     entityId: tab.id,
-    after: { returns: input.returns },
+    after: { returns: input.returns, status: nextStatus },
     reason: input.reason,
     deviceId: input.deviceId,
   });
@@ -524,7 +852,10 @@ export async function recordWaiterPayment(input: {
   if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
   if (!Number.isInteger(input.amount) || input.amount < 1) throw guardError('INVALID_PRICE');
 
-  const session = await requireOpenSession(input.businessId);
+  // Prefer the open session so cash lands in today's books. If the day is already
+  // closed, still allow collecting on an existing credit sale / debt tab — that
+  // happens often when a waiter pays after close.
+  const openSession = await getOpenSession(input.businessId);
   const { tab, items } = await loadTabBundle(input.tabId, input.businessId);
   if (tab.status !== 'draft' && tab.status !== 'partial' && tab.status !== 'debt') {
     throw guardError('TAB_NOT_PAYABLE');
@@ -544,13 +875,15 @@ export async function recordWaiterPayment(input: {
 
   let saleId = tab.sale_id;
   if (!saleId) {
+    // Creating the credit sale needs an open session for session_id / books.
+    if (!openSession) throw guardError('DAY_CLOSED');
     saleId = await createSaleFromTab({
       businessId: input.businessId,
       tab,
       items,
       userId: input.userId,
       deviceId: input.deviceId,
-      sessionId: session.id,
+      sessionId: openSession.id,
       paymentMethod: 'credit',
       paid: false,
     });
@@ -560,7 +893,7 @@ export async function recordWaiterPayment(input: {
   const payment = await paymentRepository.create({
     id: generateUUID(),
     business_id: input.businessId,
-    session_id: session.id,
+    session_id: openSession?.id ?? null,
     type: 'customer_payment',
     payment_method: input.paymentMethod,
     amount: input.amount,
@@ -751,7 +1084,7 @@ export async function convertOpenWaiterDraftsToDebt(input: {
   return converted;
 }
 
-/** Return stock from a paid tab (same session or open session) and void/adjust the sale. */
+/** Full return shortcut — returns every outstanding unit (stock + sale updated). */
 export async function returnPaidWaiterTab(input: {
   businessId: string;
   tabId: string;
@@ -760,85 +1093,11 @@ export async function returnPaidWaiterTab(input: {
   role: UserRole | null;
   reason: string;
 }): Promise<WaiterTab> {
-  if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
   if (!input.reason.trim()) throw guardError('REASON_REQUIRED');
-
-  const session = await requireOpenSession(input.businessId);
-  const { tab, items } = await loadTabBundle(input.tabId, input.businessId);
-  if (tab.status !== 'paid' && tab.status !== 'debt') {
-    throw guardError('TAB_NOT_RETURNABLE');
-  }
-
-  for (const item of items) {
-    if (item.quantity_outstanding < 1) continue;
-    const product = await productRepository.findById(item.product_id, input.businessId);
-    if (product?.track_inventory) {
-      await recordStockMovement({
-        businessId: input.businessId,
-        productId: item.product_id,
-        userId: input.userId,
-        deviceId: input.deviceId,
-        role: input.role,
-        type: 'return_in',
-        quantity: item.quantity_outstanding,
-        unitCost: item.unit_cost,
-        referenceType: 'sale_return',
-        referenceId: tab.sale_id,
-        sessionId: session.id,
-        reason: input.reason.trim(),
-      });
-    }
-    await waiterTabItemRepository.update(item.id, input.businessId, {
-      quantity_outstanding: 0,
-    });
-  }
-
-  if (tab.sale_id) {
-    const sale = await saleRepository.findById(tab.sale_id, input.businessId);
-    if (sale && !sale.voided) {
-      const voided = await saleRepository.update(tab.sale_id, input.businessId, {
-        voided: true,
-        sync_status: 'pending',
-      });
-      if (voided) {
-        await queueSync(
-          'sales',
-          tab.sale_id,
-          'update',
-          voided as unknown as Record<string, unknown>,
-          input.businessId
-        );
-      }
-    }
-    if (tab.customer_id) {
-      await settleCustomerAccount(input.businessId, tab.customer_id);
-    }
-  }
-
-  const updated = await waiterTabRepository.update(tab.id, input.businessId, {
-    status: 'cancelled',
-    sync_status: 'pending',
-  });
-  if (updated) {
-    await queueSync(
-      'waiter_tabs',
-      tab.id,
-      'update',
-      updated as unknown as Record<string, unknown>,
-      input.businessId
-    );
-  }
-
-  await audit({
-    businessId: input.businessId,
-    userId: input.userId,
-    role: input.role,
-    action: 'waiter.return_paid',
-    entity: 'waiter_tab',
-    entityId: tab.id,
-    reason: input.reason,
-    deviceId: input.deviceId,
-  });
-
-  return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId))!;
+  const { items } = await loadTabBundle(input.tabId, input.businessId);
+  const returns = items
+    .filter((i) => i.quantity_outstanding > 0)
+    .map((i) => ({ itemId: i.id, quantity: i.quantity_outstanding }));
+  if (returns.length === 0) throw guardError('TAB_EMPTY');
+  return returnWaiterTabItems({ ...input, returns, reason: input.reason });
 }

@@ -2006,6 +2006,27 @@ export function useAddWaiterTabItems() {
   });
 }
 
+export function useAdjustWaiterTabItem() {
+  const queryClient = useQueryClient();
+  const businessId = getBusinessId();
+  return useMutation({
+    mutationFn: async (data: { tabId: string; itemId: string; delta: number }) => {
+      const { userId, deviceId } = requireAuthContext();
+      const { adjustWaiterTabItemQuantity } = await import('@/services/books/waiterTabs');
+      return adjustWaiterTabItemQuantity({
+        businessId,
+        tabId: data.tabId,
+        itemId: data.itemId,
+        delta: data.delta,
+        userId,
+        deviceId,
+        role: getRole(),
+      });
+    },
+    onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
+  });
+}
+
 export function useReturnWaiterTabItems() {
   const queryClient = useQueryClient();
   const businessId = getBusinessId();
