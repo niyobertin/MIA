@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, TextInput, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 interface SearchBarProps {
@@ -10,6 +11,7 @@ interface SearchBarProps {
 }
 
 export const SearchBar: React.FC<SearchBarProps> = ({ value, onChangeText, placeholder }) => {
+  const { t } = useTranslation();
   return (
     <View style={styles.container}>
       <Ionicons name="search" size={20} color={colors.faint} style={styles.icon} />
@@ -23,7 +25,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({ value, onChangeText, place
         accessibilityLabel={placeholder}
       />
       {value.length > 0 ? (
-        <TouchableOpacity onPress={() => onChangeText('')} hitSlop={12} accessibilityLabel="Clear search">
+        <TouchableOpacity onPress={() => onChangeText('')} hitSlop={12} accessibilityLabel={t('common.clear')}>
           <Ionicons name="close-circle" size={20} color={colors.faint} />
         </TouchableOpacity>
       ) : null}
