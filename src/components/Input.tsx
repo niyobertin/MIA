@@ -10,6 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { FormScrollContext } from './FormScrollView';
+import { colors } from '@/theme/tokens';
 
 export interface InputProps extends Omit<React.ComponentProps<typeof TextInput>, 'onChangeText' | 'value' | 'disabled'> {
   label?: string;
@@ -104,6 +105,7 @@ export const Input = React.forwardRef<TextInput, InputProps>(({
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
+          placeholderTextColor={props.placeholderTextColor ?? colors.faint}
           secureTextEntry={hideText}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
@@ -143,6 +145,7 @@ const styles = StyleSheet.create({
   },
   inputWrapper: {
     flexDirection: 'row',
+    minWidth: 0,
     alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 8,
@@ -170,6 +173,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    minWidth: 0,
     fontSize: 16,
     color: '#111827',
     paddingVertical: 12,

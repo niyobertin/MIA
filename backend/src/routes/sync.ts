@@ -499,6 +499,14 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
       if (table === 'users' && payload.password_hash == null) {
         delete payload.password_hash;
       }
+      if (
+        table === 'users' &&
+        payload.password_hash != null &&
+        payload.password_hash !== (existing as User).password_hash
+      ) {
+        payload.failed_login_attempts = 0;
+        payload.locked_until = null;
+      }
       saved = await repo.save(repo.merge(existing, payload));
     } else {
       saved = await repo.save(repo.create(payload));

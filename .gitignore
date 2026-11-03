@@ -54,12 +54,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Testing
-*.test.ts
-*.test.tsx
-*.spec.ts
-*.spec.tsx
-
 # Build
 build/
 *.tgz

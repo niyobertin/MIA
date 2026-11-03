@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ScrollView, Pressable, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -62,6 +62,78 @@ export default function StockScreen() {
     timer.current = setTimeout(() => setLiveQuery(text), 250);
   };
 
+  const statusCounts = React.useMemo(() => {
+    let low = 0;
+    let out = 0;
+    for (const p of products ?? []) {
+      if (p.track_inventory) {
+        const stock = p.current_stock ?? 0;
+        if (stock <= 0) out++;
+        else if (stock <= (p.reorder_level ?? 0)) low++;
+      }
+    }
+    return { low, out };
+  }, [products]);
+
+  const categoryCounts = React.useMemo(() => {
+    const counts: Record<string, number> = { all: products?.length ?? 0 };
+    for (const p of products ?? []) {
+      if (p.category_id) {
+        counts[p.category_id] = (counts[p.category_id] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [products]);
+
+  const filterOptions = React.useMemo(() => {
+    const list: Array<{
+      id: string;
+      label: string;
+      count?: number;
+      icon?: keyof typeof Ionicons.glyphMap;
+      variant?: 'default' | 'warning' | 'danger';
+    }> = [
+      {
+        id: 'all',
+        label: t('common.all'),
+        count: products?.length ?? 0,
+        icon: 'layers-outline',
+      },
+    ];
+
+    if (statusCounts.low > 0) {
+      list.push({
+        id: 'status_low',
+        label: t('stock.lowStock'),
+        count: statusCounts.low,
+        icon: 'alert-circle-outline',
+        variant: 'warning',
+      });
+    }
+
+    if (statusCounts.out > 0) {
+      list.push({
+        id: 'status_out',
+        label: t('stock.outOfStock'),
+        count: statusCounts.out,
+        icon: 'close-circle-outline',
+        variant: 'danger',
+      });
+    }
+
+    for (const cat of categories ?? []) {
+      const count = categoryCounts[cat.id] ?? 0;
+      list.push({
+        id: cat.id,
+        label: cat.name,
+        count,
+        icon: 'folder-outline',
+      });
+    }
+
+    return list;
+  }, [products, categories, statusCounts, categoryCounts, t]);
+
   const filteredProducts = React.useMemo(() => {
     let result = products ?? [];
     if (liveQuery) {
@@ -73,11 +145,35 @@ export default function StockScreen() {
           p.barcode?.toLowerCase().includes(q)
       );
     }
-    if (selectedCategory !== 'all') {
+    if (selectedCategory === 'status_low') {
+      result = result.filter(
+        (p) =>
+          p.track_inventory &&
+          (p.current_stock ?? 0) <= (p.reorder_level ?? 0) &&
+          (p.current_stock ?? 0) > 0
+      );
+    } else if (selectedCategory === 'status_out') {
+      result = result.filter((p) => p.track_inventory && (p.current_stock ?? 0) <= 0);
+    } else if (selectedCategory !== 'all') {
       result = result.filter((p) => p.category_id === selectedCategory);
     }
     return result;
   }, [products, liveQuery, selectedCategory]);
+
+  const stats = React.useMemo(() => {
+    const list = products ?? [];
+    const totalCount = list.length;
+    let totalValue = 0;
+    let lowCount = 0;
+    for (const p of list) {
+      const stock = p.current_stock ?? 0;
+      totalValue += stock * (p.average_cost ?? 0);
+      if (p.track_inventory && stock <= (p.reorder_level ?? 0)) {
+        lowCount++;
+      }
+    }
+    return { totalCount, totalValue, lowCount };
+  }, [products]);
 
   const canEdit = canManageInventory(user?.role);
 
@@ -170,28 +266,83 @@ export default function StockScreen() {
             {(filteredProducts?.length ?? 0)} {t('stock.products').toLowerCase()}
           </Text>
         </View>
-        <SyncIndicator compact />
+        <View style={styles.headerRight}>
+          {reorderRows.length > 0 ? (
+            <TouchableOpacity
+              style={styles.headerCartBtn}
+              onPress={() => router.push('/reorder' as any)}
+              accessibilityRole="button"
+              accessibilityLabel={t('stock.buySuggestions')}
+              hitSlop={8}
+            >
+              <Ionicons name="cart-outline" size={22} color={colors.ink} />
+              <View style={styles.headerCartBadge}>
+                <Text style={styles.headerCartBadgeText}>{reorderRows.length}</Text>
+              </View>
+            </TouchableOpacity>
+          ) : null}
+          <SyncIndicator compact />
+        </View>
+      </View>
+
+      {/* SUMMARY BANNER */}
+      <View style={styles.summaryBar}>
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryLabel}>{t('stock.totalProductsCount')}</Text>
+          <Text style={styles.summaryValue}>{stats.totalCount}</Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryLabel}>{t('stock.lowStockItems')}</Text>
+          <View style={styles.lowWrap}>
+            {stats.lowCount > 0 ? <View style={styles.lowDot} /> : null}
+            <Text style={[styles.summaryValue, stats.lowCount > 0 && { color: colors.warningText }]}>
+              {stats.lowCount}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={[styles.summaryItem, { flex: 1.2 }]}>
+          <Text style={styles.summaryLabel}>{t('stock.totalValuation')}</Text>
+          <MoneyText amount={stats.totalValue} size={15} weight="800" color={colors.ink} />
+        </View>
       </View>
 
       {reorderRows.length > 0 ? (
         <Pressable
-          style={({ pressed }) => [styles.reorderButton, pressed && styles.reorderButtonPressed]}
+          style={({ pressed }) => [styles.reorderCard, pressed && styles.reorderCardPressed]}
           onPress={() => router.push('/reorder' as any)}
           accessibilityRole="button"
         >
-          <View style={styles.reorderIcon}>
-            <Ionicons name="cart-outline" size={20} color={colors.white} />
+          <View style={styles.reorderCartIconWrap}>
+            <Ionicons name="cart" size={22} color="#D97706" />
+            {reorderOutCount > 0 ? <View style={styles.cartOutBadgeDot} /> : null}
           </View>
-          <View style={styles.reorderInfo}>
-            <Text style={styles.reorderTitle}>
-              {t('stock.buySuggestionsCount', { count: reorderRows.length })}
-            </Text>
-            <Text style={styles.reorderSub} numberOfLines={1}>
-              {reorderOutCount > 0 ? `${t('stock.outOfStock')}: ${reorderOutCount} · ` : ''}
-              <MoneyText amount={reorderTotalCost} size={12} weight="700" color={colors.ink} />
+          <View style={styles.reorderCardBody}>
+            <View style={styles.reorderTitleRow}>
+              <Text style={styles.reorderCardTitle}>
+                {t('stock.buySuggestions')}
+              </Text>
+              <View style={styles.reorderCountPill}>
+                <Text style={styles.reorderCountPillText}>
+                  {reorderRows.length}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.reorderSubText} numberOfLines={1}>
+              {reorderOutCount > 0 ? (
+                <Text style={styles.reorderOutText}>
+                  {reorderOutCount} {t('stock.outOfStock')} ·{' '}
+                </Text>
+              ) : null}
+              {t('stock.estimatedCost')}:{' '}
+              <MoneyText amount={reorderTotalCost} size={12} weight="800" color="#92400E" />
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+          <View style={styles.reorderActionCta}>
+            <Text style={styles.reorderActionCtaText}>{t('stock.buyStock')}</Text>
+            <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
+          </View>
         </Pressable>
       ) : null}
 
@@ -203,22 +354,24 @@ export default function StockScreen() {
         />
       </View>
 
-      {categories && categories.length > 0 ? (
-        <FlatList
-          horizontal
-          data={[{ id: 'all', name: t('common.all') }, ...categories]}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <FilterChip
-              label={item.name}
-              selected={selectedCategory === item.id}
-              onPress={() => setSelectedCategory(item.id)}
-            />
-          )}
-          contentContainerStyle={styles.chips}
-          showsHorizontalScrollIndicator={false}
-        />
-      ) : null}
+      <FlatList
+        horizontal
+        data={filterOptions}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <FilterChip
+            label={item.label}
+            count={item.count}
+            icon={item.icon}
+            variant={item.variant}
+            selected={selectedCategory === item.id}
+            onPress={() => setSelectedCategory(item.id)}
+          />
+        )}
+        style={styles.chipList}
+        contentContainerStyle={styles.chips}
+        showsHorizontalScrollIndicator={false}
+      />
 
 
       {isLoading ? (
@@ -361,56 +514,187 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
   },
-  searchWrap: {
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  chips: {
-    paddingHorizontal: spacing.lg,
-    gap: spacing.sm,
-    paddingBottom: spacing.sm,
-  },
-  list: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: 120,
-  },
-  reorderButton: {
+  summaryBar: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    gap: spacing.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
-  reorderButtonPressed: {
-    opacity: 0.7,
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
   },
-  reorderIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primary,
+  summaryDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: colors.border,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.muted,
+    marginBottom: 2,
+  },
+  summaryValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  lowWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  lowDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.warning,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerCartBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  reorderInfo: {
+  headerCartBadge: {
+    position: 'absolute',
+    top: -3,
+    right: -4,
+    backgroundColor: '#D97706',
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.white,
+  },
+  headerCartBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  searchWrap: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  chipList: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  chips: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    alignItems: 'center',
+  },
+  list: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 120,
+  },
+  reorderCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    backgroundColor: '#FFFBEB',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  reorderCardPressed: {
+    opacity: 0.8,
+  },
+  reorderCartIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartOutBadgeDot: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+    borderWidth: 1.5,
+    borderColor: '#FEF3C7',
+  },
+  reorderCardBody: {
     flex: 1,
     minWidth: 0,
   },
-  reorderTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.ink,
+  reorderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
   },
-  reorderSub: {
+  reorderCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  reorderCountPill: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  reorderCountPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  reorderSubText: {
     fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
+    color: '#78350F',
+  },
+  reorderOutText: {
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  reorderActionCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#D97706',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  reorderActionCtaText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.white,
   },
   skel: {
     borderRadius: radius.lg,

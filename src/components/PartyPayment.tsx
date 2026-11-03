@@ -23,7 +23,7 @@ import { PAYMENT_METHODS } from '@/constants';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { getTodayDateString } from '@/utils/formatters';
+import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
 
 const schema = z.object({
   partyId: z.string().min(1, 'Select a party'),
@@ -200,8 +200,13 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
                 <View style={styles.historyInfo}>
                   <Text style={styles.historyName} numberOfLines={1}>{partyNameOf(p.party_id)}</Text>
                   <Text style={styles.historySub}>
-                    {p.payment_date.slice(0, 10)} · {t(`common.${p.payment_method === 'mobile_money' ? 'mobileMoney' : p.payment_method}` as any)}
+                    {formatRecordDateTime(p.created_at || p.payment_date)} · {t(`common.${p.payment_method === 'mobile_money' ? 'mobileMoney' : p.payment_method}` as any)}
                   </Text>
+                  {p.notes ? (
+                    <Text style={styles.historyNotes} numberOfLines={1}>
+                      📝 {p.notes}
+                    </Text>
+                  ) : null}
                 </View>
                 <MoneyText amount={p.amount} size={15} weight="700" color={isCustomer ? colors.success : colors.danger} />
               </View>
@@ -253,6 +258,7 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
         title={isCustomer ? t('payments.receivePayment') : t('payments.makePayment')}
         message={`${selected?.name ?? ''} · ${(watch('amount') ?? 0).toLocaleString()} RWF`}
         confirmText={t('common.confirm')}
+        variant="primary"
       />
     </View>
   );
@@ -382,6 +388,12 @@ const styles = StyleSheet.create({
   historySub: {
     fontSize: 12,
     color: colors.muted,
+    marginTop: 2,
+  },
+  historyNotes: {
+    fontSize: 11,
+    color: colors.body,
+    fontStyle: 'italic',
     marginTop: 2,
   },
   partyList: {

@@ -31,11 +31,11 @@ API: `http://localhost:4000`
 On a phone (same Wi‑Fi): `http://YOUR_LAN_IP:4000`
 
 ## Demo seed logins
-| Role | Email | Password |
+| Role | Email | PIN |
 |------|-------|----------|
-| OWNER | `owner@mia.rw` | `Owner123!` |
-| MANAGER | `manager@mia.rw` | `Manager123!` |
-| CASHIER | `cashier@mia.rw` | `Cashier123!` |
+| OWNER | `owner@mia.rw` | `1357` |
+| MANAGER | `manager@mia.rw` | `2468` |
+| CASHIER | `cashier@mia.rw` | `3579` |
 
 Business invite code: **`MIA-RW-DEMO`**
 

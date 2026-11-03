@@ -1,8 +1,26 @@
+import 'dotenv/config';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-insecure-secret-change-me';
+const DEV_JWT_SECRET = 'dev-insecure-secret-change-me';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const BCRYPT_ROUNDS = 12;
+
+function resolveJwtSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim();
+  const weak = !secret || secret === DEV_JWT_SECRET || secret.startsWith('change-me') || secret.length < 32;
+  if (weak) {
+    if (IS_PRODUCTION) {
+      throw new Error('JWT_SECRET must be set to a random value of at least 32 characters in production');
+    }
+    console.warn('JWT_SECRET is missing or weak — using an insecure development secret.');
+    return secret || DEV_JWT_SECRET;
+  }
+  return secret;
+}
+
+const JWT_SECRET = resolveJwtSecret();
 const JWT_ACCESS_EXPIRES = process.env.JWT_EXPIRES ?? '12h';
 const JWT_REFRESH_EXPIRES = process.env.JWT_REFRESH_EXPIRES ?? '30d';
 
@@ -13,17 +31,23 @@ export type AuthTokenPayload = {
   typ?: 'access' | 'refresh';
 };
 
-/** Match the mobile app hash format: `${saltHex}:${sha256Hex}` */
+function isBcryptHash(hash: string): boolean {
+  return hash.startsWith('$2a$') || hash.startsWith('$2b$') || hash.startsWith('$2y$');
+}
+
 export async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.randomUUID().replace(/-/g, '');
-  const digest = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
-  return `${salt}:${digest}`;
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
+}
+
+/** Legacy `${saltHex}:${sha256Hex}` hashes (created by the mobile app) should be upgraded after login. */
+export function needsRehash(storedHash: string): boolean {
+  return !isBcryptHash(storedHash);
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   if (!storedHash || storedHash === 'legacy:unmigrated') return false;
 
-  if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
+  if (isBcryptHash(storedHash)) {
     return bcrypt.compare(password, storedHash);
   }
 
@@ -33,8 +57,9 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   const digest = storedHash.slice(sep + 1);
   if (!salt || !digest) return false;
 
-  const candidate = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
-  return candidate === digest;
+  const candidate = Buffer.from(crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex'));
+  const expected = Buffer.from(digest);
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
 export function signAccessToken(payload: Omit<AuthTokenPayload, 'typ'>): string {

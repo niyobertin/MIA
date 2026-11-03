@@ -1,41 +1,55 @@
+import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { settingsStorage } from '@/repositories/settings';
 
 const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/$/, '');
 const ACCESS_TOKEN_KEY = 'mia.api.token';
 const REFRESH_TOKEN_KEY = 'mia.api.refresh_token';
+const useSecureStore = Platform.OS !== 'web';
 
 export const isApiConfigured = Boolean(API_URL);
 
-export async function getAccessToken(): Promise<string | null> {
+async function readToken(key: string): Promise<string | null> {
   try {
-    return await settingsStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!useSecureStore) return await settingsStorage.getItem(key);
+    const secure = await SecureStore.getItemAsync(key);
+    if (secure) return secure;
+    const legacy = await settingsStorage.getItem(key);
+    if (legacy) {
+      await SecureStore.setItemAsync(key, legacy);
+      await settingsStorage.removeItem(key);
+    }
+    return legacy;
   } catch {
     return null;
   }
+}
+
+async function writeToken(key: string, token: string | null): Promise<void> {
+  if (!useSecureStore) {
+    if (token) await settingsStorage.setItem(key, token);
+    else await settingsStorage.removeItem(key);
+    return;
+  }
+  if (token) await SecureStore.setItemAsync(key, token);
+  else await SecureStore.deleteItemAsync(key);
+  await settingsStorage.removeItem(key);
+}
+
+export async function getAccessToken(): Promise<string | null> {
+  return readToken(ACCESS_TOKEN_KEY);
 }
 
 export async function getRefreshToken(): Promise<string | null> {
-  try {
-    return await settingsStorage.getItem(REFRESH_TOKEN_KEY);
-  } catch {
-    return null;
-  }
+  return readToken(REFRESH_TOKEN_KEY);
 }
 
 export async function setAccessToken(token: string | null): Promise<void> {
-  if (!token) {
-    await settingsStorage.removeItem(ACCESS_TOKEN_KEY);
-    return;
-  }
-  await settingsStorage.setItem(ACCESS_TOKEN_KEY, token);
+  await writeToken(ACCESS_TOKEN_KEY, token);
 }
 
 export async function setRefreshToken(token: string | null): Promise<void> {
-  if (!token) {
-    await settingsStorage.removeItem(REFRESH_TOKEN_KEY);
-    return;
-  }
-  await settingsStorage.setItem(REFRESH_TOKEN_KEY, token);
+  await writeToken(REFRESH_TOKEN_KEY, token);
 }
 
 export async function setAuthTokens(input: {
@@ -48,13 +62,27 @@ export async function setAuthTokens(input: {
 
 export async function clearAuthTokens(): Promise<void> {
   await Promise.all([
-    settingsStorage.removeItem(ACCESS_TOKEN_KEY),
-    settingsStorage.removeItem(REFRESH_TOKEN_KEY),
+    writeToken(ACCESS_TOKEN_KEY, null),
+    writeToken(REFRESH_TOKEN_KEY, null),
   ]);
 }
 
 export function getApiBaseUrl(): string {
   return API_URL;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  body: Record<string, unknown> | null;
+
+  constructor(message: string, status: number, body: Record<string, unknown> | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+    this.code = body?.code != null ? String(body.code) : null;
+  }
 }
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -145,14 +173,16 @@ export async function apiFetch<T = unknown>(
   if (!response.ok) {
     const errBody =
       body && typeof body === 'object' && body !== null
-        ? (body as { error?: unknown; conflict_session_id?: unknown })
+        ? (body as Record<string, unknown> & { error?: unknown; conflict_session_id?: unknown })
         : null;
     const message = errBody?.error != null ? String(errBody.error) : `HTTP ${response.status}`;
     const conflictId =
       errBody?.conflict_session_id != null ? String(errBody.conflict_session_id) : '';
     // Embed conflict_session_id so sync UI can adopt the server open session.
-    throw new Error(
-      conflictId ? `${message} (conflict_session:${conflictId})` : message
+    throw new ApiError(
+      conflictId ? `${message} (conflict_session:${conflictId})` : message,
+      response.status,
+      errBody
     );
   }
 

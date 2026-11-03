@@ -34,7 +34,7 @@ export class Business {
   updated_at!: Date;
 }
 
-export type UserRole = 'OWNER' | 'MANAGER' | 'CASHIER' | 'STAFF';
+export type UserRole = 'OWNER' | 'MANAGER' | 'CASHIER' | 'STAFF' | 'SUPER_ADMIN';
 
 @Entity('users')
 export class User {
@@ -56,6 +56,12 @@ export class User {
 
   @Column({ type: 'text' })
   password_hash!: string;
+
+  @Column({ type: 'integer', default: 0 })
+  failed_login_attempts!: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  locked_until!: Date | null;
 
   @Column({ type: 'text', nullable: true })
   role!: UserRole | null;

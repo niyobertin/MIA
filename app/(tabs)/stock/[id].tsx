@@ -14,7 +14,7 @@ import { Input } from '@/components/Input';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { BottomSheet } from '@/components/SegmentedControl';
 import { AddProductSheet, AddProductData } from '@/components/AddProductSheet';
-import { getInitials } from '@/utils/formatters';
+import { getInitials, formatRecordDateTime, formatCurrency } from '@/utils/formatters';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
 import { useUIStore } from '@/stores/uiStore';
 import { showToast } from '@/stores/toastStore';
@@ -82,6 +82,10 @@ export default function ProductDetailScreen() {
   const stockValue = stock !== null && product ? stock * product.average_cost : null;
   const isLow = stock !== null && product ? stock <= product.reorder_level && stock > 0 : false;
   const isOut = stock !== null ? stock <= 0 : false;
+  const unitProfit = product ? product.selling_price - product.average_cost : 0;
+  const marginPercent =
+    product && product.selling_price > 0 ? Math.round((unitProfit / product.selling_price) * 100) : 0;
+  const isProfitPositive = unitProfit >= 0;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -154,92 +158,232 @@ export default function ProductDetailScreen() {
           </>
         ) : (
           <>
-            <View style={styles.hero}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{getInitials(product.name)}</Text>
+            {/* HERO CARD */}
+            <View style={styles.heroCard}>
+              <View style={styles.heroTop}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{getInitials(product.name)}</Text>
+                </View>
+                <View style={styles.heroInfo}>
+                  <Text style={styles.name}>{product.name}</Text>
+                  <View style={styles.tagRow}>
+                    {category ? (
+                      <View style={styles.categoryBadge}>
+                        <Ionicons name="folder-outline" size={12} color={colors.primary} />
+                        <Text style={styles.categoryBadgeText}>{category.name}</Text>
+                      </View>
+                    ) : null}
+                    {product.sku ? (
+                      <View style={styles.skuBadge}>
+                        <Text style={styles.skuBadgeText}>{product.sku}</Text>
+                      </View>
+                    ) : null}
+                    {product.unit ? (
+                      <View style={styles.unitBadge}>
+                        <Text style={styles.unitBadgeText}>{product.unit}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
               </View>
-              <View style={styles.heroInfo}>
-                <Text style={styles.name}>{product.name}</Text>
-                <Text style={styles.meta}>
-                  {[product.sku, product.unit].filter(Boolean).join(' · ')}
-                </Text>
-                {category ? <Text style={styles.meta}>{category.name}</Text> : null}
-              </View>
+
               {stock !== null && product.track_inventory ? (
-                <StatusBadge
-                  label={
-                    isOut
-                      ? t('stock.outOfStock')
-                      : isLow
-                        ? `${t('stock.lowStock')} · ${stock}`
-                        : `${t('stock.inStock')} · ${stock}`
-                  }
-                  tone={isOut ? 'danger' : isLow ? 'warning' : 'success'}
-                />
+                <View style={styles.heroStatusRow}>
+                  <View
+                    style={[
+                      styles.statusPillWrap,
+                      {
+                        backgroundColor: isOut ? '#FEE2E2' : isLow ? '#FEF3C7' : '#DCFCE7',
+                        borderColor: isOut ? '#FCA5A5' : isLow ? '#FCD34D' : '#86EFAC',
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.statusDot,
+                        {
+                          backgroundColor: isOut
+                            ? colors.danger
+                            : isLow
+                              ? colors.warning
+                              : colors.success,
+                        },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPillText,
+                        {
+                          color: isOut
+                            ? colors.dangerText
+                            : isLow
+                              ? colors.warningText
+                              : colors.successText,
+                        },
+                      ]}
+                    >
+                      {isOut
+                        ? t('stock.outOfStock')
+                        : isLow
+                          ? `${t('stock.lowStock')} (${stock} ${product.unit})`
+                          : `${t('stock.inStock')} (${stock} ${product.unit})`}
+                    </Text>
+                  </View>
+                </View>
               ) : null}
             </View>
 
+            {/* ACTION SHORTCUTS */}
             {canEdit ? (
-              <View style={styles.actions}>
-                <Button variant="secondary" onPress={() => setShowEdit(true)} style={styles.actionBtn}>
-                  {t('common.edit')}
-                </Button>
-                <Button variant="danger" onPress={() => setShowDelete(true)} style={styles.actionBtn}>
-                  {t('common.delete')}
-                </Button>
+              <View style={styles.actionsBar}>
+                {product.track_inventory ? (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnPrimary]}
+                    onPress={() => router.push('/stock-in' as any)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle" size={18} color={colors.white} />
+                    <Text style={styles.actionBtnPrimaryText}>{t('navigation.stockIn')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                {product.track_inventory ? (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnSecondary]}
+                    onPress={() => setShowAdjust(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="swap-vertical" size={17} color={colors.ink} />
+                    <Text style={styles.actionBtnSecondaryText}>{t('stock.adjustStock')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnSecondary]}
+                  onPress={() => setShowEdit(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="pencil" size={16} color={colors.ink} />
+                  <Text style={styles.actionBtnSecondaryText}>{t('common.edit')}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.deleteIconButton}
+                  onPress={() => setShowDelete(true)}
+                  activeOpacity={0.8}
+                  accessibilityLabel={t('common.delete')}
+                >
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                </TouchableOpacity>
               </View>
-            ) : null}
-            {canEdit && product.track_inventory ? (
-              <Button variant="secondary" onPress={() => setShowAdjust(true)} style={styles.adjustBtn}>
-                {t('stock.adjustStock')}
-              </Button>
             ) : null}
 
-            <View style={styles.priceCard}>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>{t('stock.sellingPrice')}</Text>
-                <MoneyText amount={product.selling_price} size={20} weight="800" color={colors.ink} />
+            {/* 2X2 FINANCIAL & INVENTORY METRICS GRID */}
+            <View style={styles.metricsGrid}>
+              {/* Tile 1: Selling Price & Unit Margin */}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>{t('stock.sellingPrice')}</Text>
+                <MoneyText amount={product.selling_price} size={18} weight="800" color={colors.ink} />
+                <View
+                  style={[
+                    styles.profitBadge,
+                    {
+                      backgroundColor: isProfitPositive ? '#DCFCE7' : '#FFE4E6',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.profitBadgeText,
+                      { color: isProfitPositive ? '#15803D' : '#BE123C' },
+                    ]}
+                  >
+                    {isProfitPositive ? '+' : ''}{formatCurrency(unitProfit)} · {marginPercent}%
+                  </Text>
+                </View>
               </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>{t('stock.averageCost')}</Text>
-                <MoneyText amount={product.average_cost} size={15} weight="600" color={colors.body} />
+
+              {/* Tile 2: Cost Price / Average Cost */}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>{t('stock.averageCost')}</Text>
+                <MoneyText amount={product.average_cost} size={18} weight="800" color={colors.body} />
+                <Text style={styles.metricHelper}>{t('stock.costPrice')}</Text>
               </View>
-              <View style={styles.divider} />
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>{t('stock.currentStock')}</Text>
-                <Text style={styles.stockNumber}>{stock !== null ? stock : '—'}</Text>
+
+              {/* Tile 3: Current Stock on hand */}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>{t('stock.currentStock')}</Text>
+                <Text style={styles.stockMainNumber}>
+                  {stock !== null ? stock : '—'} <Text style={styles.stockUnitText}>{product.unit}</Text>
+                </Text>
+                <Text style={styles.metricHelper}>
+                  {t('stock.reorderLevel')}: {product.reorder_level}
+                </Text>
               </View>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>{t('stock.reorderLevel')}</Text>
-                <Text style={styles.stockNumber}>{product.reorder_level}</Text>
+
+              {/* Tile 4: Stock Valuation */}
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>{t('stock.stockValue')}</Text>
+                <MoneyText amount={stockValue ?? 0} size={18} weight="800" color={colors.ink} />
+                <Text style={styles.metricHelper}>
+                  {stock ?? 0} × {formatCurrency(product.average_cost)}
+                </Text>
               </View>
+            </View>
+
+            {/* PRODUCT SPECIFICATIONS / DETAILS */}
+            <View style={styles.detailsCard}>
+              <Text style={styles.sectionHeader}>{t('stock.priceHelpTitle')}</Text>
+
+              {category ? (
+                <View style={styles.detailRow}>
+                  <View style={styles.detailLabelWrap}>
+                    <Ionicons name="folder-outline" size={17} color={colors.muted} />
+                    <Text style={styles.detailLabel}>{t('stock.addCategory')}</Text>
+                  </View>
+                  <Text style={styles.detailValue}>{category.name}</Text>
+                </View>
+              ) : null}
+
+              {product.barcode ? (
+                <View style={styles.detailRow}>
+                  <View style={styles.detailLabelWrap}>
+                    <Ionicons name="barcode-outline" size={17} color={colors.muted} />
+                    <Text style={styles.detailLabel}>{t('stock.barcode')}</Text>
+                  </View>
+                  <Text style={styles.monoValue}>{product.barcode}</Text>
+                </View>
+              ) : null}
+
               <TouchableOpacity
-                style={styles.priceRow}
+                style={styles.detailRow}
                 onPress={canEdit ? () => setShowSupplier(true) : undefined}
                 activeOpacity={canEdit ? 0.7 : 1}
               >
-                <Text style={styles.priceLabel}>{t('stock.preferredSupplier')}</Text>
-                <View style={styles.supplierValue}>
-                  <Text style={styles.stockNumber} numberOfLines={1}>
-                    {preferredSupplier ? preferredSupplier.name : '—'}
+                <View style={styles.detailLabelWrap}>
+                  <Ionicons name="business-outline" size={17} color={colors.muted} />
+                  <Text style={styles.detailLabel}>{t('stock.preferredSupplier')}</Text>
+                </View>
+                <View style={styles.supplierValueWrap}>
+                  <Text style={styles.detailValue} numberOfLines={1}>
+                    {preferredSupplier ? preferredSupplier.name : t('stock.noSupplier')}
                   </Text>
                   {canEdit ? <Ionicons name="chevron-forward" size={16} color={colors.faint} /> : null}
                 </View>
               </TouchableOpacity>
-              <View style={styles.priceRow}>
-                <Text style={styles.priceLabel}>{t('stock.stockValue')}</Text>
-                <MoneyText amount={stockValue ?? 0} size={15} weight="700" color={colors.ink} />
-              </View>
-              {product.barcode ? (
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>{t('stock.barcode')}</Text>
-                  <Text style={styles.mono}>{product.barcode}</Text>
-                </View>
-              ) : null}
             </View>
 
+            {/* STOCK MOVEMENT HISTORY */}
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>{t('stock.movementHistory')}</Text>
+              <View style={styles.historyHeader}>
+                <Text style={styles.cardTitle}>{t('stock.movementHistory')}</Text>
+                {movements.length > 0 ? (
+                  <View style={styles.historyCountBadge}>
+                    <Text style={styles.historyCountText}>{movements.length}</Text>
+                  </View>
+                ) : null}
+              </View>
+
               {movementsQuery.isLoading ? (
                 <Skeleton height={120} />
               ) : movements.length === 0 ? (
@@ -249,18 +393,18 @@ export default function ProductDetailScreen() {
                   const incoming = IN_TYPES.includes(m.type);
                   return (
                     <View key={m.id} style={styles.moveRow}>
-                      <View style={[styles.moveIcon, { backgroundColor: incoming ? colors.successSoft : colors.dangerSoft }]}>
+                      <View style={[styles.moveIcon, { backgroundColor: incoming ? '#DCFCE7' : '#FEE2E2' }]}>
                         <Ionicons
                           name={incoming ? 'arrow-down' : 'arrow-up'}
                           size={16}
-                          color={incoming ? colors.successText : colors.dangerText}
+                          color={incoming ? '#15803D' : '#DC2626'}
                         />
                       </View>
                       <View style={styles.moveInfo}>
                         <Text style={styles.moveTitle}>{movementLabel(m.type)}</Text>
-                        <Text style={styles.moveSub}>{m.occurred_at.slice(0, 10)}</Text>
+                        <Text style={styles.moveSub}>{formatRecordDateTime(m.occurred_at)}</Text>
                       </View>
-                      <Text style={[styles.moveQty, { color: incoming ? colors.successText : colors.dangerText }]}>
+                      <Text style={[styles.moveQty, { color: incoming ? '#15803D' : '#DC2626' }]}>
                         {incoming ? '+' : '-'}{m.quantity}
                       </Text>
                     </View>
@@ -418,30 +562,34 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     marginBottom: spacing.md,
   },
-  hero: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  heroCard: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.lg,
+    padding: spacing.md,
     marginBottom: spacing.md,
-    gap: spacing.md,
     ...shadows.card,
   },
+  heroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
   avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 18,
-    backgroundColor: colors.primarySoft,
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
   avatarText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
-    color: colors.primary,
+    color: '#059669',
   },
   heroInfo: {
     flex: 1,
@@ -451,21 +599,217 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.ink,
   },
-  meta: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  actions: {
+  tagRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  categoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  categoryBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  skuBadge: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  skuBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  unitBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  unitBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.body,
+  },
+  heroStatusRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  statusPillWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  actionsBar: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 14,
+    alignItems: 'center',
   },
   actionBtn: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: radius.md,
   },
-  adjustBtn: {
-    marginTop: spacing.sm,
+  actionBtnPrimary: {
+    backgroundColor: colors.primary,
+  },
+  actionBtnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  actionBtnSecondary: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  actionBtnSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  deleteIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  metricCard: {
+    width: '48.5%',
+    flexGrow: 1,
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    ...shadows.card,
+  },
+  metricLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  profitBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 6,
+  },
+  profitBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metricHelper: {
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 4,
+  },
+  stockMainNumber: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+    fontVariant: ['tabular-nums'],
+  },
+  stockUnitText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.muted,
+  },
+  detailsCard: {
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 14,
+    ...shadows.card,
+  },
+  sectionHeader: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: 8,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 9,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  detailLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  detailLabel: {
+    fontSize: 13,
+    color: colors.body,
+  },
+  detailValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  monoValue: {
+    fontSize: 13,
+    color: colors.ink,
+    fontFamily: 'monospace',
+  },
+  supplierValueWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    justifyContent: 'flex-end',
+    marginLeft: 16,
   },
   kindRow: {
     flexDirection: 'row',
@@ -490,29 +834,6 @@ const styles = StyleSheet.create({
   kindTextActive: {
     color: colors.white,
   },
-  priceCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    ...shadows.card,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  supplierValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flex: 1,
-    justifyContent: 'flex-end',
-    marginLeft: spacing.md,
-  },
   supplierOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -534,52 +855,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.muted,
   },
-  priceLabel: {
-    fontSize: 14,
-    color: colors.body,
-  },
-  stockNumber: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.ink,
-    fontVariant: ['tabular-nums'],
-  },
-  mono: {
-    fontSize: 13,
-    color: colors.body,
-    fontFamily: 'monospace',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
   card: {
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.lg,
+    padding: 14,
     ...shadows.card,
   },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: colors.ink,
-    marginBottom: spacing.sm,
+  },
+  historyCountBadge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  historyCountText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.ink,
   },
   moveRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
-    gap: spacing.md,
+    gap: 12,
   },
   moveIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -587,8 +904,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   moveTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.ink,
   },
   moveSub: {
@@ -597,7 +914,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   moveQty: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     fontVariant: ['tabular-nums'],
   },

@@ -1,6 +1,7 @@
 export { Button } from './Button';
 export { Input } from './Input';
 export { FormInput } from './FormInput';
+export { PinInput, FormPinInput } from './PinInput';
 export { FormPicker } from './FormPicker';
 export { FormScrollView } from './FormScrollView';
 export { Logo } from './Logo';

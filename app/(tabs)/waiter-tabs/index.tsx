@@ -13,6 +13,7 @@ import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { useWaiterTabs, useOpenDailyClosing } from '@/hooks/useData';
 import { WaiterTabStatus } from '@/types';
 import { showToast } from '@/stores/toastStore';
+import { formatRecordDateTime } from '@/utils/formatters';
 
 const statusTone: Record<WaiterTabStatus, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
   draft: 'info',
@@ -77,9 +78,17 @@ export default function WaiterTabsScreen() {
               onPress={() => router.push(`/waiter-tabs/${item.id}`)}
             >
               <View style={styles.cardTop}>
-                <Text style={styles.waiterName} numberOfLines={1}>
-                  {item.waiter_name ?? '—'}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.waiterName} numberOfLines={1}>
+                    {item.waiter_name ?? '—'}
+                  </Text>
+                  <Text style={styles.cardDate}>{formatRecordDateTime(item.created_at)}</Text>
+                  {item.notes ? (
+                    <Text style={styles.cardNotes} numberOfLines={1}>
+                      📝 {item.notes}
+                    </Text>
+                  ) : null}
+                </View>
                 <StatusBadge label={statusLabel(item.status)} tone={statusTone[item.status]} />
               </View>
               <View style={styles.cardBottom}>
@@ -141,7 +150,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     gap: spacing.sm,
   },
-  waiterName: { flex: 1, fontSize: 14, fontWeight: '700', color: colors.ink },
+  waiterName: { fontSize: 14, fontWeight: '700', color: colors.ink },
+  cardDate: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  cardNotes: { fontSize: 11, color: colors.body, fontStyle: 'italic', marginTop: 2 },
   cardBottom: {
     flexDirection: 'row',
     alignItems: 'flex-end',

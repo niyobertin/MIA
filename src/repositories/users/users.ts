@@ -1,7 +1,20 @@
 import { getDatabase } from '@/db/database';
 import { generateUUID } from '@/utils/uuid';
 import { hashPassword } from '@/utils/password';
+import { getPinProblem } from '@/utils/pin';
 import { User, UserRole } from '@/types';
+
+export class PinValidationError extends Error {
+  constructor(public problem: 'pinInvalid' | 'pinTooEasy') {
+    super(problem === 'pinInvalid' ? 'PIN must be exactly 4 digits' : 'This PIN is too easy to guess');
+    this.name = 'PinValidationError';
+  }
+}
+
+function assertValidPin(pin: string | undefined): void {
+  const problem = getPinProblem(pin ?? '');
+  if (problem) throw new PinValidationError(problem);
+}
 
 type UserRow = {
   id: string;
@@ -146,9 +159,7 @@ export class UserRepository {
     if (!normalizedEmail.includes('@')) {
       throw new Error('Enter a valid email address.');
     }
-    if (!input.password || input.password.length < 6) {
-      throw new Error('Password must be at least 6 characters.');
-    }
+    assertValidPin(input.password);
 
     if (await this.emailExists(normalizedEmail)) {
       if (!input.id) {
@@ -232,7 +243,10 @@ export class UserRepository {
     return user;
   }
 
-  async createBusinessUser(input: CreateBusinessUserInput): Promise<User> {
+  async createBusinessUser(
+    input: CreateBusinessUserInput,
+    options: { allowNonPin?: boolean } = {}
+  ): Promise<User> {
     const db = await this.getDb();
     const normalizedEmail = input.email.trim().toLowerCase();
 
@@ -240,6 +254,7 @@ export class UserRepository {
       throw new Error('An account with this email already exists');
     }
 
+    if (!options.allowNonPin) assertValidPin(input.password);
     const id = generateUUID();
     const now = new Date().toISOString();
     const password_hash = await hashPassword(input.password);
@@ -319,6 +334,7 @@ export class UserRepository {
     const now = new Date().toISOString();
     const password = input.password?.trim();
     if (password) {
+      assertValidPin(password);
       const password_hash = await hashPassword(password);
       await db.runAsync(
         `UPDATE ${this.tableName}
@@ -380,6 +396,16 @@ export class UserRepository {
     return result.changes > 0;
   }
 
+  async setPin(id: string, pin: string): Promise<void> {
+    assertValidPin(pin);
+    const db = await this.getDb();
+    const password_hash = await hashPassword(pin);
+    await db.runAsync(
+      `UPDATE ${this.tableName} SET password_hash = ?, updated_at = ? WHERE id = ?`,
+      [password_hash, new Date().toISOString(), id]
+    );
+  }
+
   /** @deprecated Prefer createAccount / createBusinessUser */
   async create(entity: Omit<User, 'created_at' | 'updated_at'> & {
     id?: string;
@@ -400,7 +426,7 @@ export class UserRepository {
       phone: entity.phone,
       role: entity.role,
       businessId: entity.business_id,
-    });
+    }, { allowNonPin: !entity.password });
   }
 }
 

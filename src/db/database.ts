@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { CREATE_TABLES_SQL, CREATE_APP_SETTINGS_SQL, DROP_TABLES_SQL, DATABASE_VERSION } from './schema';
+import { toBusinessDate } from '@/utils/formatters';
 
 let db: SQLite.SQLiteDatabase | null = null;
 let initialization: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -163,10 +164,10 @@ async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promi
   const existingUsers = await database.getAllAsync<Record<string, unknown>>('SELECT * FROM users');
   const { hashPassword } = await import('@/utils/password');
   const demoPasswords: Record<string, string> = {
-    'owner@mia.rw': 'Owner123!',
-    'manager@mia.rw': 'Manager123!',
-    'cashier@mia.rw': 'Cashier123!',
-    'demo@mia.app': 'Owner123!',
+    'owner@mia.rw': '1357',
+    'manager@mia.rw': '2468',
+    'cashier@mia.rw': '3579',
+    'demo@mia.app': '1357',
   };
 
   for (const user of existingUsers) {
@@ -476,11 +477,16 @@ async function normalizeBusinessDateColumns(database: SQLite.SQLiteDatabase): Pr
         [table]
       );
       if (!exists) continue;
-      await database.runAsync(
-        `UPDATE ${table}
-         SET ${column} = substr(${column}, 1, 10)
+      const rows = await database.getAllAsync<{ id: string; value: string }>(
+        `SELECT id, ${column} AS value FROM ${table}
          WHERE ${column} IS NOT NULL AND length(${column}) > 10`
       );
+      for (const row of rows) {
+        const normalized = toBusinessDate(row.value);
+        if (normalized) {
+          await database.runAsync(`UPDATE ${table} SET ${column} = ? WHERE id = ?`, [normalized, row.id]);
+        }
+      }
     } catch {
       // ignore missing columns on partial schemas
     }

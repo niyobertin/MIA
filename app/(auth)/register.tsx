@@ -1,4 +1,4 @@
-import { FormScrollView, FormInput, Button, Logo } from '@/components';
+import { FormScrollView, FormInput, FormPinInput, Button, Logo } from '@/components';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
@@ -8,20 +8,27 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
+import { TFunction } from 'i18next';
 import { useAuthStore } from '@/stores/authStore';
+import { getPinProblem } from '@/utils/pin';
 
-const registerSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email address'),
-  phone: z.string().optional(),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'Passwords do not match',
-  path: ['confirmPassword'],
-});
+function buildRegisterSchema(t: TFunction) {
+  return z.object({
+    name: z.string().trim().min(2, t('auth.nameRequired')),
+    email: z.string().trim().email(t('auth.invalidEmail')),
+    phone: z.string().optional(),
+    password: z.string().superRefine((value, ctx) => {
+      const problem = getPinProblem(value);
+      if (problem) ctx.addIssue({ code: 'custom', message: t(`auth.${problem}`) });
+    }),
+    confirmPassword: z.string(),
+  }).refine((data) => data.password === data.confirmPassword, {
+    message: t('auth.pinMismatch'),
+    path: ['confirmPassword'],
+  });
+}
 
-type RegisterForm = z.infer<typeof registerSchema>;
+type RegisterForm = z.infer<ReturnType<typeof buildRegisterSchema>>;
 
 export default function RegisterScreen() {
   const { t } = useTranslation();
@@ -29,7 +36,8 @@ export default function RegisterScreen() {
   const registerUser = useAuthStore((s) => s.register);
   const error = useAuthStore((s) => s.error);
   const clearError = useAuthStore((s) => s.setError);
-  const { control, handleSubmit, formState: { isSubmitting, errors } } = useForm<RegisterForm>({
+  const registerSchema = React.useMemo(() => buildRegisterSchema(t), [t]);
+  const { control, handleSubmit, formState: { isSubmitting } } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
     defaultValues: { name: '', email: '', phone: '', password: '', confirmPassword: '' },
   });
@@ -97,27 +105,20 @@ export default function RegisterScreen() {
               keyboardType="phone-pad"
               autoComplete="tel"
             />
-            <FormInput
+            <FormPinInput
               control={control}
               name="password"
-              label={t('auth.password')}
-              placeholder={t('auth.password')}
-              secureTextEntry
-              autoComplete="new-password"
-              required
+              label={t('auth.createPin')}
+              helperText={t('auth.pinHelper')}
+              testID="register-pin"
             />
-            <FormInput
+            <FormPinInput
               control={control}
               name="confirmPassword"
-              label={t('auth.confirmPassword')}
-              placeholder={t('auth.confirmPassword')}
-              secureTextEntry
-              autoComplete="new-password"
-              required
+              label={t('auth.confirmPin')}
+              allowReveal={false}
+              testID="register-pin-confirm"
             />
-            {errors.confirmPassword?.message ? (
-              <Text style={styles.fieldError}>{String(errors.confirmPassword.message)}</Text>
-            ) : null}
           </View>
 
           <Button
@@ -166,6 +167,9 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
+    width: '100%',
+    maxWidth: 440,
+    alignSelf: 'center',
     paddingHorizontal: 24,
     paddingTop: 8,
     paddingBottom: 32,
@@ -196,13 +200,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     overflow: 'hidden',
   },
-  fieldError: {
-    color: '#b91c1c',
-    fontSize: 13,
-    marginTop: -8,
-  },
   form: {
-    gap: 16,
+    gap: 4,
     marginBottom: 8,
   },
   divider: {

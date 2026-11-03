@@ -50,20 +50,29 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </View>
         <View style={styles.compactMain}>
           <Text style={styles.compactName} numberOfLines={1}>{product.name}</Text>
-          <Text style={styles.compactSub} numberOfLines={1}>
-            {[product.sku, product.unit].filter(Boolean).join(' · ')}
-          </Text>
+          <View style={styles.compactMetaRow}>
+            {product.unit ? (
+              <View style={styles.compactUnitBadge}>
+                <Text style={styles.compactUnitText}>{product.unit}</Text>
+              </View>
+            ) : null}
+            {product.sku ? (
+              <Text style={styles.compactSub} numberOfLines={1}>{product.sku}</Text>
+            ) : null}
+          </View>
         </View>
         <View style={styles.compactRight}>
-          <MoneyText amount={product.selling_price} size={14} weight="700" />
+          <MoneyText amount={product.selling_price} size={15} weight="800" color="#0f172a" />
           {showStock && stock !== null && (
             <View style={[styles.compactStock, { backgroundColor: stockBg }]}>
+              <View style={[styles.compactDot, { backgroundColor: stockColor }]} />
               <Text style={[styles.compactStockText, { color: stockColor }]}>
                 {stockLabel}
               </Text>
             </View>
           )}
         </View>
+        <Text style={styles.compactArrow}>›</Text>
       </TouchableOpacity>
     );
   }
@@ -148,54 +157,95 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   compactAvatar: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#e0f2fe',
+    borderRadius: 12,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
   compactAvatarText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#0284c7',
+    fontWeight: '800',
+    color: '#15803d',
   },
   compactMain: {
     flex: 1,
     justifyContent: 'center',
+    minWidth: 0,
   },
   compactName: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  compactMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+  },
+  compactUnitBadge: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  compactUnitText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+    textTransform: 'uppercase',
   },
   compactSub: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
   },
   compactRight: {
     alignItems: 'flex-end',
     justifyContent: 'center',
-    marginLeft: 12,
+    marginLeft: 10,
   },
   compactStock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    paddingVertical: 2,
+    borderRadius: 6,
     marginTop: 4,
+  },
+  compactDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   compactStockText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  compactArrow: {
+    fontSize: 20,
+    color: '#cbd5e1',
+    fontWeight: '300',
+    marginLeft: 8,
   },
   header: {
     flexDirection: 'row',

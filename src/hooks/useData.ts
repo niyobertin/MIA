@@ -515,6 +515,10 @@ export function usePeriodStats(range: PeriodRange | null) {
           netProfit: books.data.netProfit,
           itemsSold: books.data.itemsSold,
           stockValue: books.data.stockValue,
+          expectedCash: books.data.expectedCash,
+          checkout: books.data.checkout,
+          creditSales: books.data.creditSales,
+          collections: books.data.collections,
         }
       : undefined,
   };
@@ -2061,6 +2065,7 @@ export function useRecordWaiterPayment() {
       tabId: string;
       amount: number;
       paymentMethod: 'cash' | 'mobile_money' | 'bank';
+      notes?: string | null;
     }) => {
       const { userId, deviceId } = requireAuthContext();
       const { recordWaiterPayment } = await import('@/services/books/waiterTabs');
@@ -2072,6 +2077,7 @@ export function useRecordWaiterPayment() {
         role: getRole(),
         amount: data.amount,
         paymentMethod: data.paymentMethod,
+        notes: data.notes,
       });
     },
     onSuccess: () => invalidateWaiterQueries(queryClient, businessId),

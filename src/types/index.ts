@@ -21,7 +21,7 @@ export interface User {
   updated_at: string;
 }
 
-export type UserRole = 'OWNER' | 'MANAGER' | 'CASHIER' | 'STAFF';
+export type UserRole = 'OWNER' | 'MANAGER' | 'CASHIER' | 'STAFF' | 'SUPER_ADMIN';
 
 export interface Category {
   id: string;

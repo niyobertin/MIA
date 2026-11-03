@@ -8,12 +8,14 @@ interface UIState {
   theme: 'light' | 'dark';
   isSidebarOpen: boolean;
   activeTab: string;
+  onboardingDone: boolean;
 
   setLanguage: (language: 'en' | 'rw') => void;
   setTheme: (theme: 'light' | 'dark') => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setActiveTab: (tab: string) => void;
+  setOnboardingDone: (done: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -23,6 +25,7 @@ export const useUIStore = create<UIState>()(
       theme: 'light',
       isSidebarOpen: false,
       activeTab: 'home',
+      onboardingDone: false,
 
       setLanguage: (language) => {
         void i18n.changeLanguage(language);
@@ -32,6 +35,7 @@ export const useUIStore = create<UIState>()(
       toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
       setSidebarOpen: (isSidebarOpen) => set({ isSidebarOpen }),
       setActiveTab: (activeTab) => set({ activeTab }),
+      setOnboardingDone: (onboardingDone) => set({ onboardingDone }),
     }),
     {
       name: 'mia-ui',

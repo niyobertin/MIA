@@ -37,6 +37,9 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
 import { formatTime, getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
+import DailyRecordTable from '@/components/DailyRecordTable';
+import DailyRecordsSection from '@/components/DailyRecordsSection';
+import { computeDailyRecords } from '@/services/reports/dailyRecords';
 import { shareReportPdf } from '@/utils/reportExport';
 import { showToast } from '@/stores/toastStore';
 import { seriesForPeriod } from '@/services/financial/books';
@@ -438,6 +441,25 @@ export default function ReportsScreen() {
         { label: t('reports.oldDebtCollected'), amount: collected },
         { label: t('reports.otherIncome'), amount: otherIn },
       ];
+
+      const expenseItems = (expensesQuery.data ?? []).map((e) => ({
+        date: (e.created_at || e.expense_date).slice(0, 10),
+        category: e.category,
+        description: e.description ?? '',
+        amount: e.amount,
+        paymentMethod: e.payment_method,
+      }));
+
+      const txRows = allTransactions.slice(0, 200).map((tx) => ({
+        date: tx.at.slice(0, 16).replace('T', ' '),
+        type: tx.kind,
+        title: tx.title,
+        party: tx.party,
+        amount: tx.amount,
+        outflow: tx.outflow,
+        status: tx.status,
+      }));
+
       await shareReportPdf({
         businessName: business?.name ?? 'MIA',
         businessCode: business?.business_code,
@@ -451,6 +473,7 @@ export default function ReportsScreen() {
         generatedAt: new Date().toLocaleString(),
         totalSales: stats.totalSales,
         itemsSold: stats.itemsSold,
+        cogs: showProfit ? books.cogs : null,
         grossProfit: showProfit ? stats.grossProfit : null,
         netProfit: showProfit ? stats.netProfit : null,
         expenses: stats.expenses,
@@ -459,8 +482,12 @@ export default function ReportsScreen() {
           productName: p.productName,
           quantitySold: p.quantitySold,
           totalSales: p.totalSales,
+          totalProfit: showProfit ? (p.totalProfit ?? null) : null,
+          margin: showProfit ? (p.margin ?? null) : null,
         })),
         payments: payRows,
+        expenseItems: showProfit ? expenseItems : undefined,
+        transactions: txRows,
         includeProfit: showProfit,
       });
       showToast(t('reports.exportSuccess'), 'success');
@@ -958,6 +985,12 @@ export default function ReportsScreen() {
                 <Ionicons name="share-outline" size={20} color={colors.primary} />
               )}
             </TouchableOpacity>
+
+            {/* Daily business records section */}
+            <View style={{ marginTop: 16, marginBottom: 8 }}>
+              <Text style={styles.cardTitle}>{t('reports.dailyRecords') ?? 'Daily Business Records'}</Text>
+              <DailyRecordsSection businessId={user?.business_id ?? undefined} range={{ start: range.start.slice(0, 10), end: range.end.slice(0, 10), sessionId: (range as any)?.sessionId }} t={t} />
+            </View>
           </>
         )}
       </ScrollView>

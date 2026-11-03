@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { formatCurrency } from '@/utils/formatters';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
@@ -128,18 +129,33 @@ export default function StockInScreen() {
 
   const startComplete = () => {
     if (items.length === 0) return;
-    if (!selectedSupplier) {
-      showToast(t('purchases.selectSupplier'), 'error');
+    if (!selectedSupplier && paymentMethod === 'credit') {
+      showToast(t('purchases.creditNeedsSupplier'), 'error');
       setShowSuppliers(true);
       return;
     }
     setShowConfirm(true);
   };
 
+  const walkInNames = [
+    t('purchases.walkInSupplier', { lng: 'en' }),
+    t('purchases.walkInSupplier', { lng: 'rw' }),
+  ];
+
+  const resolveSupplierId = async (): Promise<string> => {
+    if (selectedSupplier) return selectedSupplier;
+    const existing = suppliers?.find((row) => walkInNames.includes(row.name));
+    if (existing) return existing.id;
+    const created = await createSupplier.mutateAsync({ name: t('purchases.walkInSupplier') });
+    await refetchSuppliers();
+    return created.id;
+  };
+
   const confirmPurchase = async () => {
     try {
+      const supplierId = await resolveSupplierId();
       await createPurchaseMutation.mutateAsync({
-        supplierId: selectedSupplier!,
+        supplierId,
         items: items.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
@@ -173,7 +189,12 @@ export default function StockInScreen() {
         <TouchableOpacity style={styles.supplierRow} onPress={() => setShowSuppliers(true)} activeOpacity={0.8}>
           <Ionicons name="business-outline" size={24} color={colors.primary} />
           <View style={styles.supplierInfo}>
-            <Text style={styles.supplierName}>{supplier ? supplier.name : t('purchases.selectSupplier')}</Text>
+            <Text style={styles.supplierName}>{supplier
+                ? supplier.name
+                : paymentMethod === 'credit'
+                  ? t('purchases.selectSupplier')
+                  : t('purchases.supplierOptional')}
+            </Text>
             {supplier?.phone ? <Text style={styles.supplierPhone}>{supplier.phone}</Text> : null}
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.faint} />
@@ -443,8 +464,9 @@ export default function StockInScreen() {
         onClose={() => setShowConfirm(false)}
         onConfirm={confirmPurchase}
         title={t('purchases.completePurchase')}
-        message={`${supplier?.name ?? ''} · ${subtotal.toLocaleString()} RWF`}
+        message={`${supplier?.name ?? t('purchases.walkInSupplier')} · ${formatCurrency(subtotal)}`}
         confirmText={t('purchases.completePurchase')}
+        variant="primary"
       />
 
       <ConfirmModal

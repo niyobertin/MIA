@@ -17,6 +17,7 @@ export type CloudAuthUser = {
   id: string;
   email: string;
   name: string;
+  pinSetupRequired?: boolean;
 };
 
 type AuthResponse = {
@@ -34,6 +35,7 @@ type AuthResponse = {
     updated_at?: string;
   };
   business?: Record<string, unknown> | null;
+  pin_setup_required?: boolean;
 };
 
 async function persistTokens(data: AuthResponse): Promise<void> {
@@ -98,7 +100,15 @@ export async function cloudSignIn(email: string, password: string): Promise<Clou
     id: data.user.id,
     email: data.user.email,
     name: data.user.name,
+    pinSetupRequired: Boolean(data.pin_setup_required),
   };
+}
+
+export async function cloudChangePin(current: string, pin: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>('/auth/change-pin', {
+    method: 'POST',
+    body: JSON.stringify({ current, pin }),
+  });
 }
 
 export async function cloudSignOut(): Promise<void> {

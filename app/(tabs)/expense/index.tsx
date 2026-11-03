@@ -23,7 +23,7 @@ import { Expense } from '@/types';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { getTodayDateString } from '@/utils/formatters';
+import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
 
 const EXPENSE_PAYMENT_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -250,7 +250,7 @@ export default function ExpenseScreen() {
                       {e.description || t(`expenses.${e.category}` as any)}
                     </Text>
                     <Text style={styles.rowSub}>
-                      {e.expense_date.slice(0, 10)} ·{' '}
+                      {formatRecordDateTime(e.created_at || e.expense_date)} ·{' '}
                       {t(
                         `common.${e.payment_method === 'mobile_money' ? 'mobileMoney' : e.payment_method}` as any
                       )}

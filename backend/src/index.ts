@@ -5,6 +5,7 @@ import cors from 'cors';
 import { initDatabase } from './data-source';
 import { authRouter } from './routes/auth';
 import { syncRouter } from './routes/sync';
+import { rateLimit, securityHeaders } from './middleware/security';
 
 dotenv.config();
 
@@ -21,8 +22,17 @@ async function main() {
   const app = express();
   const PORT = Number(process.env.PORT ?? 4000);
   const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
+  const TRUST_PROXY = Number(process.env.TRUST_PROXY ?? 1);
 
-  app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN }));
+  if (CORS_ORIGIN === '*' && process.env.NODE_ENV === 'production') {
+    console.warn('CORS_ORIGIN=* in production — set it to your dashboard origin(s).');
+  }
+
+  app.disable('x-powered-by');
+  app.set('trust proxy', TRUST_PROXY);
+  app.use(securityHeaders);
+  app.use(rateLimit({ windowMs: 60 * 1000, max: 300 }));
+  app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN.split(',').map((o) => o.trim()) }));
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/health', (_req, res) => {

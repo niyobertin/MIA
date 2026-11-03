@@ -40,7 +40,7 @@ import {
 } from '@/hooks/useData';
 import { useSalesStore, CartItem } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
-import { debounce, formatNumber, formatTime, getInitials, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
+import { debounce, formatNumber, formatTime, formatRecordDateTime, getInitials, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
 import { toLocalDateString } from '@/utils/periodBounds';
 import { PAYMENT_METHODS } from '@/constants';
 import { Customer, Product, User } from '@/types';
@@ -72,6 +72,7 @@ export default function NewSaleScreen() {
   const issueWaiterMutation = useIssueWaiterTab();
   const createCustomer = useCreateCustomer();
   const [showAddCustomer, setShowAddCustomer] = React.useState(false);
+  const [confirmClearCart, setConfirmClearCart] = React.useState(false);
 
   const {
     cart,
@@ -510,7 +511,13 @@ export default function NewSaleScreen() {
                 <Text style={styles.totalLabel}>{t('sales.total')}</Text>
                 <MoneyText amount={getTotal()} size={22} weight="800" color={colors.ink} />
               </View>
-              <TouchableOpacity onPress={() => clearCart()} hitSlop={8} accessibilityLabel={t('sales.emptyCart')}>
+              <TouchableOpacity onPress={() => {
+                if (cart.length === 0) {
+                  clearCart();
+                  return;
+                }
+                setConfirmClearCart(true);
+              }} hitSlop={8} accessibilityLabel={t('sales.emptyCart')}>
                 <Text style={styles.clearCartText}>{t('common.delete')}</Text>
               </TouchableOpacity>
               <Button variant="primary" size="lg" fullWidth onPress={startCheckout}>
@@ -751,6 +758,22 @@ export default function NewSaleScreen() {
           <Ionicons name="person-add-outline" size={18} color={colors.primary} />
           <Text style={styles.addPartyText}>{t('customers.addCustomer')}</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.customerOption, !customerId && styles.customerOptionActive]}
+          onPress={() => {
+            setCustomer(null);
+            setShowCustomerSheet(false);
+          }}
+          activeOpacity={0.8}
+        >
+          <View style={[styles.customerAvatar, { backgroundColor: colors.borderSoft }]}>
+            <Ionicons name="walk-outline" size={22} color={colors.ink} />
+          </View>
+          <View style={styles.customerInfo}>
+            <Text style={styles.customerName}>{t('customers.walkInCustomer')}</Text>
+          </View>
+          {!customerId ? <Ionicons name="checkmark-circle" size={22} color={colors.primary} /> : null}
+        </TouchableOpacity>
         <FlatList
           data={customers ?? []}
           keyExtractor={(item) => item.id}
@@ -820,6 +843,15 @@ export default function NewSaleScreen() {
         })}
         confirmText={t('sales.sellBelowCost')}
         loading={createSaleMutation.isPending}
+      />
+
+      <ConfirmModal
+        visible={confirmClearCart}
+        onClose={() => setConfirmClearCart(false)}
+        onConfirm={() => { setConfirmClearCart(false); clearCart(); }}
+        title={t('sales.emptyCart') ?? 'Clear cart'}
+        message={t('sales.confirmClearCart') ?? 'Are you sure you want to remove all items?'}
+        confirmText={t('common.delete') ?? 'Clear'}
       />
 
       <PartyFormSheet
@@ -1085,6 +1117,7 @@ type HistorySale = {
   customer_id: string | null;
   created_at: string;
   sale_date?: string;
+  notes?: string | null;
   voided?: boolean;
 };
 
@@ -1330,10 +1363,13 @@ function SaleHistoryRow({
             {sale.reference_number ?? sale.id.slice(0, 8).toUpperCase()}
           </Text>
           <Text style={styles.historySub} numberOfLines={1}>
-            {customerName}
-            {showDate ? ` · ${saleDay}` : ''}
-            {` · ${timeLabel}`}
+            {customerName} · {formatRecordDateTime(sale.created_at || sale.sale_date)}
           </Text>
+          {sale.notes ? (
+            <Text style={[styles.historySub, { fontStyle: 'italic', color: colors.body }]} numberOfLines={1}>
+              📝 {sale.notes}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.historyRight}>
           <MoneyText
@@ -2122,12 +2158,12 @@ const styles = StyleSheet.create({
   },
   successActions: {
     width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column-reverse',
+    alignItems: 'stretch',
     gap: spacing.sm,
     marginTop: spacing.lg,
   },
   successActionBtn: {
-    flex: 1,
+    width: '100%',
   },
 });

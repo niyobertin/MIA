@@ -1,7 +1,7 @@
 import { generateUUID } from './uuid';
 
 export function formatCurrency(amount: number, currency = 'RWF'): string {
-  const formatted = (amount ?? 0).toLocaleString();
+  const formatted = (amount || 0).toLocaleString();
   return currency ? `${formatted} ${currency}` : formatted;
 }
 
@@ -41,12 +41,54 @@ export function formatTime(date: string | Date, locale = 'en-RW'): string {
   });
 }
 
+export function formatRecordDateTime(date: string | Date | null | undefined, locale = 'en-RW'): string {
+  if (!date) return '';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return String(date);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const timeStr = d.toLocaleTimeString(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  if (isToday) {
+    return `Today · ${timeStr}`;
+  }
+  if (isYesterday) {
+    return `Yesterday · ${timeStr}`;
+  }
+  const dateStr = d.toLocaleDateString(locale, {
+    day: 'numeric',
+    month: 'short',
+  });
+  return `${dateStr} · ${timeStr}`;
+}
+
 export function getTodayDateString(): string {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+export function toBusinessDate(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : null;
+  const text = date ? '' : String(value).trim();
+  if (!date && /^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const hasZone = /(Z|[+-]\d{2}(:?\d{2})?)$/.test(text);
+  const parsed = date ?? (hasZone ? new Date(text.replace(' ', 'T')) : null);
+  if (parsed && !Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return text.slice(0, 10);
 }
 
 export function getYesterdayDateString(): string {

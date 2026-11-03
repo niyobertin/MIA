@@ -28,9 +28,13 @@ import {
   useDailyClosingById,
   useRecordCount,
   useAdjustStock,
+  useDailyRecords,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';
+import DailyRecordTable from '@/components/DailyRecordTable';
+import { DailyRecordRow, DailyRecordSummary } from '@/components/DailyRecordTable';
+import { computeDailyRecords } from '@/services/reports/dailyRecords';
 import { DailyClosing } from '@/types';
 
 interface DayForm {
@@ -624,7 +628,7 @@ export default function ClosingScreen() {
             : t('cash.confirmCloseDayMessage')
         }
         confirmText={t('cash.closeDay')}
-        variant="danger"
+        variant="primary"
       />
     </View>
   );
@@ -689,29 +693,44 @@ function DayDetails({
         />
       ) : null}
 
-      <ItemQtyList
-        title={t('cash.openingItems')}
-        rows={lines.map((line) => ({
-          id: line.product_id,
-          name: line.product_name ?? line.product_id,
-          qty: line.opening_qty,
-        }))}
-        emptyLabel={t('cash.noStockItems')}
-        qtyLabel={t('cash.openingStock')}
-      />
-      <ItemQtyList
-        title={t('cash.closingItems')}
-        rows={lines.map((line) => ({
-          id: line.product_id,
-          name: line.product_name ?? line.product_id,
-          qty: line.closing_qty ?? line.opening_qty,
-          opening: line.opening_qty,
-        }))}
-        emptyLabel={t('cash.noStockItems')}
-        qtyLabel={isOpen ? t('cash.availableStock') : t('cash.availableStock')}
-        showOpening
-        openingLabel={t('cash.openingStock')}
-      />
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>{t('cash.dailyRecordTable') ?? 'Daily Stock Records'}</Text>
+        <DailyRecordTable
+          rows={lines.map((line) => ({
+            date: day.business_date?.slice(0, 10) ?? '—',
+            productName: line.product_name ?? line.product_id,
+            productId: line.product_id,
+            unit: 'pcs',
+            openingQty: line.opening_qty ?? 0,
+            openingValue: Math.round((line.opening_qty ?? 0) * 1),
+            receivedQty: 0,
+            receivedValue: 0,
+            soldQty: Math.abs((line.closing_qty ?? line.opening_qty ?? 0) - (line.opening_qty ?? 0)),
+            soldValue: 0,
+            adjustmentQty: 0,
+            adjustmentValue: 0,
+            closingQty: line.closing_qty ?? line.opening_qty ?? 0,
+            closingValue: 0,
+          }))}
+          summary={{
+            date: day.business_date?.slice(0, 10) ?? '—',
+            totalOpeningQty: lines.reduce((s, l) => s + (l.opening_qty ?? 0), 0),
+            totalReceivedQty: 0,
+            totalSoldQty: 0,
+            totalAdjustmentQty: 0,
+            totalClosingQty: lines.reduce((s, l) => s + (l.closing_qty ?? l.opening_qty ?? 0), 0),
+            totalOpeningValue: 0,
+            totalReceivedValue: 0,
+            totalSoldValue: 0,
+            totalAdjustmentValue: 0,
+            totalClosingValue: 0,
+            productCount: lines.length,
+          }}
+          t={t}
+        />
+      </View>
+
+      <View style={styles.divider} />
 
       {day.notes ? (
         <View style={styles.card}>
@@ -805,7 +824,7 @@ function FlowRow({ label, value, negative, strong }: { label: string; value: num
   return (
     <View style={styles.flowRow}>
       <Text style={StyleSheet.flatten([styles.flowLabel, strong ? styles.flowLabelStrong : null])}>{label}</Text>
-      <MoneyText amount={value} size={strong ? 16 : 14} weight={strong ? '700' : '600'} color={negative ? colors.danger : undefined} />
+      <MoneyText amount={value} size={strong ? 16 : 14} weight={strong ? '700' : '600'} color={negative && value !== 0 ? colors.danger : undefined} />
     </View>
   );
 }
@@ -821,7 +840,7 @@ function ClosedCountRow({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.lg, paddingBottom: 48 },
+  content: { padding: spacing.lg, paddingBottom: 112 },
   skel: { borderRadius: radius.lg, marginBottom: spacing.md },
   infoCard: {
     flexDirection: 'row',

@@ -94,7 +94,11 @@ export async function getAuditHistory(
   }
   params.push(options?.limit ?? 100);
   return db.getAllAsync(
-    `SELECT * FROM audit_logs WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+    `SELECT a.*, u.name AS user_name
+     FROM audit_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY a.created_at DESC LIMIT ?`,
     params as (string | number | null)[]
   );
 }

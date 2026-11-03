@@ -848,6 +848,7 @@ export async function recordWaiterPayment(input: {
   role: UserRole | null;
   amount: number;
   paymentMethod: 'cash' | 'mobile_money' | 'bank';
+  notes?: string | null;
 }): Promise<WaiterTab> {
   if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
   if (!Number.isInteger(input.amount) || input.amount < 1) throw guardError('INVALID_PRICE');
@@ -901,7 +902,9 @@ export async function recordWaiterPayment(input: {
     reference_id: tab.customer_id,
     party_id: tab.customer_id,
     payment_date: today,
-    notes: `Waiter tab ${tab.id.slice(0, 8)}`,
+    notes: input.notes?.trim()
+      ? `Waiter tab ${tab.id.slice(0, 8)} · ${input.notes.trim()}`
+      : `Waiter tab ${tab.id.slice(0, 8)}`,
     created_by: input.userId,
     device_id: input.deviceId,
     sync_status: 'pending',

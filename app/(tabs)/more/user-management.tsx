@@ -1,4 +1,4 @@
-import { FormScrollView, FormInput, FormPicker, Button } from '@/components';
+import { FormScrollView, FormInput, FormPinInput, FormPicker, Button } from '@/components';
 import React from 'react';
 import {
   View,
@@ -22,6 +22,8 @@ import { userRepository } from '@/repositories/users/users';
 import { showToast } from '@/stores/toastStore';
 import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
+import { getPinProblem } from '@/utils/pin';
+import { colors } from '@/theme/tokens';
 
 const userFormSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -140,9 +142,6 @@ export default function UserManagementScreen() {
               </Text>
             ) : null}
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={openCreate}>
-            <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
         </View>
 
         <Button variant="primary" onPress={openCreate} style={styles.createButton}>
@@ -211,13 +210,13 @@ function UserRow({
       </View>
       <View style={styles.userActions}>
         <TouchableOpacity onPress={() => onEdit(user)} hitSlop={8}>
-          <Ionicons name="create-outline" size={20} color="#0ea5e9" />
+          <Ionicons name="create-outline" size={20} color={colors.primary} />
         </TouchableOpacity>
         <Switch
           value={user.active}
           disabled={locked}
           onValueChange={(value) => onToggleActive(user.id, value)}
-          trackColor={{ false: '#e5e7eb', true: '#0ea5e9' }}
+          trackColor={{ false: colors.border, true: colors.primary }}
         />
         {role !== 'OWNER' && !isSelf ? (
           <TouchableOpacity onPress={() => onDelete(user.id)} hitSlop={8}>
@@ -262,13 +261,12 @@ function UserFormModal({
   const onSubmit = async (data: UserFormValues) => {
     if (!business) return;
     const password = data.password?.trim() ?? '';
-    if (!isEdit && password.length < 6) {
-      setError('password', { message: t('auth.passwordTooShort') });
-      return;
-    }
-    if (isEdit && password.length > 0 && password.length < 6) {
-      setError('password', { message: t('auth.passwordTooShort') });
-      return;
+    if (!isEdit || password.length > 0) {
+      const problem = getPinProblem(password);
+      if (problem) {
+        setError('password', { message: t(`auth.${problem}`) });
+        return;
+      }
     }
     try {
       if (isEdit && user) {
@@ -347,12 +345,11 @@ function UserFormModal({
               required
             />
             <FormInput control={control} name="phone" label={t('auth.phone')} />
-            <FormInput
+            <FormPinInput
               control={control}
               name="password"
-              label={isEdit ? t('users.passwordOptional') : t('auth.password')}
-              secureTextEntry
-              required={!isEdit}
+              label={isEdit ? t('users.pinOptional') : t('auth.pinLabel')}
+              helperText={t('users.staffPinHelper')}
             />
             {user?.role === 'OWNER' ? null : (
               <FormPicker control={control} name="role" label={t('users.role')}>
@@ -493,7 +490,7 @@ const styles = StyleSheet.create({
   userAvatarText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#0ea5e9',
+    color: colors.primary,
   },
   userInfo: {
     flex: 1,

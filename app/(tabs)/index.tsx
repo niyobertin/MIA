@@ -14,12 +14,12 @@ import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { AppHeader } from '@/components/AppHeader';
-import { StatCard } from '@/components/StatCard';
 import { MoneyText } from '@/components/MoneyText';
 import { StatusBadge } from '@/components/StatusBadge';
-import { SkeletonCard, Skeleton } from '@/components/Skeleton';
+import { Skeleton } from '@/components/Skeleton';
 import { BottomSheet } from '@/components/SegmentedControl';
-import { getInitials, formatTime, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
+import { FirstTimeGuide } from '@/components/FirstTimeGuide';
+import { formatTime, formatRecordDateTime, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
 import { combineDateAndTime, toLocalDateString } from '@/utils/periodBounds';
 import { canSeeProfit } from '@/utils/permissions';
 import { seriesForPeriod } from '@/services/financial/books';
@@ -27,13 +27,11 @@ import { formatSessionDuration, sessionElapsedMs } from '@/services/books/sessio
 import {
   useDashboardStats,
   useLowStockProducts,
-  useBusinessHealth,
-  useTopProducts,
-  usePaymentBreakdown,
   useSales,
   useCustomersWithBalances,
   usePeriodStats,
   useOpenDailyClosing,
+  useBusinessUsers,
   PeriodRange,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
@@ -111,7 +109,6 @@ export default function HomeScreen() {
   const [period, setPeriod] = React.useState<DashPeriod>('openDay');
   const [showPeriodSheet, setShowPeriodSheet] = React.useState(false);
   const [showPaymentSheet, setShowPaymentSheet] = React.useState(false);
-  // period sheet only for custom range dates
   const [refreshing, setRefreshing] = React.useState(false);
   const [startDate, setStartDate] = React.useState(today);
   const [endDate, setEndDate] = React.useState(today);
@@ -150,22 +147,23 @@ export default function HomeScreen() {
   const statsQuery = useDashboardStats();
   const periodStatsQuery = usePeriodStats(range);
   const lowStockQuery = useLowStockProducts();
-  const healthQuery = useBusinessHealth();
-  const topQuery = useTopProducts(range, 5);
-  const paymentsQuery = usePaymentBreakdown(range);
   const salesQuery = useSales(range);
   const debtQuery = useCustomersWithBalances();
+  const usersQuery = useBusinessUsers();
 
   const dashStats = statsQuery.data;
   const periodStats = periodStatsQuery.data;
-  const health = healthQuery.data;
   const lowStock = lowStockQuery.data ?? [];
   const loading =
-    (period === 'openDay' ? statsQuery.isLoading && !dashStats : periodStatsQuery.isLoading && !periodStats);
-  const payments = paymentsQuery.data;
-  const topProducts = topQuery.data ?? [];
-  const recentSales = (salesQuery.data ?? []).filter((sale) => !sale.voided).slice(0, 6);
+    period === 'openDay' ? statsQuery.isLoading && !dashStats : periodStatsQuery.isLoading && !periodStats;
+  const recentSales = (salesQuery.data ?? []).filter((sale) => !sale.voided).slice(0, 8);
   const debtors = (debtQuery.data?.rows ?? []).filter((row) => row.outstanding > 0).slice(0, 5);
+
+  const userMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of usersQuery.data ?? []) map.set(u.id, u.name);
+    return map;
+  }, [usersQuery.data]);
 
   const salesTotal =
     period === 'openDay'
@@ -174,14 +172,26 @@ export default function HomeScreen() {
         ? (dashStats?.calendarTodaySales ?? periodStats?.totalSales ?? 0)
         : (periodStats?.totalSales ?? 0);
   const netProfit = period === 'openDay' ? (dashStats?.todayNetProfit ?? 0) : (periodStats?.netProfit ?? 0);
-  const expenses = period === 'openDay' ? (dashStats?.todayExpenses ?? 0) : (periodStats?.expenses ?? 0);
+  const expectedCash =
+    period === 'openDay'
+      ? (dashStats?.cashBalance ?? 0)
+      : (periodStats?.expectedCash ?? dashStats?.cashBalance ?? 0);
   const itemsSold = period === 'openDay' ? (dashStats?.itemsSold ?? 0) : (periodStats?.itemsSold ?? 0);
-  const stockValue = periodStats?.stockValue ?? dashStats?.stockValue ?? 0;
-  const cashBalance = dashStats?.cashBalance ?? 0;
   const hasOpenDay = !!openDayStart || !!dashStats?.hasOpenDay;
   const sessionOpenedAt = openSession?.opened_at ?? dashStats?.sessionOpenedAt ?? null;
   const sessionDuration = sessionOpenedAt ? formatSessionDuration(sessionElapsedMs(sessionOpenedAt)) : null;
   const sessionNumber = openSession?.session_number ?? dashStats?.sessionNumber ?? null;
+  const totalDebt = debtQuery.data?.totalOutstanding ?? 0;
+
+  const cashSales = periodStats?.checkout?.cash ?? (period === 'openDay' ? (dashStats?.cashSales ?? 0) : 0);
+  const momoSales = periodStats?.checkout?.mobileMoney ?? 0;
+  const bankSales = periodStats?.checkout?.bank ?? 0;
+  const creditSales = periodStats?.creditSales ?? 0;
+  const totalCollected = cashSales + momoSales + bankSales;
+  const debtCollected =
+    (periodStats?.collections?.cash ?? 0) +
+    (periodStats?.collections?.mobileMoney ?? 0) +
+    (periodStats?.collections?.bank ?? 0);
 
   const showProfit = canSeeProfit(user?.role);
   const firstName = user?.name?.split(' ')[0] ?? '';
@@ -203,7 +213,7 @@ export default function HomeScreen() {
     ? period === 'custom' || range.start.slice(0, 10) !== range.end.slice(0, 10)
       ? `${range.start.slice(0, 10)} → ${range.end.slice(0, 10)}`
       : range.start.slice(0, 10)
-    : t('dashboard.openDayRequired');
+    : '';
 
   const selectPeriod = (value: DashPeriod) => {
     if (value === 'custom') {
@@ -221,11 +231,9 @@ export default function HomeScreen() {
       periodStatsQuery.refetch(),
       openClosingQuery.refetch(),
       lowStockQuery.refetch(),
-      healthQuery.refetch(),
-      topQuery.refetch(),
       salesQuery.refetch(),
-      paymentsQuery.refetch(),
       debtQuery.refetch(),
+      usersQuery.refetch(),
     ]);
     setRefreshing(false);
   };
@@ -266,21 +274,11 @@ export default function HomeScreen() {
   const chartLoading = salesQuery.isLoading;
   const maxDay = Math.max(1, ...chartSource.map((d) => d.total));
   const delta = period === 'openDay' || period === 'today' ? (dashStats?.salesDelta ?? null) : null;
-  const collections =
-    (payments?.collections?.cash ?? 0) +
-    (payments?.collections?.mobileMoney ?? 0) +
-    (payments?.collections?.bank ?? 0);
-  const payMax = Math.max(
-    1,
-    payments?.cash ?? 0,
-    payments?.mobileMoney ?? 0,
-    payments?.bank ?? 0,
-    payments?.credit ?? 0,
-    collections
-  );
 
   return (
     <View style={styles.screen}>
+      <FirstTimeGuide />
+
       <AppHeader
         greeting={t(greetingKey())}
         userName={user?.name ?? firstName}
@@ -299,29 +297,34 @@ export default function HomeScreen() {
           {loading ? (
             <>
               <Skeleton height={220} style={styles.heroSkeleton} />
-              <SkeletonCard />
+              <Skeleton height={100} style={{ borderRadius: radius.lg, marginBottom: spacing.lg }} />
             </>
           ) : (
             <>
+              {/* ── Hero Sales Card ── */}
               <View style={styles.hero}>
-                {!hasOpenDay ? (
-                  <TouchableOpacity style={styles.heroAlert} onPress={() => go('/closing')} activeOpacity={0.85}>
-                    <Ionicons name="alert-circle" size={16} color="#fde68a" />
-                    <Text style={styles.heroAlertText}>{t('reports.noOpenDay')}</Text>
-                    <Ionicons name="chevron-forward" size={16} color="#fde68a" />
-                  </TouchableOpacity>
-                ) : (
+                {/* Session status bar */}
+                {hasOpenDay ? (
                   <TouchableOpacity style={styles.heroSession} onPress={() => go('/closing')} activeOpacity={0.85}>
                     <View style={styles.heroSessionDot} />
                     <Text style={styles.heroSessionText} numberOfLines={1}>
-                      {t('cash.openStatus')}
+                      {t('dashboard.openSessionLabel')}
                       {sessionNumber != null ? ` #${sessionNumber}` : ''}
                       {sessionDuration ? ` · ${sessionDuration}` : ''}
                     </Text>
-                    <Text style={styles.heroSessionAction}>{t('cash.closeSessionShort')}</Text>
+                    <Text style={styles.heroSessionAction}>{t('cash.closeSessionShort')} →</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.heroAlert} onPress={() => go('/closing')} activeOpacity={0.85}>
+                    <Ionicons name="alert-circle" size={18} color="#fde68a" />
+                    <Text style={styles.heroAlertText}>{t('dashboard.openDayBanner')}</Text>
+                    <View style={styles.heroAlertBtn}>
+                      <Text style={styles.heroAlertBtnText}>{t('dashboard.openDayBtn')}</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
 
+                {/* Period chips */}
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -344,114 +347,282 @@ export default function HomeScreen() {
                   })}
                 </ScrollView>
 
-                <View style={styles.heroSales}>
-                  <Text style={styles.heroLabel}>{`${periodLabel} · ${t('dashboard.sales')}`}</Text>
-                  <MoneyText amount={salesTotal} size={wide ? 36 : 30} weight="800" color="#fff" />
-                  {periodSubtitle ? <Text style={styles.heroRange}>{periodSubtitle}</Text> : null}
-                  {delta !== null && (period === 'openDay' || period === 'today') ? (
-                    <View style={styles.deltaRow}>
-                      <Ionicons
-                        name={delta >= 0 ? 'trending-up' : 'trending-down'}
-                        size={14}
-                        color={delta >= 0 ? '#bbf7d0' : '#fecaca'}
-                      />
-                      <Text style={styles.deltaText}>
-                        {delta >= 0 ? '+' : '−'}
-                        {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsPreviousDay')}
-                      </Text>
+                {/* Main numbers: Sales & Expected Cash in Drawer */}
+                <View style={styles.heroMainNumbers}>
+                  <View style={styles.heroSales}>
+                    <Text style={styles.heroLabel}>{t('dashboard.sales').toUpperCase()}</Text>
+                    <MoneyText amount={salesTotal} size={wide ? 38 : 30} weight="800" color="#fff" />
+                    {periodSubtitle ? <Text style={styles.heroRange}>{periodSubtitle}</Text> : null}
+                    {delta !== null && (period === 'openDay' || period === 'today') ? (
+                      <View style={styles.deltaRow}>
+                        <Ionicons
+                          name={delta >= 0 ? 'trending-up' : 'trending-down'}
+                          size={14}
+                          color={delta >= 0 ? '#bbf7d0' : '#fecaca'}
+                        />
+                        <Text style={styles.deltaText}>
+                          {delta >= 0 ? '+' : '−'}
+                          {Math.abs(Math.round(delta * 100))}% {t('dashboard.vsPreviousDay')}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {salesTotal === 0 && !loading ? (
+                      <Text style={styles.heroEmpty}>{t('dashboard.noSalesYet')}</Text>
+                    ) : null}
+                  </View>
+
+                  {/* Expected Cash in Drawer */}
+                  <TouchableOpacity
+                    style={styles.heroCashBox}
+                    onPress={() => go('/closing')}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.heroCashTop}>
+                      <Ionicons name="wallet" size={15} color="#4ade80" />
+                      <Text style={styles.heroCashLabel}>{t('dashboard.expectedCash')}</Text>
                     </View>
-                  ) : null}
-                  {period === 'openDay' && !hasOpenDay ? (
-                    <Text style={styles.heroEmpty}>{t('dashboard.openDayRequired')}</Text>
-                  ) : salesTotal === 0 ? (
-                    <Text style={styles.heroEmpty}>{t('dashboard.noSalesInPeriod')}</Text>
-                  ) : null}
+                    <MoneyText amount={expectedCash} size={wide ? 24 : 20} weight="800" color="#fff" />
+                    <View style={styles.heroCashBottom}>
+                      <Text style={styles.heroCashHint}>{t('dashboard.cashLeft')}</Text>
+                      <Ionicons name="chevron-forward" size={13} color="rgba(255,255,255,0.7)" />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Key metrics row */}
+                <View style={styles.heroMetrics}>
+                  {showProfit && (
+                    <HeroMetric
+                      icon="trending-up-outline"
+                      label={t('dashboard.netProfit')}
+                      value={netProfit}
+                      money
+                      highlight={netProfit > 0}
+                      danger={netProfit < 0}
+                    />
+                  )}
+                  <HeroMetric
+                    icon="receipt-outline"
+                    label={t('dashboard.itemsSold')}
+                    value={itemsSold}
+                    money={false}
+                  />
+                  <HeroMetric
+                    icon="people-outline"
+                    label={t('dashboard.debtTotal')}
+                    value={totalDebt}
+                    money
+                    danger={totalDebt > 0}
+                  />
                 </View>
 
                 <TouchableOpacity style={styles.heroButton} onPress={() => go('/sale')} activeOpacity={0.85}>
-                  <Ionicons name="add" size={20} color={colors.primary} />
-                  <Text style={styles.heroButtonText}>{t('dashboard.recordSale')}</Text>
+                  <Ionicons name="add" size={22} color={colors.primary} />
+                  <Text style={styles.heroButtonText}>{t('dashboard.actionSale')}</Text>
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.statGrid}>
-                {showProfit ? (
-                  <View style={styles.statWrap}>
-                    <StatCard
-                      title={t('dashboard.netProfit')}
-                      value={netProfit}
-                      color={colors.success}
-                      icon="trending-up"
-                      onPress={() => go('/reports')}
-                    />
-                  </View>
-                ) : null}
-                <View style={styles.statWrap}>
-                  <StatCard
-                    title={t('dashboard.expenses')}
-                    value={expenses}
-                    color={colors.danger}
-                    icon="wallet"
-                    onPress={() => go('/expense')}
-                  />
-                </View>
-                <View style={styles.statWrap}>
-                  <StatCard
-                    title={t('dashboard.cashBalance')}
-                    value={cashBalance}
-                    color={colors.info}
-                    icon="cash"
-                    onPress={() => go('/closing')}
-                  />
-                </View>
-                <View style={styles.statWrap}>
-                  <StatCard
-                    title={t('dashboard.stockValue')}
-                    value={stockValue}
-                    color={colors.primary}
-                    icon="cube"
-                    onPress={() => go('/stock')}
-                  />
-                </View>
-                <View style={styles.statWrap}>
-                  <StatCard
-                    title={t('dashboard.itemsSold')}
-                    value={itemsSold}
-                    currency=""
-                    color={colors.warning}
-                    icon="bag"
-                  />
-                </View>
-                {(health?.lowStockCount ?? lowStock.length) > 0 ? (
-                  <View style={styles.statWrap}>
-                    <StatCard
-                      title={t('reports.lowStockCount')}
-                      value={health?.lowStockCount ?? lowStock.length}
-                      currency=""
-                      color={colors.warning}
-                      icon="alert"
-                      onPress={() => go('/stock')}
-                    />
-                  </View>
-                ) : null}
-              </View>
-
+              {/* ── Quick Actions ── */}
               <Text style={styles.sectionTitle}>{t('dashboard.quickActions')}</Text>
               <View style={styles.quickGrid}>
-                <QuickAction icon="cart" label={t('navigation.newSale')} bg={colors.primary} onPress={() => go('/sale')} />
-                <QuickAction icon="cube" label={t('navigation.stockIn')} bg={colors.success} onPress={() => go('/stock-in')} />
-                <QuickAction icon="cash" label={t('navigation.expense')} bg={colors.warning} onPress={() => go('/expense')} />
-                <QuickAction icon="person" label={t('payments.payments')} bg={colors.info} onPress={() => setShowPaymentSheet(true)} />
+                <QuickAction
+                  icon="cart"
+                  label={t('dashboard.actionSale')}
+                  bg={colors.primary}
+                  onPress={() => go('/sale')}
+                />
+                <QuickAction
+                  icon="cube"
+                  label={t('dashboard.actionStockIn')}
+                  bg={colors.success}
+                  onPress={() => go('/stock-in')}
+                />
+                <QuickAction
+                  icon="wallet"
+                  label={t('dashboard.actionExpense')}
+                  bg={colors.warning}
+                  onPress={() => go('/expense')}
+                />
+                <QuickAction
+                  icon="person"
+                  label={t('dashboard.actionPayment')}
+                  bg={colors.info}
+                  onPress={() => setShowPaymentSheet(true)}
+                />
+                {hasOpenDay ? (
+                  <QuickAction
+                    icon="moon"
+                    label={t('dashboard.actionCloseDay')}
+                    bg="#7c3aed"
+                    onPress={() => go('/closing')}
+                  />
+                ) : (
+                  <QuickAction
+                    icon="sunny"
+                    label={t('dashboard.actionOpenDay')}
+                    bg="#0284c7"
+                    onPress={() => go('/closing')}
+                  />
+                )}
+                <QuickAction
+                  icon="analytics"
+                  label={t('navigation.reports')}
+                  bg="#475569"
+                  onPress={() => go('/reports')}
+                />
               </View>
+
+              {/* ── Alerts: Low stock + Debtors ── */}
+              {(lowStock.length > 0 || debtors.length > 0) && (
+                <View style={styles.alertsRow}>
+                  {lowStock.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.alertCard, styles.alertCardWarn]}
+                      onPress={() => go('/stock')}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="alert-circle" size={20} color={colors.warningText} />
+                      <View style={styles.alertInfo}>
+                        <Text style={[styles.alertTitle, { color: colors.warningText }]}>
+                          {t('dashboard.lowStockAlerts')}
+                        </Text>
+                        <Text style={styles.alertSub}>
+                          {lowStock.slice(0, 3).map((p) => p.name).join(', ')}
+                          {lowStock.length > 3 ? ` +${lowStock.length - 3}` : ''}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={colors.warningText} />
+                    </TouchableOpacity>
+                  )}
+                  {debtors.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.alertCard, styles.alertCardDanger]}
+                      onPress={() => go('/customers')}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="people" size={20} color={colors.dangerText} />
+                      <View style={styles.alertInfo}>
+                        <Text style={[styles.alertTitle, { color: colors.dangerText }]}>
+                          {t('dashboard.whoOwes')}
+                        </Text>
+                        <Text style={styles.alertSub}>
+                          {debtors.slice(0, 2).map((r) => r.customer.name).join(', ')}
+                          {debtors.length > 2 ? ` +${debtors.length - 2}` : ''}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={colors.dangerText} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
 
               <View style={split ? styles.columns : undefined}>
                 <View style={split ? styles.columnMain : undefined}>
+                  {/* ── Money Breakdown & Collection Decision Card ── */}
+                  <View style={styles.card}>
+                    <View style={styles.cardHeader}>
+                      <View>
+                        <Text style={styles.cardTitle}>{t('reports.paymentBreakdown')}</Text>
+                        <Text style={styles.cardHint}>{periodLabel} · {t('dashboard.moneyIn')}</Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.pillBadge,
+                          {
+                            backgroundColor: totalCollected > 0 ? colors.successSoft : colors.borderSoft,
+                          },
+                        ]}
+                      >
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={13}
+                          color={totalCollected > 0 ? colors.successText : colors.muted}
+                        />
+                        <Text
+                          style={[
+                            styles.pillBadgeText,
+                            { color: totalCollected > 0 ? colors.successText : colors.muted },
+                          ]}
+                        >
+                          {salesTotal > 0
+                            ? `${Math.round((totalCollected / salesTotal) * 100)}% ${t('sales.paid')}`
+                            : t('sales.paid')}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Collected vs Credit Decision Boxes */}
+                    <View style={styles.decisionRow}>
+                      <View style={styles.decisionBoxCollected}>
+                        <View style={styles.decisionHeader}>
+                          <Ionicons name="cash" size={14} color={colors.successText} />
+                          <Text style={styles.decisionTitleCollected}>{t('dashboard.totalCollected')}</Text>
+                        </View>
+                        <MoneyText amount={totalCollected} size={wide ? 18 : 16} weight="800" color={colors.successText} />
+                        <Text style={styles.decisionSub}>{t('dashboard.salesMinusCredit')}</Text>
+                      </View>
+
+                      <View style={styles.decisionBoxCredit}>
+                        <View style={styles.decisionHeader}>
+                          <Ionicons name="alert-circle" size={14} color={colors.warningText} />
+                          <Text style={styles.decisionTitleCredit}>{t('dashboard.creditUnpaid')}</Text>
+                        </View>
+                        <MoneyText amount={creditSales} size={wide ? 18 : 16} weight="800" color={colors.warningText} />
+                        <Text style={styles.decisionSub}>{t('customers.balanceOwed')}</Text>
+                      </View>
+                    </View>
+
+                    {/* Method Breakdown with visual progress tracks */}
+                    <View style={styles.payMethodsContainer}>
+                      <PayMethodRow
+                        icon="cash-outline"
+                        label={t('common.cash')}
+                        amount={cashSales}
+                        total={salesTotal}
+                        color={colors.success}
+                      />
+                      <PayMethodRow
+                        icon="phone-portrait-outline"
+                        label={t('common.mobileMoney')}
+                        amount={momoSales}
+                        total={salesTotal}
+                        color={colors.info}
+                      />
+                      {bankSales > 0 && (
+                        <PayMethodRow
+                          icon="business-outline"
+                          label={t('common.bank')}
+                          amount={bankSales}
+                          total={salesTotal}
+                          color={colors.primary}
+                        />
+                      )}
+                      <PayMethodRow
+                        icon="document-text-outline"
+                        label={t('reports.newCreditSales')}
+                        amount={creditSales}
+                        total={salesTotal}
+                        color={colors.warning}
+                      />
+                      {debtCollected > 0 && (
+                        <PayMethodRow
+                          icon="wallet-outline"
+                          label={t('reports.oldDebtCollected')}
+                          amount={debtCollected}
+                          total={Math.max(salesTotal, debtCollected)}
+                          color="#7c3aed"
+                        />
+                      )}
+                    </View>
+                  </View>
+
+                  {/* ── Sales Chart ── */}
                   <View style={styles.card}>
                     <View style={styles.cardHeader}>
                       <Text style={styles.cardTitle}>{periodLabel}</Text>
                       <MoneyText amount={chartTotal} size={15} weight="700" color={colors.ink} />
                     </View>
-                    <Text style={styles.cardHint}>{periodSubtitle}</Text>
+                    {periodSubtitle ? <Text style={styles.cardHint}>{periodSubtitle}</Text> : null}
                     {chartLoading ? (
                       <Skeleton height={110} />
                     ) : chartSource.length === 0 || chartSource.every((d) => d.total === 0) ? (
@@ -502,7 +673,10 @@ export default function HomeScreen() {
                       </ScrollView>
                     )}
                   </View>
+                </View>
 
+                <View style={split ? styles.columnSide : undefined}>
+                  {/* ── Recent Sales ── */}
                   <View style={styles.card}>
                     <View style={styles.cardHeader}>
                       <Text style={styles.cardTitle}>{t('dashboard.recentTransactions')}</Text>
@@ -515,171 +689,44 @@ export default function HomeScreen() {
                     ) : recentSales.length === 0 ? (
                       <Text style={styles.muted}>{t('dashboard.noSalesYet')}</Text>
                     ) : (
-                      recentSales.map((sale) => (
-                        <TouchableOpacity key={sale.id} style={styles.listRow} onPress={() => go('/sale')} activeOpacity={0.7}>
-                          <View style={styles.saleAvatar}>
-                            <Ionicons name="receipt-outline" size={18} color={colors.primary} />
-                          </View>
-                          <View style={styles.listInfo}>
-                            <Text style={styles.listName} numberOfLines={1}>
-                              {sale.reference_number || t('sales.saleDetails')}
-                            </Text>
-                            <Text style={styles.listDetail}>{saleClock(sale.created_at)}</Text>
-                          </View>
-                          <View style={styles.listRight}>
-                            <MoneyText amount={sale.total_amount} size={14} weight="700" />
-                            <StatusBadge
-                              label={t(`sales.${sale.payment_status}` as 'sales.paid')}
-                              tone={sale.payment_status === 'paid' ? 'success' : sale.payment_status === 'credit' ? 'warning' : 'neutral'}
-                            />
-                          </View>
-                        </TouchableOpacity>
-                      ))
-                    )}
-                  </View>
-
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{t('reports.topProducts')}</Text>
-                      <TouchableOpacity onPress={() => go('/reports')} hitSlop={8}>
-                        <Text style={styles.viewAll}>{t('navigation.reports')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {topQuery.isLoading ? (
-                      <Skeleton height={52} />
-                    ) : topProducts.length === 0 ? (
-                      <Text style={styles.muted}>{t('reports.noSalesInPeriod')}</Text>
-                    ) : (
-                      topProducts.map((product) => (
-                        <View key={product.productId} style={styles.listRow}>
-                          <View style={styles.stockAvatar}>
-                            <Text style={styles.stockAvatarText}>{getInitials(product.productName)}</Text>
-                          </View>
-                          <View style={styles.listInfo}>
-                            <Text style={styles.listName} numberOfLines={1}>{product.productName}</Text>
-                            <Text style={styles.listDetail}>
-                              {product.quantitySold} {t('sales.items')}
-                              {showProfit ? ` · ${t('reports.profit')} ${(product.totalProfit ?? 0).toLocaleString()}` : ''}
-                            </Text>
-                          </View>
-                          <MoneyText amount={product.totalSales} size={14} weight="700" />
-                        </View>
-                      ))
-                    )}
-                  </View>
-                </View>
-
-                <View style={split ? styles.columnSide : undefined}>
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{t('reports.businessHealth')}</Text>
-                    </View>
-                    <HealthRow
-                      icon="sunny"
-                      label={t('cash.openDay')}
-                      value={health?.openDay ? t('common.yes') : t('common.no')}
-                      tone={health?.openDay ? 'ok' : 'warn'}
-                      onPress={() => go('/closing')}
-                    />
-                    <HealthRow
-                      icon="cloud-upload"
-                      label={t('reports.syncState')}
-                      value={
-                        (health?.failedSync ?? 0) > 0
-                          ? `${health?.failedSync} ${t('common.failed')}`
-                          : (health?.pendingSync ?? 0) > 0
-                            ? t('settings.pendingSync', { count: health?.pendingSync ?? 0 })
-                            : t('common.synced')
-                      }
-                      tone={(health?.failedSync ?? 0) > 0 ? 'bad' : (health?.pendingSync ?? 0) > 0 ? 'warn' : 'ok'}
-                      onPress={() => go('/more/sync')}
-                    />
-                    <HealthRow
-                      icon="alert"
-                      label={t('reports.outOfStock')}
-                      value={String(health?.outOfStockCount ?? 0)}
-                      tone={(health?.outOfStockCount ?? 0) > 0 ? 'bad' : 'ok'}
-                      onPress={() => go('/stock')}
-                    />
-                  </View>
-
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{t('reports.paymentBreakdown')}</Text>
-                    </View>
-                    {paymentsQuery.isLoading ? (
-                      <Skeleton height={80} />
-                    ) : (
-                      <>
-                        <PayBar label={t('sales.cash')} amount={payments?.cash ?? 0} max={payMax} color={colors.success} />
-                        <PayBar label={t('sales.mobileMoney')} amount={payments?.mobileMoney ?? 0} max={payMax} color={colors.info} />
-                        <PayBar label={t('sales.bank')} amount={payments?.bank ?? 0} max={payMax} color={colors.primary} />
-                        <PayBar label={t('reports.newCreditSales')} amount={payments?.credit ?? 0} max={payMax} color={colors.warning} />
-                        <PayBar label={t('reports.oldDebtCollected')} amount={collections} max={payMax} color="#7c3aed" />
-                      </>
-                    )}
-                  </View>
-
-                  {showProfit ? (
-                    <View style={styles.card}>
-                      <View style={styles.cardHeader}>
-                        <Text style={styles.cardTitle}>{t('dashboard.whoOwes')}</Text>
-                        <TouchableOpacity onPress={() => go('/customers')} hitSlop={8}>
-                          <Text style={styles.viewAll}>{t('dashboard.viewAll')}</Text>
-                        </TouchableOpacity>
-                      </View>
-                      {debtQuery.isLoading ? (
-                        <Skeleton height={52} />
-                      ) : debtors.length === 0 ? (
-                        <Text style={styles.muted}>{t('dashboard.noDebt')}</Text>
-                      ) : (
-                        debtors.map((row) => (
-                          <TouchableOpacity key={row.customer.id} style={styles.listRow} onPress={() => go('/customers')} activeOpacity={0.7}>
-                            <View style={styles.debtAvatar}>
-                              <Text style={styles.debtAvatarText}>{getInitials(row.customer.name)}</Text>
+                      recentSales.map((sale) => {
+                        const sellerName = userMap.get(sale.created_by);
+                        const itemCount = sale.items?.length ?? 0;
+                        const itemNames = sale.items?.slice(0, 2).map((i: any) => i.product_name ?? i.name ?? '').filter(Boolean).join(', ');
+                        return (
+                          <TouchableOpacity key={sale.id} style={styles.listRow} onPress={() => go('/sale')} activeOpacity={0.7}>
+                            <View style={styles.saleAvatar}>
+                              <Ionicons name="receipt-outline" size={18} color={colors.primary} />
                             </View>
                             <View style={styles.listInfo}>
-                              <Text style={styles.listName} numberOfLines={1}>{row.customer.name}</Text>
-                              {row.customer.phone ? <Text style={styles.listDetail}>{row.customer.phone}</Text> : null}
+                              <Text style={styles.listName} numberOfLines={1}>
+                                {sale.reference_number
+                                  ? `#${sale.reference_number}`
+                                  : sellerName
+                                    ? `${t('dashboard.by')} ${sellerName}`
+                                    : t('sales.saleDetails')}
+                              </Text>
+                              <Text style={styles.listDetail} numberOfLines={1}>
+                                {saleClock(sale.created_at)}
+                                {itemCount > 0 ? ` · ${itemCount} ${t('sales.items')}` : ''}
+                                {itemNames ? `: ${itemNames}` : ''}
+                              </Text>
+                              {sellerName && !sale.reference_number ? null : sellerName ? (
+                                <Text style={styles.listSeller} numberOfLines={1}>
+                                  👤 {sellerName}
+                                </Text>
+                              ) : null}
                             </View>
-                            <MoneyText amount={row.outstanding} size={14} weight="700" color={colors.warningText} />
+                            <View style={styles.listRight}>
+                              <MoneyText amount={sale.total_amount} size={14} weight="700" />
+                              <StatusBadge
+                                label={t(`sales.${sale.payment_status}` as 'sales.paid')}
+                                tone={sale.payment_status === 'paid' ? 'success' : sale.payment_status === 'credit' ? 'warning' : 'neutral'}
+                              />
+                            </View>
                           </TouchableOpacity>
-                        ))
-                      )}
-                    </View>
-                  ) : null}
-
-                  <View style={styles.card}>
-                    <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{t('dashboard.lowStockAlerts')}</Text>
-                      {lowStock.length > 0 ? (
-                        <TouchableOpacity onPress={() => go('/stock')} hitSlop={8}>
-                          <Text style={styles.viewAll}>{t('dashboard.viewAll')}</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                    {lowStockQuery.isLoading ? (
-                      <Skeleton height={52} />
-                    ) : lowStock.length === 0 ? (
-                      <View style={styles.allGood}>
-                        <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-                        <Text style={styles.allGoodText}>{t('dashboard.allStocked')}</Text>
-                      </View>
-                    ) : (
-                      lowStock.slice(0, 5).map((p) => (
-                        <TouchableOpacity key={p.id} style={styles.listRow} onPress={() => go('/stock')} activeOpacity={0.7}>
-                          <View style={styles.stockAvatar}>
-                            <Text style={styles.stockAvatarText}>{getInitials(p.name)}</Text>
-                          </View>
-                          <View style={styles.listInfo}>
-                            <Text style={styles.listName} numberOfLines={1}>{p.name}</Text>
-                            <Text style={styles.stockDetail}>
-                              {(p.current_stock ?? 0)} {t('common.left')}
-                            </Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color={colors.faint} />
-                        </TouchableOpacity>
-                      ))
+                        );
+                      })
                     )}
                   </View>
                 </View>
@@ -689,6 +736,7 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
+      {/* Payment sheet */}
       <BottomSheet
         visible={showPaymentSheet}
         onClose={() => setShowPaymentSheet(false)}
@@ -715,6 +763,7 @@ export default function HomeScreen() {
         <View style={styles.sheetSpacer} />
       </BottomSheet>
 
+      {/* Custom period sheet */}
       <BottomSheet
         visible={showPeriodSheet}
         onClose={() => setShowPeriodSheet(false)}
@@ -756,6 +805,35 @@ export default function HomeScreen() {
   );
 }
 
+/* ─── Sub-components ──────────────────────────────────── */
+
+function HeroMetric({
+  icon,
+  label,
+  value,
+  money = false,
+  highlight = false,
+  danger = false,
+}: {
+  icon: string;
+  label: string;
+  value: number;
+  money?: boolean;
+  highlight?: boolean;
+  danger?: boolean;
+}) {
+  const color = danger ? '#fca5a5' : highlight ? '#bbf7d0' : 'rgba(255,255,255,0.9)';
+  return (
+    <View style={styles.heroMetric}>
+      <Ionicons name={icon as any} size={14} color="rgba(255,255,255,0.6)" />
+      <Text style={styles.heroMetricLabel} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.heroMetricValue, { color }]} numberOfLines={1}>
+        {money ? `${value.toLocaleString()} RWF` : String(value)}
+      </Text>
+    </View>
+  );
+}
+
 function QuickAction({
   icon,
   label,
@@ -770,7 +848,7 @@ function QuickAction({
   return (
     <TouchableOpacity style={styles.quickAction} onPress={onPress} activeOpacity={0.85}>
       <View style={[styles.quickIcon, { backgroundColor: bg }]}>
-        <Ionicons name={icon as any} size={22} color="#fff" />
+        <Ionicons name={icon as any} size={24} color="#fff" />
       </View>
       <Text style={styles.quickLabel} numberOfLines={2}>{label}</Text>
     </TouchableOpacity>
@@ -792,58 +870,55 @@ function PaymentOption({ icon, label, hint, onPress }: { icon: string; label: st
   );
 }
 
-function HealthRow({
+function PayMethodRow({
   icon,
   label,
-  value,
-  tone,
-  onPress,
+  amount,
+  total,
+  color,
 }: {
   icon: string;
   label: string;
-  value: string;
-  tone: 'ok' | 'warn' | 'bad';
-  onPress: () => void;
+  amount: number;
+  total: number;
+  color: string;
 }) {
-  const color = tone === 'ok' ? colors.success : tone === 'warn' ? colors.warning : colors.danger;
+  const pct = total > 0 ? Math.round((amount / total) * 100) : 0;
   return (
-    <TouchableOpacity style={styles.healthRow} onPress={onPress} activeOpacity={0.75}>
-      <Ionicons name={icon as any} size={18} color={color} />
-      <Text style={styles.healthLabel} numberOfLines={1}>{label}</Text>
-      <Text style={[styles.healthValue, { color }]} numberOfLines={1}>{value}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function saleClock(value: string): string {
-  const match = value.match(/(\d{2}:\d{2})/);
-  if (match) return match[1];
-  return formatTime(value);
-}
-
-function PayBar({ label, amount, max, color }: { label: string; amount: number; max: number; color: string }) {
-  const ratio = Math.max(amount > 0 ? 4 : 0, Math.round((amount / max) * 100));
-  return (
-    <View style={styles.payBar}>
-      <View style={styles.payBarTop}>
-        <Text style={styles.payBarLabel} numberOfLines={1}>{label}</Text>
-        <MoneyText amount={amount} size={13} weight="700" />
+    <View style={styles.payMethodRow}>
+      <View style={styles.payMethodHeader}>
+        <View style={styles.payMethodLeft}>
+          <Ionicons name={icon as any} size={15} color={color} />
+          <Text style={styles.payMethodName}>{label}</Text>
+        </View>
+        <View style={styles.payMethodRight}>
+          <MoneyText amount={amount} size={13} weight="700" color={colors.ink} />
+          <Text style={styles.payMethodPct}>{pct}%</Text>
+        </View>
       </View>
       <View style={styles.payTrack}>
-        <View style={[styles.payFill, { width: `${ratio}%`, backgroundColor: color }]} />
+        <View
+          style={[
+            styles.payFill,
+            { width: `${Math.max(amount > 0 ? 3 : 0, pct)}%`, backgroundColor: color },
+          ]}
+        />
       </View>
     </View>
   );
 }
 
+function saleClock(value: string): string {
+  return formatRecordDateTime(value);
+}
+
+/* ─── Styles ──────────────────────────────────────────── */
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
   content: {
     paddingHorizontal: spacing.lg,
     paddingBottom: 120,
@@ -851,85 +926,13 @@ const styles = StyleSheet.create({
     maxWidth: 1180,
     alignSelf: 'center',
   },
-  page: {
-    width: '100%',
-  },
+  page: { width: '100%' },
   heroSkeleton: {
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     marginBottom: spacing.lg,
   },
-  periodOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
-  },
-  periodOptionActive: {
-    backgroundColor: colors.primarySoft,
-    marginHorizontal: -spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    borderBottomColor: 'transparent',
-  },
-  periodOptionLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  periodOptionLabelActive: {
-    color: colors.primaryText,
-    fontWeight: '800',
-  },
-  customPeriodBox: {
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
-  customPeriodHint: {
-    fontSize: 12,
-    color: colors.muted,
-  },
-  customPeriodRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  customPeriodField: {
-    flex: 1,
-    gap: 4,
-  },
-  customPeriodLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
-  },
-  customPeriodInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: colors.ink,
-    backgroundColor: colors.inputBg,
-  },
-  customPeriodApply: {
-    marginTop: spacing.sm,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  customPeriodApplyText: {
-    color: colors.white,
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  cardHint: {
-    fontSize: 12,
-    color: colors.muted,
-    marginBottom: spacing.sm,
-  },
+
+  /* Hero */
   hero: {
     backgroundColor: colors.primary,
     borderRadius: radius.xl,
@@ -937,10 +940,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     gap: spacing.md,
     shadowColor: colors.primaryDark,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 8,
   },
   heroAlert: {
     flexDirection: 'row',
@@ -956,6 +959,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#fde68a',
+  },
+  heroAlertBtn: {
+    backgroundColor: '#fde68a',
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  heroAlertBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#78350f',
   },
   heroSession: {
     flexDirection: 'row',
@@ -1006,8 +1020,46 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '800',
   },
-  heroSales: {
+  heroMainNumbers: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    flexWrap: 'wrap',
+  },
+  heroSales: { gap: 4, flexShrink: 1 },
+  heroCashBox: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minWidth: 140,
+    gap: 3,
+  },
+  heroCashTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  heroCashLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#86efac',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  heroCashBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 4,
+  },
+  heroCashHint: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontWeight: '500',
   },
   heroLabel: {
     fontSize: 11,
@@ -1037,44 +1089,130 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
   },
+  heroMetrics: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.12)',
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  heroMetric: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+  },
+  heroMetricLabel: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.65)',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  heroMetricValue: {
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
   heroButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.white,
     borderRadius: radius.md,
-    paddingVertical: 13,
+    paddingVertical: 14,
     gap: 6,
-    minHeight: 48,
+    minHeight: 50,
   },
   heroButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
     color: colors.primary,
   },
-  statGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
+
+  /* Alerts */
+  alertsRow: {
+    gap: spacing.sm,
     marginBottom: spacing.lg,
   },
-  statWrap: {
-    width: '47.5%',
-    flexGrow: 1,
+  alertCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderWidth: 1,
   },
+  alertCardWarn: {
+    backgroundColor: colors.warningSoft,
+    borderColor: colors.warning,
+  },
+  alertCardDanger: {
+    backgroundColor: colors.dangerSoft,
+    borderColor: colors.danger,
+  },
+  alertInfo: { flex: 1 },
+  alertTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  alertSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+
+  /* Quick actions */
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.ink,
+    marginBottom: spacing.md,
+  },
+  quickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  quickAction: {
+    width: '30%',
+    flexGrow: 1,
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xs,
+    gap: spacing.sm,
+    minHeight: 88,
+    justifyContent: 'center',
+    ...shadows.card,
+  },
+  quickIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.body,
+    textAlign: 'center',
+  },
+
+  /* Layout */
   columns: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.lg,
   },
-  columnMain: {
-    flex: 1.45,
-    minWidth: 0,
-  },
-  columnSide: {
-    flex: 1,
-    minWidth: 0,
-  },
+  columnMain: { flex: 1.45, minWidth: 0 },
+  columnSide: { flex: 1, minWidth: 0 },
+
+  /* Cards */
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
@@ -1097,6 +1235,11 @@ const styles = StyleSheet.create({
     color: colors.ink,
     flex: 1,
   },
+  cardHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: spacing.sm,
+  },
   viewAll: {
     fontSize: 13,
     fontWeight: '700',
@@ -1106,16 +1249,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.muted,
   },
+
+  /* Chart */
   chart: {
     flexDirection: 'row',
     alignItems: 'stretch',
     height: 132,
   },
-  barCol: {
-    flex: 1,
-    alignItems: 'center',
-    minWidth: 0,
-  },
+  barCol: { flex: 1, alignItems: 'center', minWidth: 0 },
   barTrack: {
     flex: 1,
     width: '100%',
@@ -1129,63 +1270,17 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     minHeight: 4,
   },
-  chartModes: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  modeChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: colors.borderSoft,
-    minHeight: 32,
-    justifyContent: 'center',
-  },
-  modeChipActive: {
-    backgroundColor: colors.primary,
-  },
-  modeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.muted,
-  },
-  modeTextActive: {
-    color: '#fff',
-  },
   chartWide: {
     flexDirection: 'row',
     alignItems: 'stretch',
     height: 132,
   },
-  barColNarrow: {
-    width: 22,
-    alignItems: 'center',
-  },
-  barFillNarrow: {
-    width: 12,
-    borderRadius: 6,
-    minHeight: 4,
-  },
-  barLabel: {
-    fontSize: 10,
-    color: colors.muted,
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  barLabelToday: {
-    color: colors.primary,
-    fontWeight: '800',
-  },
-  allGood: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  allGoodText: {
-    fontSize: 14,
-    color: colors.muted,
-  },
+  barColNarrow: { width: 22, alignItems: 'center' },
+  barFillNarrow: { width: 12, borderRadius: 6, minHeight: 4 },
+  barLabel: { fontSize: 10, color: colors.muted, marginTop: 6, fontWeight: '600' },
+  barLabelToday: { color: colors.primary, fontWeight: '800' },
+
+  /* List rows */
   listRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1194,149 +1289,123 @@ const styles = StyleSheet.create({
     borderTopColor: colors.borderSoft,
     gap: spacing.sm,
   },
-  listInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  listName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  listDetail: {
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  listRight: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
+  listInfo: { flex: 1, minWidth: 0 },
+  listName: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  listDetail: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  listSeller: { fontSize: 11, color: colors.primary, marginTop: 1, fontWeight: '600' },
+  listRight: { alignItems: 'flex-end', gap: 4 },
   saleAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center',
   },
-  stockAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.dangerSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stockAvatarText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.dangerText,
-  },
-  debtAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.warningSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  debtAvatarText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.warningText,
-  },
-  stockDetail: {
-    fontSize: 12,
-    color: colors.dangerText,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.ink,
+  /* Decision boxes */
+  decisionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
     marginBottom: spacing.md,
   },
-  quickGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  quickAction: {
-    width: '23%',
-    flexGrow: 1,
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xs,
-    gap: spacing.sm,
-    minHeight: 92,
-    justifyContent: 'center',
-  },
-  quickIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.body,
-    textAlign: 'center',
-  },
-  healthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
-  },
-  healthLabel: {
+  decisionBoxCollected: {
     flex: 1,
-    fontSize: 14,
-    color: colors.body,
+    backgroundColor: colors.successSoft,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 4,
+  },
+  decisionBoxCredit: {
+    flex: 1,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 4,
+  },
+  decisionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  decisionTitleCollected: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.successText,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  decisionTitleCredit: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.warningText,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  decisionSub: {
+    fontSize: 10,
+    color: colors.muted,
     fontWeight: '600',
   },
-  healthValue: {
-    fontSize: 13,
+  pillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+  },
+  pillBadgeText: {
+    fontSize: 11,
     fontWeight: '700',
-    maxWidth: '48%',
-    textAlign: 'right',
   },
-  payBar: {
-    marginBottom: spacing.sm,
+
+  /* Payment method rows */
+  payMethodsContainer: {
+    gap: spacing.sm + 2,
+    marginTop: 2,
   },
-  payBarTop: {
+  payMethodRow: {
+    gap: 4,
+  },
+  payMethodHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: 4,
   },
-  payBarLabel: {
-    flex: 1,
+  payMethodLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  payMethodName: {
     fontSize: 13,
-    color: colors.body,
     fontWeight: '600',
+    color: colors.body,
+  },
+  payMethodRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  payMethodPct: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.muted,
+    minWidth: 28,
+    textAlign: 'right',
   },
   payTrack: {
-    height: 8,
-    borderRadius: 4,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: colors.borderSoft,
     overflow: 'hidden',
   },
   payFill: {
-    height: 8,
-    borderRadius: 4,
+    height: 7,
+    borderRadius: 3.5,
   },
+
+  /* Payment option */
   payOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1347,28 +1416,39 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   payIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 44, height: 44, borderRadius: 12,
+    backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center',
     marginRight: spacing.md,
   },
-  payInfo: {
-    flex: 1,
-  },
-  payLabel: {
-    fontSize: 15,
-    fontWeight: '700',
+  payInfo: { flex: 1 },
+  payLabel: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  payHint: { fontSize: 13, color: colors.muted, marginTop: 2 },
+
+  /* Custom period */
+  customPeriodBox: { marginTop: spacing.md, gap: spacing.sm },
+  customPeriodHint: { fontSize: 12, color: colors.muted },
+  customPeriodRow: { flexDirection: 'row', gap: spacing.md },
+  customPeriodField: { flex: 1, gap: 4 },
+  customPeriodLabel: { fontSize: 12, fontWeight: '600', color: colors.muted },
+  customPeriodInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
     color: colors.ink,
+    backgroundColor: colors.inputBg,
   },
-  payHint: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 2,
+  customPeriodApply: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
-  sheetSpacer: {
-    height: spacing.lg,
+  customPeriodApplyText: {
+    color: colors.white, fontWeight: '700', fontSize: 14,
   },
+  sheetSpacer: { height: spacing.lg },
 });

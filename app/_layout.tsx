@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { Providers } from '@/components/Providers';
 import { useAuthStore } from '@/stores/authStore';
 import { SplashScreen } from '@/components/SplashScreen';
+import { PinSetupGate } from '@/components/PinSetupGate';
 import '@/i18n';
 
 function RootNavigator() {
@@ -51,11 +52,14 @@ function RootNavigator() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(onboarding)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(onboarding)" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+      <PinSetupGate />
+    </>
   );
 }
 

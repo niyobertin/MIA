@@ -305,6 +305,7 @@ const styles = StyleSheet.create({
   },
   rowItem: {
     flex: 1,
+    minWidth: 0,
   },
   trackRow: {
     flexDirection: 'row',

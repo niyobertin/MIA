@@ -7,23 +7,100 @@ import { Business, User } from '../entities';
 import {
   hashPassword,
   issueTokenPair,
+  needsRehash,
   verifyPassword,
   verifyToken,
 } from '../lib/auth';
+import { emailAndIpKey, rateLimit } from '../middleware/security';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { getPinProblem, isPinFormat, pinLockDurationMs, PIN_ATTEMPTS_BEFORE_LOCK } from '../lib/pin';
 
 export const authRouter = Router();
+
+const FIFTEEN_MINUTES = 15 * 60 * 1000;
+const loginLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 10, key: emailAndIpKey });
+const loginIpLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 50 });
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10 });
+const lookupLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 30 });
+const refreshLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 60 });
+
+const pinSchema = z.string().superRefine((value, ctx) => {
+  const problem = getPinProblem(value);
+  if (problem === 'pinInvalid') ctx.addIssue({ code: 'custom', message: 'PIN must be exactly 4 digits' });
+  if (problem === 'pinTooEasy') ctx.addIssue({ code: 'custom', message: 'This PIN is too easy to guess' });
+});
 
 const registerSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  password: z.string().min(6),
+  password: pinSchema,
   phone: z.string().optional().nullable(),
 });
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
+  password: z.string().min(4).max(200),
 });
+
+const changePinSchema = z.object({
+  current: z.string().min(4).max(200),
+  pin: pinSchema,
+});
+
+function lockedResponse(lockedUntil: Date) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000));
+  return {
+    error: 'Too many wrong PIN attempts. Try again later.',
+    code: 'PIN_LOCKED',
+    retry_after_seconds: retryAfterSeconds,
+  };
+}
+
+async function checkSecret(user: User, secret: string): Promise<
+  | { ok: true }
+  | { ok: false; status: number; body: Record<string, unknown> }
+> {
+  const users = AppDataSource.getRepository(User);
+  const now = new Date();
+
+  if (user.locked_until && user.locked_until > now) {
+    return { ok: false, status: 423, body: lockedResponse(user.locked_until) };
+  }
+
+  const valid = await verifyPassword(secret, user.password_hash);
+  if (!valid) {
+    const attempts = (user.failed_login_attempts ?? 0) + 1;
+    const lockMs = pinLockDurationMs(attempts);
+    const lockedUntil = lockMs > 0 ? new Date(now.getTime() + lockMs) : null;
+    await users.update(user.id, { failed_login_attempts: attempts, locked_until: lockedUntil });
+    if (lockedUntil) {
+      return { ok: false, status: 423, body: lockedResponse(lockedUntil) };
+    }
+    return {
+      ok: false,
+      status: 401,
+      body: {
+        error: 'Invalid email or PIN',
+        code: 'INVALID_CREDENTIALS',
+        attempts_left: PIN_ATTEMPTS_BEFORE_LOCK - (attempts % PIN_ATTEMPTS_BEFORE_LOCK),
+      },
+    };
+  }
+
+  const updates: Partial<User> = {};
+  if (user.failed_login_attempts || user.locked_until) {
+    updates.failed_login_attempts = 0;
+    updates.locked_until = null;
+  }
+  if (needsRehash(user.password_hash)) {
+    updates.password_hash = await hashPassword(secret);
+  }
+  if (Object.keys(updates).length > 0) {
+    await users.update(user.id, updates);
+    Object.assign(user, updates);
+  }
+  return { ok: true };
+}
 
 const refreshSchema = z.object({
   refresh_token: z.string().min(20).optional(),
@@ -51,7 +128,7 @@ function tokensFor(user: User) {
   });
 }
 
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', registerLimiter, async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
     const email = body.email.trim().toLowerCase();
@@ -93,7 +170,7 @@ authRouter.post('/register', async (req, res) => {
   }
 });
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
     const email = body.email.trim().toLowerCase();
@@ -102,13 +179,13 @@ authRouter.post('/login', async (req, res) => {
 
     const user = await users.findOne({ where: { email: ILike(email) } });
     if (!user || !user.active) {
-      res.status(401).json({ error: 'Invalid email or password' });
+      res.status(401).json({ error: 'Invalid email or PIN', code: 'INVALID_CREDENTIALS' });
       return;
     }
 
-    const ok = await verifyPassword(body.password, user.password_hash);
-    if (!ok) {
-      res.status(401).json({ error: 'Invalid email or password' });
+    const check = await checkSecret(user, body.password);
+    if (!check.ok) {
+      res.status(check.status).json(check.body);
       return;
     }
 
@@ -120,6 +197,7 @@ authRouter.post('/login', async (req, res) => {
       ...tokensFor(user),
       user: publicUser(user),
       business,
+      pin_setup_required: !isPinFormat(body.password),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -128,6 +206,39 @@ authRouter.post('/login', async (req, res) => {
     }
     console.error(error);
     res.status(500).json({ error: 'Could not sign in' });
+  }
+});
+
+authRouter.post('/change-pin', loginLimiter, requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const body = changePinSchema.parse(req.body);
+    const users = AppDataSource.getRepository(User);
+    const user = await users.findOne({ where: { id: req.auth!.sub } });
+    if (!user || !user.active) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const check = await checkSecret(user, body.current);
+    if (!check.ok) {
+      res.status(check.status).json(check.body);
+      return;
+    }
+
+    await users.update(user.id, {
+      password_hash: await hashPassword(body.pin),
+      failed_login_attempts: 0,
+      locked_until: null,
+      updated_at: new Date(),
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues[0]?.message ?? 'Invalid input', code: 'PIN_INVALID' });
+      return;
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Could not change PIN' });
   }
 });
 
@@ -158,7 +269,7 @@ authRouter.get('/me', async (req, res) => {
   }
 });
 
-authRouter.get('/business-by-code/:code', async (req, res) => {
+authRouter.get('/business-by-code/:code', lookupLimiter, async (req, res) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -200,7 +311,7 @@ const joinSchema = z.object({
   role: z.enum(['MANAGER', 'CASHIER', 'STAFF']).optional(),
 });
 
-authRouter.post('/join-business', async (req, res) => {
+authRouter.post('/join-business', lookupLimiter, async (req, res) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -255,7 +366,7 @@ authRouter.post('/join-business', async (req, res) => {
  * Refresh access token using refresh_token from body (preferred)
  * or a still-valid access/refresh Bearer token.
  */
-authRouter.post('/refresh', async (req, res) => {
+authRouter.post('/refresh', refreshLimiter, async (req, res) => {
   try {
     const body = refreshSchema.parse(req.body ?? {});
     const header = req.headers.authorization;

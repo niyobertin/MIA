@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   phone TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF')),
+  role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF', 'SUPER_ADMIN')),
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

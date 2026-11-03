@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -14,7 +15,7 @@ import {
   useProducts,
   useStockMovementHistory,
 } from '@/hooks/useData';
-import { getTodayDateString } from '@/utils/formatters';
+import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
 
 export default function StockMovementsScreen() {
   const { t } = useTranslation();
@@ -39,6 +40,8 @@ export default function StockMovementsScreen() {
   const products = useProducts({ active: true });
   const users = useBusinessUsers();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [showFilters, setShowFilters] = React.useState(false);
+  const activeFilters = [productId, type, userId, quantityText.trim()].filter(Boolean).length;
 
   const labelFor = (value: string) => {
     const found = STOCK_MOVEMENT_TYPES.find((item) => item.value === value);
@@ -59,71 +62,100 @@ export default function StockMovementsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <Input label={t('stock.fromDate')} value={startDate} onChangeText={setStartDate} autoCapitalize="none" />
-        <Input label={t('stock.toDate')} value={endDate} onChangeText={setEndDate} autoCapitalize="none" />
-        <Input
-          label={t('stock.quantityFilter')}
-          value={quantityText}
-          onChangeText={setQuantityText}
-          keyboardType="number-pad"
-        />
+        <View style={styles.dateRow}>
+          <View style={styles.dateItem}>
+            <Input label={t('stock.fromDate')} value={startDate} onChangeText={setStartDate} autoCapitalize="none" />
+          </View>
+          <View style={styles.dateItem}>
+            <Input label={t('stock.toDate')} value={endDate} onChangeText={setEndDate} autoCapitalize="none" />
+          </View>
+        </View>
 
-        <Text style={styles.filterLabel}>{t('stock.products')}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
-          <FilterChip label={t('common.all')} selected={!productId} onPress={() => setProductId('')} />
-          {(products.data ?? []).map((product) => (
-            <FilterChip
-              key={product.id}
-              label={product.name}
-              selected={productId === product.id}
-              onPress={() => setProductId(product.id)}
-            />
-          ))}
-        </ScrollView>
-
-        <Text style={styles.filterLabel}>{t('stock.movementType')}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
-          <FilterChip label={t('common.all')} selected={!type} onPress={() => setType('')} />
-          {STOCK_MOVEMENT_TYPES.map((item) => (
-            <FilterChip
-              key={item.value}
-              label={language === 'rw' ? item.labelRw : item.label}
-              selected={type === item.value}
-              onPress={() => setType(item.value)}
-            />
-          ))}
-        </ScrollView>
-
-        <Text style={styles.filterLabel}>{t('stock.user')}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
-          <FilterChip label={t('common.all')} selected={!userId} onPress={() => setUserId('')} />
-          {(users.data ?? []).map((user) => (
-            <FilterChip
-              key={user.id}
-              label={user.name}
-              selected={userId === user.id}
-              onPress={() => setUserId(user.id)}
-            />
-          ))}
-        </ScrollView>
-
-        {history.isLoading ? <Skeleton height={160} /> : null}
-        {!history.isLoading && (history.data ?? []).length === 0 ? (
-          <EmptyState icon="swap-horizontal" title={t('stock.noMovementsFiltered')} />
-        ) : null}
-        {(history.data ?? []).map((row) => (
-          <View key={row.id} style={styles.card}>
-            <View style={styles.cardTop}>
-              <Text style={styles.name}>{row.product_name}</Text>
-              <Text style={styles.qty}>{row.quantity.toLocaleString()}</Text>
+        <TouchableOpacity
+          style={styles.filterToggle}
+          onPress={() => setShowFilters((prev) => !prev)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showFilters }}
+        >
+          <Ionicons name="options-outline" size={18} color={colors.primary} />
+          <Text style={styles.filterToggleText}>
+            {showFilters ? t('stock.hideFilters') : t('stock.showFilters')}
+          </Text>
+          {activeFilters > 0 ? (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeFilters}</Text>
             </View>
-            <Text style={styles.meta}>{labelFor(row.type)} · {row.user_name ?? '—'}</Text>
-            <Text style={styles.meta}>{row.occurred_at.slice(0, 16).replace('T', ' ')}</Text>
-            <Text style={styles.meta}>
-              {t('stock.previousQty')}: {row.previous_quantity.toLocaleString()} → {t('stock.newQty')}: {row.new_quantity.toLocaleString()}
-            </Text>
-            {row.reason ? <Text style={styles.reason}>{row.reason}</Text> : null}
-            {row.reversal_of ? <Text style={styles.reason}>{t('stock.reversal')}</Text> : null}
+          ) : null}
+          <Ionicons name={showFilters ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+        </TouchableOpacity>
+
+        {showFilters ? (
+          <View style={styles.filterPanel}>
+            <Input
+              label={t('stock.quantityFilter')}
+              value={quantityText}
+              onChangeText={setQuantityText}
+              keyboardType="number-pad"
+            />
+
+            <Text style={styles.filterLabel}>{t('stock.products')}</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
+              <FilterChip label={t('common.all')} selected={!productId} onPress={() => setProductId('')} />
+              {(products.data ?? []).map((product) => (
+                <FilterChip
+                  key={product.id}
+                  label={product.name}
+                  selected={productId === product.id}
+                  onPress={() => setProductId(product.id)}
+                />
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterLabel}>{t('stock.movementType')}</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
+              <FilterChip label={t('common.all')} selected={!type} onPress={() => setType('')} />
+              {STOCK_MOVEMENT_TYPES.map((item) => (
+                <FilterChip
+                  key={item.value}
+                  label={language === 'rw' ? item.labelRw : item.label}
+                  selected={type === item.value}
+                  onPress={() => setType(item.value)}
+                />
+              ))}
+            </ScrollView>
+
+            <Text style={styles.filterLabel}>{t('stock.user')}</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
+              <FilterChip label={t('common.all')} selected={!userId} onPress={() => setUserId('')} />
+              {(users.data ?? []).map((user) => (
+                <FilterChip
+                  key={user.id}
+                  label={user.name}
+                  selected={userId === user.id}
+                  onPress={() => setUserId(user.id)}
+                />
+              ))}
+            </ScrollView>
+            </View>
+          ) : null}
+
+          {history.isLoading ? <Skeleton height={160} /> : null}
+          {!history.isLoading && (history.data ?? []).length === 0 ? (
+            <EmptyState icon="swap-horizontal" title={t('stock.noMovementsFiltered')} />
+          ) : null}
+          {(history.data ?? []).map((row) => (
+            <View key={row.id} style={styles.card}>
+              <View style={styles.cardTop}>
+                <Text style={styles.name}>{row.product_name}</Text>
+                <Text style={styles.qty}>{row.quantity.toLocaleString()}</Text>
+              </View>
+              <Text style={styles.meta}>{labelFor(row.type)} · {row.user_name ?? '—'}</Text>
+              <Text style={styles.meta}>{formatRecordDateTime(row.occurred_at)}</Text>
+              <Text style={styles.meta}>
+                {t('stock.previousQty')}: {row.previous_quantity.toLocaleString()} → {t('stock.newQty')}: {row.new_quantity.toLocaleString()}
+              </Text>
+              {row.reason ? <Text style={styles.reason}>{row.reason}</Text> : null}
+              {row.reversal_of ? <Text style={styles.reason}>{t('stock.reversal')}</Text> : null}
           </View>
         ))}
       </ScrollView>
@@ -135,7 +167,31 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: 48 },
   filterLabel: { fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: spacing.sm, marginTop: spacing.sm },
-  chips: { marginBottom: spacing.md },
+  chips: { marginBottom: spacing.md, flexGrow: 0 },
+  dateRow: { flexDirection: 'row', gap: spacing.md },
+  dateItem: { flex: 1, minWidth: 0 },
+  filterToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+  },
+  filterToggleText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.ink },
+  filterBadge: {
+    minWidth: 20,
+    paddingHorizontal: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  filterBadgeText: { fontSize: 12, fontWeight: '700', color: colors.white },
+  filterPanel: { marginBottom: spacing.sm },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,

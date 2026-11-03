@@ -97,14 +97,7 @@ export default function CustomersScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader
-        title={t('customers.customers')}
-        right={
-          <TouchableOpacity onPress={openCreate} hitSlop={10} accessibilityLabel={t('customers.addCustomer')}>
-            <Ionicons name="add-circle" size={28} color={colors.primary} />
-          </TouchableOpacity>
-        }
-      />
+      <ScreenHeader title={t('customers.customers')} />
 
       <FlatList
         data={rows}

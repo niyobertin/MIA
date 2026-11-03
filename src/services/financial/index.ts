@@ -185,6 +185,9 @@ export class FinancialService {
     expenses: number;
     netProfit: number;
     cashSales: number;
+    momoSales: number;
+    bankSales: number;
+    creditSales: number;
     customerCashPayments: number;
     otherCashIncome: number;
     cashPurchases: number;
@@ -198,7 +201,7 @@ export class FinancialService {
       salesWithItems,
       expenses,
       inventoryLoss,
-      cashSales,
+      checkout,
       customerCashPayments,
       otherCashIncome,
       cashPurchases,
@@ -211,7 +214,7 @@ export class FinancialService {
       saleRepository.getSalesWithItemsForSession(businessId, sessionId),
       expenseRepository.getTotalExpensesForSession(businessId, sessionId),
       stockMovementRepository.getInventoryLossForSession(businessId, sessionId),
-      saleRepository.getCashSalesForSession(businessId, sessionId),
+      saleRepository.getCheckoutSplitForSession(businessId, sessionId),
       paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'customer_payment', 'cash'),
       paymentRepository.getTotalByTypeAndMethodForSession(businessId, sessionId, 'other_income', 'cash'),
       purchaseRepository.getCashPurchasesForSession(businessId, sessionId),
@@ -238,7 +241,10 @@ export class FinancialService {
       grossProfit,
       expenses,
       netProfit,
-      cashSales,
+      cashSales: checkout.cash,
+      momoSales: checkout.mobileMoney,
+      bankSales: checkout.bank,
+      creditSales: checkout.creditSales,
       customerCashPayments,
       otherCashIncome,
       cashPurchases,
@@ -650,7 +656,15 @@ export class FinancialService {
       cashExpenses,
       withdrawals: withdrawalsRow.cash + withdrawalsRow.mobileMoney + withdrawalsRow.bank,
       openingCash: options?.openingCash ?? 0,
-      topProducts,
+      topProducts: topProducts.map((p) => ({
+        productId: p.productId,
+        productName: p.productName,
+        quantitySold: p.quantitySold,
+        revenue: p.totalSales,
+        cost: p.totalSales - p.totalProfit,
+        grossProfit: p.totalProfit,
+        margin: p.margin,
+      })),
       stockValueNow: stockNow,
       stockValueAtEnd: stockNow,
     });

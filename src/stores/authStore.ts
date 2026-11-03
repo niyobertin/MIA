@@ -12,6 +12,15 @@ import { ensureDemoUsers } from '@/db/seed/demo';
 import { isApiConfigured } from '@/lib/api';
 import { cloudSignIn, isOnline } from '@/services/auth/cloudAuth';
 import { hydrateLocalSession } from '@/services/auth/hydrateSession';
+import {
+  assertNotLockedLocally,
+  clearLocalFailures,
+  describePinError,
+  recordLocalFailure,
+  rememberAccount,
+} from '@/services/auth/pinAuth';
+import { getPinProblem, isPinFormat } from '@/utils/pin';
+import i18n from '@/i18n';
 
 interface AuthState {
   user: User | null;
@@ -20,6 +29,8 @@ interface AuthState {
   isLoading: boolean;
   hasHydrated: boolean;
   error: string | null;
+  pinSetupRequired: boolean;
+  pendingLegacySecret: string | null;
 
   setUser: (user: User | null) => void;
   setBusiness: (business: Business | null) => void;
@@ -31,6 +42,7 @@ interface AuthState {
   register: (data: RegisterData) => Promise<void>;
   createBusiness: (data: CreateBusinessData) => Promise<void>;
   joinBusiness: (businessCode: string, role?: UserRole) => Promise<void>;
+  changePin: (current: string | null, pin: string) => Promise<boolean>;
   logout: () => void;
   loadSession: () => Promise<void>;
 }
@@ -58,6 +70,8 @@ export const useAuthStore = create<AuthState>()(
       isLoading: true,
       hasHydrated: false,
       error: null,
+      pinSetupRequired: false,
+      pendingLegacySecret: null,
 
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       setBusiness: (business) => set({ business }),
@@ -71,7 +85,9 @@ export const useAuthStore = create<AuthState>()(
           await ensureDemoUsers();
 
           const normalized = email.trim().toLowerCase();
+          await assertNotLockedLocally(normalized);
           const online = await isOnline();
+          const legacySecret = !isPinFormat(password);
 
           // 1) Online → always authenticate against the API (never local-only cache)
           if (isApiConfigured && online) {
@@ -91,7 +107,17 @@ export const useAuthStore = create<AuthState>()(
                 return;
               }
 
-              set({ user, business, isAuthenticated: true, error: null });
+              await clearLocalFailures(normalized);
+              await rememberAccount({ email: user.email, name: user.name });
+              const needsPin = Boolean(cloudUser.pinSetupRequired) || legacySecret;
+              set({
+                user,
+                business,
+                isAuthenticated: true,
+                error: null,
+                pinSetupRequired: needsPin,
+                pendingLegacySecret: needsPin ? password : null,
+              });
               showToast(
                 business
                   ? 'Signed in online. Business data synced to this device.'
@@ -109,12 +135,13 @@ export const useAuthStore = create<AuthState>()(
               }
               return;
             } catch (cloudError) {
-              const message = formatAuthError(
-                cloudError,
-                'Could not sign in to the cloud. Check your internet and try again.'
-              );
+              const message =
+                describePinError(cloudError) ??
+                formatAuthError(
+                  cloudError,
+                  'Could not sign in to the cloud. Check your internet and try again.'
+                );
               set({ error: message });
-              showToast(message, 'error');
               return;
             }
           }
@@ -122,22 +149,20 @@ export const useAuthStore = create<AuthState>()(
           // 2) Offline only → use locally cached account
           const credential = await userRepository.findCredentialByEmail(normalized);
           if (!credential || !credential.user.active) {
-            set({ error: 'Invalid email or password' });
-            showToast(
-              online
-                ? 'Invalid email or password.'
+            set({
+              error: online
+                ? i18n.t('auth.invalidPin')
                 : 'You are offline. Sign in once while online so this device can work offline.',
-              'error'
-            );
+            });
             return;
           }
 
           const valid = await verifyPassword(password, credential.password_hash);
           if (!valid) {
-            set({ error: 'Invalid email or password' });
-            showToast('Invalid email or password', 'error');
+            set({ error: await recordLocalFailure(normalized) });
             return;
           }
+          await clearLocalFailures(normalized);
 
           const user = credential.user;
           const business = user.business_id
@@ -150,12 +175,20 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
-          set({ user, business, isAuthenticated: true, error: null });
+          await rememberAccount({ email: user.email, name: user.name });
+          set({
+            user,
+            business,
+            isAuthenticated: true,
+            error: null,
+            pinSetupRequired: legacySecret,
+            pendingLegacySecret: legacySecret ? password : null,
+          });
           showToast('Signed in offline. Sync will run when you are back online.', 'success');
         } catch (error) {
-          const message = formatAuthError(error, 'Could not sign in. Please try again.');
+          const message =
+            describePinError(error) ?? formatAuthError(error, 'Could not sign in. Please try again.');
           set({ error: message });
-          showToast(message, 'error');
         }
       },
 
@@ -176,8 +209,9 @@ export const useAuthStore = create<AuthState>()(
             showToast(message, 'error');
             return;
           }
-          if (!data.password || data.password.length < 6) {
-            const message = 'Password must be at least 6 characters.';
+          const pinProblem = getPinProblem(data.password ?? '');
+          if (pinProblem) {
+            const message = i18n.t(`auth.${pinProblem}`);
             set({ error: message });
             showToast(message, 'error');
             return;
@@ -205,12 +239,15 @@ export const useAuthStore = create<AuthState>()(
             phone: data.phone,
           });
 
+          await rememberAccount({ email: user.email, name: user.name });
           set({
             user,
             business: null,
             isAuthenticated: true,
             isLoading: false,
             error: null,
+            pinSetupRequired: false,
+            pendingLegacySecret: null,
           });
           showToast(
             accountId
@@ -219,7 +256,9 @@ export const useAuthStore = create<AuthState>()(
             'success'
           );
         } catch (error) {
-          const message = formatAuthError(error, 'Could not create your account. Please try again.');
+          const message =
+            describePinError(error) ??
+            formatAuthError(error, 'Could not create your account. Please try again.');
           set({ error: message });
           showToast(message, 'error');
         }
@@ -376,8 +415,53 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
+      changePin: async (current: string | null, pin: string) => {
+        const user = get().user;
+        if (!user) return false;
+        const secret = current ?? get().pendingLegacySecret;
+        const problem = getPinProblem(pin);
+        if (problem) {
+          showToast(i18n.t(`auth.${problem}`), 'error');
+          return false;
+        }
+        if (!secret) {
+          showToast(i18n.t('auth.pinChangeFailed'), 'error');
+          return false;
+        }
+        try {
+          const { cloudChangePin } = await import('@/services/auth/cloudAuth');
+          if (isApiConfigured) {
+            if (!(await isOnline())) {
+              showToast(i18n.t('auth.pinChangeNeedsInternet'), 'error');
+              return false;
+            }
+            await cloudChangePin(secret, pin);
+          } else {
+            const credential = await userRepository.findCredentialByEmail(user.email);
+            if (!credential || !(await verifyPassword(secret, credential.password_hash))) {
+              showToast(await recordLocalFailure(user.email), 'error');
+              return false;
+            }
+          }
+          await userRepository.setPin(user.id, pin);
+          await clearLocalFailures(user.email);
+          set({ pinSetupRequired: false, pendingLegacySecret: null });
+          showToast(i18n.t('auth.pinChanged'), 'success');
+          return true;
+        } catch (error) {
+          showToast(describePinError(error) ?? i18n.t('auth.pinChangeFailed'), 'error');
+          return false;
+        }
+      },
+
       logout: () => {
-        set({ user: null, business: null, isAuthenticated: false });
+        set({
+          user: null,
+          business: null,
+          isAuthenticated: false,
+          pinSetupRequired: false,
+          pendingLegacySecret: null,
+        });
         void import('@/services/auth/cloudAuth').then(({ cloudSignOut }) => cloudSignOut());
       },
 
@@ -465,6 +549,7 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         business: state.business,
         isAuthenticated: state.isAuthenticated,
+        pinSetupRequired: state.pinSetupRequired,
       }),
     }
   )

@@ -39,7 +39,7 @@ export const StatCard: React.FC<StatCardProps> = ({
         <View style={[styles.iconTile, { backgroundColor: `${color}1a` }]}>
           <Ionicons name={(icon ?? 'stats-chart') as any} size={18} color={color} />
         </View>
-        <Text style={styles.title} numberOfLines={1}>
+        <Text style={styles.title} numberOfLines={2}>
           {title}
         </Text>
         {trendValue ? (

@@ -32,6 +32,7 @@ import {
 } from '@/hooks/useData';
 import { PAYMENT_METHODS } from '@/constants';
 import { WaiterTabStatus } from '@/types';
+import { formatRecordDateTime } from '@/utils/formatters';
 
 const PAY_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -55,6 +56,7 @@ export default function WaiterTabDetailScreen() {
   const returnPaidMutation = useReturnPaidWaiterTab();
 
   const [amountText, setAmountText] = React.useState('');
+  const [payNotes, setPayNotes] = React.useState('');
   const [paymentMethod, setPaymentMethod] = React.useState<'cash' | 'mobile_money' | 'bank'>('cash');
   const [showPayConfirm, setShowPayConfirm] = React.useState(false);
   const [showAdd, setShowAdd] = React.useState(false);
@@ -143,8 +145,10 @@ export default function WaiterTabDetailScreen() {
         tabId: tab.id,
         amount: payAmount,
         paymentMethod,
+        notes: payNotes.trim() || undefined,
       });
       setShowPayConfirm(false);
+      setPayNotes('');
       amountTouched.current = false;
       showToast(t('waiterTabs.paymentRecorded'), 'success');
       refetch();
@@ -300,7 +304,13 @@ export default function WaiterTabDetailScreen() {
       >
         <View style={styles.summary}>
           <View style={styles.summaryTop}>
-            <Text style={styles.waiterName}>{tab.waiter_name ?? '—'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.waiterName}>{tab.waiter_name ?? '—'}</Text>
+              <Text style={styles.tabDate}>{formatRecordDateTime(tab.created_at)}</Text>
+              {tab.notes ? (
+                <Text style={styles.tabNotes}>📝 {tab.notes}</Text>
+              ) : null}
+            </View>
             <StatusBadge label={statusLabel(tab.status)} tone={statusTone[tab.status]} />
           </View>
           <View style={styles.moneyRow}>
@@ -492,6 +502,13 @@ export default function WaiterTabDetailScreen() {
                 ))}
               </Picker>
             </View>
+            <TextInput
+              style={styles.payNotesInput}
+              placeholder={t('waiterTabs.notes') || 'Payment notes (e.g. Table 4 cash)'}
+              placeholderTextColor={colors.faint}
+              value={payNotes}
+              onChangeText={setPayNotes}
+            />
             <Button
               title={t('waiterTabs.recordPayment')}
               onPress={() => setShowPayConfirm(true)}
@@ -685,7 +702,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     gap: spacing.sm,
   },
-  waiterName: { flex: 1, fontSize: 15, fontWeight: '700', color: colors.ink },
+  waiterName: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  tabDate: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  tabNotes: { fontSize: 12, color: colors.body, fontStyle: 'italic', marginTop: 4 },
   moneyRow: { flexDirection: 'row', gap: spacing.sm },
   moneyBlock: { flex: 1 },
   meta: { fontSize: 10, fontWeight: '600', color: colors.faint, marginBottom: 2 },
@@ -813,6 +832,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     marginBottom: spacing.md,
     overflow: 'hidden',
+  },
+  payNotesInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: 14,
+    color: colors.ink,
+    marginBottom: spacing.md,
+    backgroundColor: colors.inputBg,
   },
   actions: { gap: spacing.sm, marginTop: spacing.md },
   selectedBox: {

@@ -1,6 +1,7 @@
 import { getDatabase } from '@/db/database';
 import { apiFetch, isApiConfigured } from '@/lib/api';
 import { hashPassword } from '@/utils/password';
+import { toBusinessDate } from '@/utils/formatters';
 import { Business, User, UserRole } from '@/types';
 
 function asRole(value: unknown): UserRole | null {
@@ -39,9 +40,7 @@ function normalizeCell(v: unknown, key?: string): string | number | null {
   ]);
 
   if (key && DATE_KEYS.has(key)) {
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    const text = String(v);
-    return text.length >= 10 ? text.slice(0, 10) : text;
+    return toBusinessDate(v);
   }
 
   if (v instanceof Date) return v.toISOString();

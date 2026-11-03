@@ -30,7 +30,7 @@ const DEMO_USERS = [
     name: 'Jean Uwimana',
     email: 'owner@mia.rw',
     phone: '+250788100001',
-    password: 'Owner123!',
+    password: '1357',
     role: 'OWNER' as const,
   },
   {
@@ -38,7 +38,7 @@ const DEMO_USERS = [
     name: 'Alice Mukamana',
     email: 'manager@mia.rw',
     phone: '+250788100002',
-    password: 'Manager123!',
+    password: '2468',
     role: 'MANAGER' as const,
   },
   {
@@ -46,7 +46,7 @@ const DEMO_USERS = [
     name: 'Eric Niyonsenga',
     email: 'cashier@mia.rw',
     phone: '+250788100003',
-    password: 'Cashier123!',
+    password: '3579',
     role: 'CASHIER' as const,
   },
 ];

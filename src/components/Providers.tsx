@@ -14,7 +14,10 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSyncStore } from '@/stores/syncStore';
 import { getSyncEngine } from '@/services/sync/syncEngine';
 import { refreshPendingCount } from '@/services/sync/queue';
+import { configureConnectivity } from '@/services/sync/connectivity';
 import { ToastHost } from './ToastHost';
+
+configureConnectivity();
 
 const queryClient = new QueryClient({
   defaultOptions: {

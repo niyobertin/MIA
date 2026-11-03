@@ -47,6 +47,7 @@ export default function MoreScreen() {
     ...(canManageUsers(user?.role)
       ? [{ title: t('settings.userManagement'), icon: 'people', screen: 'user-management' }]
       : []),
+    { title: t('auth.changePin'), icon: 'keypad', screen: 'change-pin' },
     { title: t('settings.language'), icon: 'globe', screen: 'language' },
     { title: t('settings.sync'), icon: 'sync', screen: 'sync' },
     ...(canSeeProfit(user?.role)
