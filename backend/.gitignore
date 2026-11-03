@@ -6,3 +6,4 @@ dist/
 .pgdata/
 .pglogs/
 coverage/
+backups/

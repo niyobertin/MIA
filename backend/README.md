@@ -30,6 +30,26 @@ npm run dev
 API: `http://localhost:4000`  
 On a phone (same Wi‑Fi): `http://YOUR_LAN_IP:4000`
 
+## Schema changes and backups
+
+Schema sync (on boot, `npm run db:migrate`, and the GitHub Action) only applies changes that keep data, such as new tables and columns. If a change would drop a table or column, change a column type, or rename something, the API refuses to start and prints the SQL.
+
+```bash
+npm run db:plan      # show pending schema changes; [DATA RISK] marks dangerous ones
+npm run db:backup    # pg_dump to ./backups (BACKUP_DIR), keeps BACKUP_KEEP_DAYS=30
+npm run db:restore -- backups/mia-<stamp>.dump   # asks you to type RESTORE
+```
+
+To apply a flagged change: back up, review `db:plan`, then run once with `ALLOW_DESTRUCTIVE_SCHEMA=true npm run db:migrate`.
+
+Production needs a daily backup that is copied off the server, for example a cron entry:
+
+```bash
+0 2 * * * cd /srv/mia/backend && BACKUP_DIR=/var/backups/mia npm run -s db:backup
+```
+
+Test a restore into a separate database every month: `npm run db:restore -- <file> postgresql://.../mia_restore_test`.
+
 ## Demo seed logins
 | Role | Email | PIN |
 |------|-------|----------|

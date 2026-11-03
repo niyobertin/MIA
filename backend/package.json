@@ -2,7 +2,7 @@
   "name": "mia-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "MIA API — Express + TypeORM + PostgreSQL",
+  "description": "MIA API \u2014 Express + TypeORM + PostgreSQL",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -10,6 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "db:init": "tsx src/scripts/initDb.ts",
     "db:migrate": "tsx src/scripts/initDb.ts",
+    "db:plan": "tsx src/scripts/planDb.ts",
+    "db:backup": "bash scripts/backup-db.sh",
+    "db:restore": "bash scripts/restore-db.sh",
     "prestart": "npm run db:migrate",
     "db:seed": "tsx src/scripts/seed.ts",
     "seed": "tsx src/scripts/seed.ts",
