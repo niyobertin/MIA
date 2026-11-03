@@ -9,13 +9,16 @@ const BCRYPT_ROUNDS = 12;
 
 function resolveJwtSecret(): string {
   const secret = process.env.JWT_SECRET?.trim();
-  const weak = !secret || secret === DEV_JWT_SECRET || secret.startsWith('change-me') || secret.length < 32;
-  if (weak) {
+  const publicDefault = !secret || secret === DEV_JWT_SECRET || secret.startsWith('change-me');
+  if (publicDefault) {
     if (IS_PRODUCTION) {
-      throw new Error('JWT_SECRET must be set to a random value of at least 32 characters in production');
+      throw new Error('JWT_SECRET must be set to a private random value in production');
     }
     console.warn('JWT_SECRET is missing or weak — using an insecure development secret.');
     return secret || DEV_JWT_SECRET;
+  }
+  if (secret.length < 32) {
+    console.warn('JWT_SECRET is shorter than 32 characters. Replace it with: openssl rand -hex 32');
   }
   return secret;
 }

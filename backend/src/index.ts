@@ -12,7 +12,7 @@ dotenv.config();
 async function main() {
   // Schema sync on every boot (entities → Postgres). Set TYPEORM_SYNC=false to skip.
   const syncOnBoot = process.env.TYPEORM_SYNC !== 'false';
-  await initDatabase({ synchronize: syncOnBoot });
+  await initDatabase({ synchronize: syncOnBoot, onUnsafe: 'skip' });
   if (syncOnBoot) {
     console.log('PostgreSQL schema synchronized (TypeORM).');
   } else {

@@ -80,7 +80,28 @@ export async function planSchemaChanges() {
   return plan.upQueries.map((q) => q.query);
 }
 
-export async function initDatabase(options?: { synchronize?: boolean; allowDestructive?: boolean }) {
+async function applySafeSchemaChanges() {
+  const plan = await AppDataSource.driver.createSchemaBuilder().log();
+  const safe = plan.upQueries.filter((q) => !DESTRUCTIVE_SQL.test(q.query));
+  const runner = AppDataSource.createQueryRunner();
+  await runner.startTransaction();
+  try {
+    for (const q of safe) await runner.query(q.query, q.parameters);
+    await runner.commitTransaction();
+  } catch (error) {
+    await runner.rollbackTransaction();
+    throw error;
+  } finally {
+    await runner.release();
+  }
+  return safe.length;
+}
+
+export async function initDatabase(options?: {
+  synchronize?: boolean;
+  allowDestructive?: boolean;
+  onUnsafe?: 'refuse' | 'skip';
+}) {
   if (!AppDataSource.isInitialized) {
     await AppDataSource.initialize();
   }
@@ -91,7 +112,15 @@ export async function initDatabase(options?: { synchronize?: boolean; allowDestr
       options.allowDestructive ?? process.env.ALLOW_DESTRUCTIVE_SCHEMA === 'true';
     const destructive = findDestructiveQueries(queries);
     if (destructive.length > 0 && !allowDestructive) {
-      throw new UnsafeSchemaChangeError(destructive);
+      if (options.onUnsafe !== 'skip') throw new UnsafeSchemaChangeError(destructive);
+      console.error(new UnsafeSchemaChangeError(destructive).message);
+      try {
+        const applied = await applySafeSchemaChanges();
+        console.warn(`Applied ${applied} safe schema change(s); skipped ${destructive.length} that can delete data.`);
+      } catch (error) {
+        console.error('Safe schema changes failed and were rolled back. Starting with the current schema.', error);
+      }
+      return AppDataSource;
     }
     await AppDataSource.synchronize();
   }
