@@ -63,6 +63,9 @@ export class User {
   @Column({ type: 'timestamptz', nullable: true })
   locked_until!: Date | null;
 
+  @Column({ type: 'boolean', default: false })
+  must_change_pin!: boolean;
+
   @Column({ type: 'text', nullable: true })
   role!: UserRole | null;
 

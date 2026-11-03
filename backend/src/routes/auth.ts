@@ -197,7 +197,7 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
       ...tokensFor(user),
       user: publicUser(user),
       business,
-      pin_setup_required: !isPinFormat(body.password),
+      pin_setup_required: !isPinFormat(body.password) || user.must_change_pin,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -229,6 +229,7 @@ authRouter.post('/change-pin', loginLimiter, requireAuth, async (req: AuthedRequ
       password_hash: await hashPassword(body.pin),
       failed_login_attempts: 0,
       locked_until: null,
+      must_change_pin: false,
       updated_at: new Date(),
     });
     res.json({ ok: true });

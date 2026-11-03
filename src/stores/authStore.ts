@@ -8,7 +8,7 @@ import { verifyPassword } from '@/utils/password';
 import { generateUUID } from '@/utils/uuid';
 import { showToast } from './toastStore';
 import { formatAuthError } from '@/utils/cloudErrors';
-import { ensureDemoUsers } from '@/db/seed/demo';
+import { DEMO_ENABLED, disableDemoUsers, ensureDemoUsers } from '@/db/seed/demo';
 import { isApiConfigured } from '@/lib/api';
 import { cloudSignIn, isOnline } from '@/services/auth/cloudAuth';
 import { hydrateLocalSession } from '@/services/auth/hydrateSession';
@@ -82,10 +82,10 @@ export const useAuthStore = create<AuthState>()(
       login: async (email: string, password: string) => {
         set({ error: null });
         try {
-          await ensureDemoUsers();
+          if (DEMO_ENABLED) await ensureDemoUsers();
+          else await disableDemoUsers();
 
           const normalized = email.trim().toLowerCase();
-          await assertNotLockedLocally(normalized);
           const online = await isOnline();
           const legacySecret = !isPinFormat(password);
 
@@ -147,6 +147,7 @@ export const useAuthStore = create<AuthState>()(
           }
 
           // 2) Offline only → use locally cached account
+          await assertNotLockedLocally(normalized);
           const credential = await userRepository.findCredentialByEmail(normalized);
           if (!credential || !credential.user.active) {
             set({
@@ -469,7 +470,8 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           const { seedDemoData, DEMO_USERS, DEMO_BUSINESS } = await import('@/db/seed/demo');
-          await seedDemoData();
+          if (DEMO_ENABLED) await seedDemoData();
+          else await disableDemoUsers();
 
           const state = get();
           if (state.user) {

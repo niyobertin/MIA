@@ -50,6 +50,16 @@ Production needs a daily backup that is copied off the server, for example a cro
 
 Test a restore into a separate database every month: `npm run db:restore -- <file> postgresql://.../mia_restore_test`.
 
+## Owner forgot their PIN
+
+Staff PINs are reset by the owner in Team settings. For an owner, confirm who they are (for example a call from the phone number on the account), then:
+
+```bash
+npm run user:reset-pin -- owner@example.com
+```
+
+It prints a temporary PIN. The owner signs in with it and must choose a new PIN right away.
+
 ## Demo seed logins
 | Role | Email | PIN |
 |------|-------|----------|

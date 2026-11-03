@@ -261,6 +261,20 @@ async function upsertDemoUser(
   }
 }
 
+export const DEMO_ENABLED = process.env.EXPO_PUBLIC_ENABLE_DEMO
+  ? process.env.EXPO_PUBLIC_ENABLE_DEMO === 'true'
+  : __DEV__;
+
+export async function disableDemoUsers(): Promise<void> {
+  const db = await getDatabase();
+  const emails = [...DEMO_USERS.map((u) => u.email.toLowerCase()), 'demo@mia.app'];
+  await db.runAsync(
+    `UPDATE users SET active = 0, updated_at = ?
+     WHERE active = 1 AND lower(email) IN (${emails.map(() => '?').join(', ')})`,
+    [new Date().toISOString(), ...emails]
+  );
+}
+
 export async function ensureDemoUsers(businessId?: string): Promise<void> {
   await ensurePasswordHashColumn();
   const id = businessId ?? (await ensureDemoBusiness());

@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { colors } from '@/theme/tokens';
+import { isPinFormat } from '@/utils/pin';
 import { ChangePinForm } from './ChangePinForm';
 import { FormScrollView } from './FormScrollView';
 
@@ -25,7 +26,11 @@ export function PinSetupGate() {
             <Ionicons name="keypad" size={28} color={colors.primary} />
           </View>
           <Text style={styles.title}>{t('auth.setPinTitle')}</Text>
-          <Text style={styles.subtitle}>{t('auth.setPinRequired')}</Text>
+          <Text style={styles.subtitle}>
+            {pendingLegacySecret && isPinFormat(pendingLegacySecret)
+              ? t('auth.setPinAfterReset')
+              : t('auth.setPinRequired')}
+          </Text>
           <ChangePinForm askCurrent={!pendingLegacySecret} currentIsPassword />
           <TouchableOpacity onPress={logout} style={styles.signOut} accessibilityRole="button">
             <Text style={styles.signOutText}>{t('auth.signOut')}</Text>
