@@ -107,13 +107,14 @@ function formatPeriodLabel(
   range: PeriodRange,
   period: Period,
   allLabel: string,
-  sessionLabel: string
+  sessionLabel: string,
+  joinRange: (start: string, end: string) => string
 ): string {
   if (period === 'all') return allLabel;
   if (period === 'openDay' && range.sessionId) return sessionLabel;
   const start = range.start.replace('T', ' ').slice(0, 16);
   const end = range.end.replace('T', ' ').slice(0, 16);
-  return `${start} → ${end}`;
+  return joinRange(start, end);
 }
 
 function minutesFromClock(value: string): number | null {
@@ -468,7 +469,8 @@ export default function ReportsScreen() {
           range,
           period,
           t('sales.allTime'),
-          t('sales.openDayFilter')
+          t('sales.openDayFilter'),
+          (start, end) => t('common.dateRange', { start, end })
         ),
         generatedAt: new Date().toLocaleString(),
         totalSales: stats.totalSales,
@@ -525,7 +527,8 @@ export default function ReportsScreen() {
     range,
     period,
     t('sales.allTime'),
-    t('sales.openDayFilter')
+    t('sales.openDayFilter'),
+    (start, end) => t('common.dateRange', { start, end })
   );
 
   const collectedTotal =

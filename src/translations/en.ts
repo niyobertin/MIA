@@ -3,6 +3,7 @@ export const en = {
     appName: 'MIA',
     appDescription: 'Daily Trading & Stock Management',
     loading: 'Loading...',
+    dateRange: '{{start}} to {{end}}',
     save: 'Save',
     cancel: 'Cancel',
     delete: 'Delete',

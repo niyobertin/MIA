@@ -152,7 +152,7 @@ export default function StockMovementsScreen() {
               <Text style={styles.meta}>{labelFor(row.type)} · {row.user_name ?? '—'}</Text>
               <Text style={styles.meta}>{formatRecordDateTime(row.occurred_at)}</Text>
               <Text style={styles.meta}>
-                {t('stock.previousQty')}: {row.previous_quantity.toLocaleString()} → {t('stock.newQty')}: {row.new_quantity.toLocaleString()}
+                {t('stock.previousQty')}: {row.previous_quantity.toLocaleString()} · {t('stock.newQty')}: {row.new_quantity.toLocaleString()}
               </Text>
               {row.reason ? <Text style={styles.reason}>{row.reason}</Text> : null}
               {row.reversal_of ? <Text style={styles.reason}>{t('stock.reversal')}</Text> : null}

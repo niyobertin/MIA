@@ -402,8 +402,7 @@ export default function ClosingScreen() {
             <View style={styles.openBadge}>
               <Ionicons name="ellipse" size={10} color={colors.success} />
               <Text style={styles.openBadgeText}>
-                {t('cash.dayIsOpen')} · {sessionStart}
-                {sessionStart !== today ? ` → ${today}` : ''}
+                {t('cash.dayIsOpen')} · {sessionStart !== today ? t('common.dateRange', { start: sessionStart, end: today }) : sessionStart}
               </Text>
             </View>
 

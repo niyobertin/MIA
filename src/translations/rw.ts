@@ -3,6 +3,7 @@ export const rw = {
     appName: 'MIA',
     appDescription: 'Gucunga ubucuruzi n\'ububiko bwa buri munsi',
     loading: 'Bikora...',
+    dateRange: '{{start}} kugeza {{end}}',
     save: 'Hanga',
     cancel: 'Guhagarika',
     delete: 'Siba',

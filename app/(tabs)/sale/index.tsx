@@ -308,9 +308,9 @@ export default function NewSaleScreen() {
   const historySubtitle = React.useMemo(() => {
     if (historyFilter === 'all') return t('sales.allTime');
     if (historyFilter === 'openDay' && openDayStart && openDayStart !== today) {
-      return `${t('sales.openDayFilter')} · ${openDayStart} → ${today}`;
+      return `${t('sales.openDayFilter')} · ${t('common.dateRange', { start: openDayStart, end: today })}`;
     }
-    if (historyRange) return `${historyRange.start} → ${historyRange.end}`;
+    if (historyRange) return t('common.dateRange', { start: historyRange.start, end: historyRange.end });
     return t('sales.salesHistory');
   }, [historyFilter, openDayStart, today, historyRange, t]);
   const customerNameOf = (id: string | null) =>
@@ -897,11 +897,15 @@ export default function NewSaleScreen() {
                 {(success?.lines ?? []).map((line, i) => (
                   <View key={i} style={styles.stockLine}>
                     <Text style={styles.stockLineName} numberOfLines={1}>{line.name}</Text>
-                    <Text style={styles.stockLineQty}>
-                      {line.before !== null && line.after !== null
-                        ? `${line.before} → ${line.after}`
-                        : `×${line.qty}`}
-                    </Text>
+                    {line.before !== null && line.after !== null ? (
+                      <View style={styles.stockLineChange}>
+                        <Text style={styles.stockLineQty}>{line.before}</Text>
+                        <Ionicons name="arrow-forward" size={12} color={colors.successText} />
+                        <Text style={styles.stockLineQty}>{line.after}</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.stockLineQty}>{`×${line.qty}`}</Text>
+                    )}
                   </View>
                 ))}
                 <View style={styles.successActions}>
@@ -2149,6 +2153,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: colors.ink,
+  },
+  stockLineChange: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   stockLineQty: {
     fontSize: 13,

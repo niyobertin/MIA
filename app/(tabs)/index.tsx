@@ -211,7 +211,7 @@ export default function HomeScreen() {
     periodOptions.find((o) => o.value === period)?.label ?? t('dashboard.periodFilter');
   const periodSubtitle = range
     ? period === 'custom' || range.start.slice(0, 10) !== range.end.slice(0, 10)
-      ? `${range.start.slice(0, 10)} → ${range.end.slice(0, 10)}`
+      ? t('common.dateRange', { start: range.start.slice(0, 10), end: range.end.slice(0, 10) })
       : range.start.slice(0, 10)
     : '';
 
@@ -312,7 +312,10 @@ export default function HomeScreen() {
                       {sessionNumber != null ? ` #${sessionNumber}` : ''}
                       {sessionDuration ? ` · ${sessionDuration}` : ''}
                     </Text>
-                    <Text style={styles.heroSessionAction}>{t('cash.closeSessionShort')} →</Text>
+                    <View style={styles.heroSessionActionRow}>
+                      <Text style={styles.heroSessionAction}>{t('cash.closeSessionShort')}</Text>
+                      <Ionicons name="arrow-forward" size={13} color="#fff" />
+                    </View>
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity style={styles.heroAlert} onPress={() => go('/closing')} activeOpacity={0.85}>
@@ -987,6 +990,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: 'rgba(255,255,255,0.85)',
+  },
+  heroSessionActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   heroSessionAction: {
     fontSize: 12,
