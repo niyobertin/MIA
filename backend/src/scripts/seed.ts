@@ -11,6 +11,7 @@ import {
   StockMovement,
 } from '../entities';
 import { hashPassword } from '../lib/auth';
+import { seedPlatformAdmins } from './seedPlatformAdmins';
 
 dotenv.config();
 
@@ -190,6 +191,8 @@ async function main() {
   }));
   await upsert(StockMovement, movements);
 
+  console.log('Platform admin logins:');
+  await seedPlatformAdmins();
   console.log('Seed complete.');
   console.log('');
   console.log('Demo business code:', DEMO_BUSINESS.business_code);

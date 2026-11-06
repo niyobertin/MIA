@@ -6,6 +6,7 @@ import { settleCustomerAccount } from './settle';
 import { recordStockMovement } from './recordStockMovement';
 import { audit } from './audit';
 import { UserRole } from '@/types';
+import { canReverseStock } from '@/utils/permissions';
 
 export async function voidSale(input: {
   businessId: string;
@@ -15,6 +16,8 @@ export async function voidSale(input: {
   role: UserRole | null;
   reason?: string;
 }): Promise<void> {
+  if (!canReverseStock(input.role)) throw new Error('FORBIDDEN');
+
   const sale = await saleRepository.findById(input.saleId, input.businessId);
   if (!sale) throw new Error('SALE_NOT_FOUND');
   if (sale.voided) throw new Error('ALREADY_VOID');

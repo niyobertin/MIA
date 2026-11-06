@@ -5,6 +5,8 @@ import cors from 'cors';
 import { initDatabase } from './data-source';
 import { authRouter } from './routes/auth';
 import { syncRouter } from './routes/sync';
+import { dashboardRouter } from './routes/dashboard';
+import { platformRouter } from './routes/platform';
 import { rateLimit, securityHeaders } from './middleware/security';
 
 dotenv.config();
@@ -47,6 +49,8 @@ async function main() {
 
   app.use('/auth', authRouter);
   app.use('/sync', syncRouter);
+  app.use('/dashboard', dashboardRouter);
+  app.use('/platform', platformRouter);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`MIA API listening on http://0.0.0.0:${PORT}`);

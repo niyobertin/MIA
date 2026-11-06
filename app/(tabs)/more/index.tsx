@@ -9,7 +9,7 @@ import { Button } from '@/components/Button';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { getInitials } from '@/utils/formatters';
-import { canManageUsers, canCloseDay, canSeeProfit } from '@/utils/permissions';
+import { canManageBusiness, canManageUsers, canCloseDay, canSeeProfit } from '@/utils/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { APP_VERSION } from '@/constants';
@@ -43,7 +43,9 @@ export default function MoreScreen() {
   ];
 
   const menuItems = [
-    { title: t('settings.business'), icon: 'storefront', screen: 'business-settings' },
+    ...(canManageBusiness(user?.role)
+      ? [{ title: t('settings.business'), icon: 'storefront', screen: 'business-settings' }]
+      : []),
     ...(canManageUsers(user?.role)
       ? [{ title: t('settings.userManagement'), icon: 'people', screen: 'user-management' }]
       : []),

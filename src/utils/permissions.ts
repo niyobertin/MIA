@@ -37,6 +37,10 @@ export function canRecordOperationalStock(role?: UserRole | null): boolean {
   return role === 'OWNER' || role === 'MANAGER' || role === 'CASHIER';
 }
 
+export function canManageBusiness(role?: UserRole | null): boolean {
+  return role === 'OWNER' || role === 'MANAGER' || isSuperAdmin(role);
+}
+
 export function roleLabel(role?: UserRole | null): string {
   return role ?? '';
 }

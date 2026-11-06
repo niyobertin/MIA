@@ -394,7 +394,8 @@ export default function NewSaleScreen() {
               onSuccess: () => showToast(t('sales.saleVoided'), 'success'),
               onError: (error) => {
                 const code = error instanceof Error ? error.message : '';
-                if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
+                if (code === 'FORBIDDEN') showToast(t('cash.noPermission'), 'error');
+                else if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
                 else if (code === 'HISTORY_LOCKED') showToast(t('cash.historyLocked'), 'error');
                 else if (code === 'ALREADY_VOID') showToast(t('sales.saleVoided'), 'info');
                 else showToast(t('sales.saleFailed'), 'error');

@@ -66,6 +66,9 @@ export class User {
   @Column({ type: 'boolean', default: false })
   must_change_pin!: boolean;
 
+  @Column({ type: 'integer', default: 0 })
+  token_version!: number;
+
   @Column({ type: 'text', nullable: true })
   role!: UserRole | null;
 
@@ -77,6 +80,24 @@ export class User {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at!: Date;
+}
+
+@Entity('pin_reset_codes')
+export class PinResetCode {
+  @PrimaryColumn('uuid')
+  user_id!: string;
+
+  @Column({ type: 'text' })
+  code_hash!: string;
+
+  @Column({ type: 'timestamptz' })
+  expires_at!: Date;
+
+  @Column({ type: 'integer', default: 0 })
+  attempts!: number;
+
+  @Column({ type: 'timestamptz' })
+  created_at!: Date;
 }
 
 @Entity('categories')

@@ -111,6 +111,28 @@ export async function cloudChangePin(current: string, pin: string): Promise<void
   });
 }
 
+export async function cloudRequestPinReset(email: string): Promise<void> {
+  if (!isApiConfigured || !(await isOnline())) {
+    throw new Error('OFFLINE');
+  }
+  await apiFetch<{ ok: boolean }>('/auth/forgot-pin', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  });
+}
+
+export async function cloudResetPin(email: string, code: string, pin: string): Promise<void> {
+  if (!isApiConfigured || !(await isOnline())) {
+    throw new Error('OFFLINE');
+  }
+  await apiFetch<{ ok: boolean }>('/auth/reset-pin', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ email: email.trim().toLowerCase(), code, pin }),
+  });
+}
+
 export async function cloudSignOut(): Promise<void> {
   await clearAuthTokens();
 }

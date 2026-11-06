@@ -109,3 +109,14 @@ export function describePinError(error: unknown): string | null {
   }
   return null;
 }
+
+export function describePinResetError(error: unknown): string {
+  if (error instanceof Error && error.message === 'OFFLINE') return i18n.t('auth.resetNeedsInternet');
+  if (error instanceof ApiError) {
+    if (error.code === 'RESET_CODE_INVALID') return i18n.t('auth.resetCodeInvalid');
+    if (error.status === 429) return i18n.t('auth.resetTooMany');
+    const pinMessage = describePinError(error);
+    if (pinMessage) return pinMessage;
+  }
+  return i18n.t('auth.resetFailed');
+}

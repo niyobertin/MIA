@@ -7,6 +7,7 @@ import { reconcileProductCost } from './averageCost';
 import { recordStockMovement } from './recordStockMovement';
 import { audit } from './audit';
 import { UserRole } from '@/types';
+import { canReverseStock } from '@/utils/permissions';
 
 export async function voidPurchase(input: {
   businessId: string;
@@ -16,6 +17,8 @@ export async function voidPurchase(input: {
   role: UserRole | null;
   reason?: string;
 }): Promise<void> {
+  if (!canReverseStock(input.role)) throw new Error('FORBIDDEN');
+
   const purchase = await purchaseRepository.findById(input.purchaseId, input.businessId);
   if (!purchase) throw new Error('PURCHASE_NOT_FOUND');
   if (purchase.status === 'cancelled') throw new Error('ALREADY_VOID');

@@ -486,6 +486,11 @@ export default function StockInScreen() {
             onError: (error) => {
               const code = error instanceof Error ? error.message : '';
               const named = error as Error & { productName?: string };
+              if (code === 'FORBIDDEN') {
+                setVoidingId(null);
+                showToast(t('cash.noPermission'), 'error');
+                return;
+              }
               if (code === 'DAY_CLOSED') showToast(t('cash.dayAlreadyClosed'), 'error');
               else if (code === 'STOCK_ALREADY_SOLD') showToast(t('purchases.stockAlreadySold', { product: named.productName ?? '' }), 'error');
               else if (code === 'ALREADY_VOID') showToast(t('purchases.purchaseVoided'), 'info');

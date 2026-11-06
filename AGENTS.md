@@ -127,6 +127,15 @@ These are pure functions, heavily tested.
 | CASHIER | Create sales, customer payments, limited stock view |
 | STAFF | Limited operational access |
 
+## Web Dashboard and Super Admin
+
+- `mia-dashboard/` reads only from the API: `/dashboard/*` for businesses and `/platform/*` for MIA staff at the `/platform` URL. Writes such as sales stay in the mobile app.
+- Role rules live in `backend/src/lib/rbac.ts`. The backend enforces them; the dashboard only hides what a role cannot use.
+- Platform admins are a separate table with separate tokens and required two-factor sign-in. Roles: SUPER_ADMIN, SUPPORT, FINANCE. A business user can never become one.
+- Sync writes mirror the phone's own role guards (`applyLimitedRoleRules` in `backend/src/routes/sync.ts`). When you change who can do something on the phone, change the server rule too, or offline work gets rejected. Phones must still pull `average_cost`, because cost of goods sold is worked out offline.
+- Run `npm --prefix backend run test:rbac` after changing auth, sync or dashboard routes. It uses a throwaway `*_test` database.
+- `npm --prefix backend run platform:seed` creates development admins. In production it needs `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD`.
+
 ## Common Commands
 
 ```bash

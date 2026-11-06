@@ -31,6 +31,7 @@ export type AuthTokenPayload = {
   sub: string;
   email: string;
   business_id: string | null;
+  ver?: number;
   typ?: 'access' | 'refresh';
 };
 

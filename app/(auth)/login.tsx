@@ -192,7 +192,11 @@ export default function LoginScreen() {
             {t('auth.signIn')}
           </Button>
 
-          <Text style={styles.helpText}>{t('auth.forgotPin')}</Text>
+          <Link href="/(auth)/forgot-pin" asChild>
+            <TouchableOpacity style={styles.forgotLink} hitSlop={8} accessibilityRole="button">
+              <Text style={styles.link}>{t('auth.forgotPinLink')}</Text>
+            </TouchableOpacity>
+          </Link>
 
           <View style={styles.legacyRow}>
             {!usePassword ? <Text style={styles.legacyText}>{t('auth.legacyAccountPrompt')}</Text> : null}
@@ -318,11 +322,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  helpText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.muted,
-    textAlign: 'center',
+  forgotLink: {
+    alignSelf: 'center',
     marginTop: 16,
   },
   legacyRow: {

@@ -1,9 +1,9 @@
-import { randomUUID } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { ILike } from 'typeorm';
 import { AppDataSource } from '../data-source';
-import { Business, User } from '../entities';
+import { Business, PinResetCode, User } from '../entities';
 import {
   hashPassword,
   issueTokenPair,
@@ -13,6 +13,8 @@ import {
 } from '../lib/auth';
 import { emailAndIpKey, rateLimit } from '../middleware/security';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { isBusinessSuspended, SUSPENDED_RESPONSE } from '../lib/businessState';
+import { sendMail } from '../lib/mailer';
 import { getPinProblem, isPinFormat, pinLockDurationMs, PIN_ATTEMPTS_BEFORE_LOCK } from '../lib/pin';
 
 export const authRouter = Router();
@@ -23,6 +25,16 @@ const loginIpLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 50 });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10 });
 const lookupLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 30 });
 const refreshLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 60 });
+const pinResetLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 10, key: emailAndIpKey });
+const pinResetIpLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 30 });
+
+const RESET_CODE_TTL_MS = FIFTEEN_MINUTES;
+const RESET_CODE_RESEND_MS = 60 * 1000;
+const RESET_CODE_MAX_ATTEMPTS = 5;
+const RESET_CODE_INVALID = {
+  error: 'That code is wrong or has expired. Request a new one and try again.',
+  code: 'RESET_CODE_INVALID',
+};
 
 const pinSchema = z.string().superRefine((value, ctx) => {
   const problem = getPinProblem(value);
@@ -44,6 +56,16 @@ const loginSchema = z.object({
 
 const changePinSchema = z.object({
   current: z.string().min(4).max(200),
+  pin: pinSchema,
+});
+
+const forgotPinSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPinSchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/, 'The code must be 6 digits'),
   pin: pinSchema,
 });
 
@@ -125,6 +147,7 @@ function tokensFor(user: User) {
     sub: user.id,
     email: user.email,
     business_id: user.business_id,
+    ver: user.token_version ?? 0,
   });
 }
 
@@ -189,6 +212,11 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
       return;
     }
 
+    if (await isBusinessSuspended(user.business_id)) {
+      res.status(403).json(SUSPENDED_RESPONSE);
+      return;
+    }
+
     const business = user.business_id
       ? await businesses.findOne({ where: { id: user.business_id } })
       : null;
@@ -206,6 +234,115 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
     }
     console.error(error);
     res.status(500).json({ error: 'Could not sign in' });
+  }
+});
+
+export async function issuePinResetCode(email: string) {
+  const user = await AppDataSource.getRepository(User).findOne({ where: { email: ILike(email) } });
+  if (!user || !user.active) return;
+
+  const codes = AppDataSource.getRepository(PinResetCode);
+  const existing = await codes.findOne({ where: { user_id: user.id } });
+  const now = Date.now();
+  if (existing && now - existing.created_at.getTime() < RESET_CODE_RESEND_MS) return;
+
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  await codes.save(
+    codes.create({
+      user_id: user.id,
+      code_hash: await hashPassword(code),
+      expires_at: new Date(now + RESET_CODE_TTL_MS),
+      attempts: 0,
+      created_at: new Date(now),
+    }),
+  );
+
+  await sendMail({
+    to: user.email,
+    subject: 'Your MIA PIN reset code',
+    text: [
+      `Hello ${user.name},`,
+      '',
+      `Your MIA PIN reset code is ${code}. It expires in 15 minutes.`,
+      '',
+      'If you did not ask to reset your PIN, you can ignore this email. Your PIN has not changed.',
+    ].join('\n'),
+  });
+}
+
+authRouter.post('/forgot-pin', pinResetIpLimiter, pinResetLimiter, async (req, res) => {
+  try {
+    const body = forgotPinSchema.parse(req.body);
+    res.json({ ok: true });
+    issuePinResetCode(body.email.trim().toLowerCase()).catch((error) => {
+      console.error('Could not send PIN reset email', error);
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Enter a valid email address' });
+      return;
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Could not start PIN reset' });
+  }
+});
+
+authRouter.post('/reset-pin', pinResetIpLimiter, pinResetLimiter, async (req, res) => {
+  try {
+    const body = resetPinSchema.parse(req.body);
+    const user = await AppDataSource.getRepository(User).findOne({
+      where: { email: ILike(body.email.trim().toLowerCase()) },
+    });
+    if (!user || !user.active) {
+      await hashPassword(body.code);
+      res.status(400).json(RESET_CODE_INVALID);
+      return;
+    }
+
+    const newHash = await hashPassword(body.pin);
+    const reset = await AppDataSource.transaction(async (manager) => {
+      const record = await manager.findOne(PinResetCode, {
+        where: { user_id: user.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!record) return false;
+      if (record.expires_at.getTime() <= Date.now() || record.attempts >= RESET_CODE_MAX_ATTEMPTS) {
+        await manager.delete(PinResetCode, { user_id: user.id });
+        return false;
+      }
+      if (!(await verifyPassword(body.code, record.code_hash))) {
+        const attempts = record.attempts + 1;
+        if (attempts >= RESET_CODE_MAX_ATTEMPTS) {
+          await manager.delete(PinResetCode, { user_id: user.id });
+        } else {
+          await manager.update(PinResetCode, { user_id: user.id }, { attempts });
+        }
+        return false;
+      }
+      await manager.update(User, { id: user.id }, {
+        password_hash: newHash,
+        failed_login_attempts: 0,
+        locked_until: null,
+        must_change_pin: false,
+        token_version: (user.token_version ?? 0) + 1,
+        updated_at: new Date(),
+      });
+      await manager.delete(PinResetCode, { user_id: user.id });
+      return true;
+    });
+
+    if (!reset) {
+      res.status(400).json(RESET_CODE_INVALID);
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues[0]?.message ?? 'Invalid input', code: 'PIN_INVALID' });
+      return;
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Could not reset PIN' });
   }
 });
 
@@ -309,7 +446,6 @@ authRouter.get('/business-by-code/:code', lookupLimiter, async (req, res) => {
 
 const joinSchema = z.object({
   code: z.string().min(3),
-  role: z.enum(['MANAGER', 'CASHIER', 'STAFF']).optional(),
 });
 
 authRouter.post('/join-business', lookupLimiter, async (req, res) => {
@@ -322,7 +458,6 @@ authRouter.post('/join-business', lookupLimiter, async (req, res) => {
     const payload = verifyToken(header.slice(7), 'access');
     const body = joinSchema.parse(req.body);
     const code = body.code.trim().toUpperCase();
-    const role = body.role ?? 'STAFF';
 
     const users = AppDataSource.getRepository(User);
     const businesses = AppDataSource.getRepository(Business);
@@ -344,7 +479,7 @@ authRouter.post('/join-business', lookupLimiter, async (req, res) => {
     }
 
     user.business_id = business.id;
-    user.role = role;
+    user.role = 'STAFF';
     user.updated_at = new Date();
     await users.save(user);
 
@@ -390,8 +525,13 @@ authRouter.post('/refresh', refreshLimiter, async (req, res) => {
     const businesses = AppDataSource.getRepository(Business);
 
     const user = await users.findOne({ where: { id: payload.sub } });
-    if (!user || !user.active) {
+    if (!user || !user.active || (user.token_version ?? 0) !== (payload.ver ?? 0)) {
       res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    if (await isBusinessSuspended(user.business_id)) {
+      res.status(403).json(SUSPENDED_RESPONSE);
       return;
     }
 

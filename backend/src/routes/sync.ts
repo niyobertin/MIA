@@ -21,7 +21,7 @@ import {
   WaiterTabItem,
   AuditLog,
 } from '../entities';
-import { AuthedRequest, requireAuth } from '../middleware/auth';
+import { AuthedRequest, requireActiveUser, requireAuth } from '../middleware/auth';
 
 export const syncRouter = Router();
 
@@ -142,7 +142,88 @@ function pickColumns(table: string, payload: Record<string, unknown>) {
 }
 
 function canManageUsers(actor: Actor): boolean {
-  return actor.role === 'OWNER' || actor.role === 'MANAGER';
+  return actor.role === 'OWNER';
+}
+
+function isManagerRole(role: string | null | undefined): boolean {
+  return role === 'OWNER' || role === 'MANAGER';
+}
+
+const ASSIGNABLE_ROLES = new Set(['OWNER', 'MANAGER', 'CASHIER', 'STAFF']);
+const ADJUSTMENT_MOVEMENTS = new Set(['adjustment_in', 'adjustment_out', 'damaged', 'opening']);
+const RESERVED_AUDIT_ROLE = 'MIA_PLATFORM';
+const OWN_ONLY_DELETE_TABLES = new Set(['expenses', 'payments']);
+const DELETABLE_TABLES = new Set(['users', 'expenses', 'payments']);
+const PROFIT_COLUMNS = ['cogs', 'gross_profit', 'net_profit'];
+
+type WriteDecision = { reject: string } | { keepExisting: true } | null;
+
+function applyLimitedRoleRules(
+  table: string,
+  payload: Record<string, unknown>,
+  existing: ObjectLiteral | null,
+  actor: Actor,
+): WriteDecision {
+  if (isManagerRole(actor.role)) return null;
+  const current = (existing ?? {}) as Record<string, unknown>;
+
+  switch (table) {
+    case 'categories':
+      return existing ? { keepExisting: true } : { reject: 'Only owners and managers can add categories' };
+    case 'products':
+      if (!existing) return { reject: 'Only owners and managers can add products' };
+      if (actor.role !== 'CASHIER') return { keepExisting: true };
+      for (const key of Object.keys(payload)) {
+        if (!['id', 'business_id', 'average_cost', 'updated_at'].includes(key)) delete payload[key];
+      }
+      return null;
+    case 'stock_movements':
+      if (actor.role !== 'CASHIER') return { reject: 'Your role cannot record stock changes' };
+      if (payload.reversal_of != null || ADJUSTMENT_MOVEMENTS.has(String(payload.type))) {
+        return { reject: 'Only owners and managers can adjust or reverse stock' };
+      }
+      return null;
+    case 'daily_closings':
+      if (existing || String(payload.status ?? 'open') !== 'open') {
+        return { reject: 'Only owners and managers can close or change a day' };
+      }
+      return null;
+    case 'waiter_tabs':
+    case 'waiter_tab_items':
+      return { reject: 'Only owners and managers can manage waiter tabs' };
+    case 'sales':
+      if (payload.voided === true && current.voided !== true) {
+        return { reject: 'Only owners and managers can void a sale' };
+      }
+      if (current.voided === true && payload.voided === false) {
+        return { reject: 'Only owners and managers can restore a voided sale' };
+      }
+      return null;
+    case 'purchases':
+      if (String(payload.status ?? '') === 'cancelled' && current.status !== 'cancelled') {
+        return { reject: 'Only owners and managers can void a purchase' };
+      }
+      return null;
+    case 'expenses':
+      if (existing && String(current.created_by) !== actor.id) {
+        return { reject: 'You can only change expenses you recorded' };
+      }
+      return null;
+    case 'payments':
+      if (existing && current.type === 'expense_payment' && String(current.created_by) !== actor.id) {
+        return { reject: 'You can only change expenses you recorded' };
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+function limitPulledRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  if (table !== 'daily_closings') return row;
+  const limited = { ...row };
+  for (const column of PROFIT_COLUMNS) limited[column] = 0;
+  return limited;
 }
 
 const NON_NEGATIVE_MONEY: Record<string, string[]> = {
@@ -263,6 +344,7 @@ function publicUser(user: User) {
 }
 
 syncRouter.use(requireAuth);
+syncRouter.use(requireActiveUser);
 
 syncRouter.get('/pull', async (req: AuthedRequest, res) => {
   try {
@@ -283,14 +365,21 @@ syncRouter.get('/pull', async (req: AuthedRequest, res) => {
       business = await businesses.findOne({ where: { id: user.business_id } });
 
       const teammates = await users.find({ where: { business_id: user.business_id } });
-      tables.users = teammates.map(publicUser);
+      const fullAccess = isManagerRole(user.role);
+      tables.users = teammates
+        .map(publicUser)
+        .map((row) => (fullAccess || row.id === user.id ? row : { ...row, phone: null }));
 
       for (const [table, entity] of Object.entries(ENTITY_BY_TABLE)) {
         if (table === 'businesses' || table === 'users') continue;
+        if (table === 'audit_logs' && !fullAccess) {
+          tables[table] = [];
+          continue;
+        }
         const rows = await AppDataSource.getRepository(entity).find({
           where: { business_id: user.business_id } as ObjectLiteral,
         });
-        tables[table] = rows;
+        tables[table] = fullAccess ? rows : rows.map((row) => limitPulledRow(table, row as Record<string, unknown>));
       }
     }
 
@@ -329,7 +418,8 @@ syncRouter.get('/:table/:id', async (req: AuthedRequest, res) => {
         res.status(403).json({ error: 'Business access denied' });
         return;
       }
-      res.json({ data: publicUser(row as unknown as User) });
+      const safeUser = publicUser(row as unknown as User);
+      res.json({ data: isManagerRole(actor.role) || target.id === req.auth!.sub ? safeUser : { ...safeUser, phone: null } });
       return;
     }
     if (table === 'businesses') {
@@ -339,6 +429,14 @@ syncRouter.get('/:table/:id', async (req: AuthedRequest, res) => {
       }
     } else if ((row as unknown as { business_id?: string }).business_id !== actor.business_id) {
       res.status(403).json({ error: 'Business access denied' });
+      return;
+    }
+    if (!isManagerRole(actor.role)) {
+      if (table === 'audit_logs') {
+        res.status(403).json({ error: 'Your role cannot view the activity log' });
+        return;
+      }
+      res.json({ data: limitPulledRow(table, row as Record<string, unknown>) });
       return;
     }
     res.json({ data: row });
@@ -391,8 +489,13 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
           res.status(403).json({ error: 'Cannot sync user outside your business' });
           return;
         }
-        if (payload.role === 'OWNER' && actor.role !== 'OWNER') {
-          res.status(403).json({ error: 'Only owners can assign OWNER role' });
+        if (payload.role != null && !ASSIGNABLE_ROLES.has(String(payload.role))) {
+          res.status(403).json({ error: 'That role cannot be assigned' });
+          return;
+        }
+        const target = await AppDataSource.getRepository(User).findOne({ where: { id: targetId } });
+        if (target && target.business_id !== actor.business_id) {
+          res.status(403).json({ error: 'Cannot sync user outside your business' });
           return;
         }
       } else {
@@ -400,6 +503,19 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
         const existing = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
         if (existing?.password_hash) {
           payload.password_hash = existing.password_hash;
+        }
+        payload.role = existing?.role ?? null;
+        payload.active = existing?.active ?? true;
+        if (existing?.business_id) {
+          payload.business_id = existing.business_id;
+        } else if (payload.business_id != null) {
+          const claimed = await AppDataSource.getRepository(Business).findOne({
+            where: { id: String(payload.business_id) },
+          });
+          if (claimed) {
+            res.status(403).json({ error: 'Use a business code to join a business' });
+            return;
+          }
         }
       }
 
@@ -412,29 +528,72 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
         res.status(403).json({ error: 'Business access denied' });
         return;
       }
+      const existingBusiness = await AppDataSource.getRepository(Business).findOne({ where: { id: businessId } });
+      if (existingBusiness && !actor.business_id) {
+        res.status(403).json({ error: 'Business access denied' });
+        return;
+      }
+      if (existingBusiness && !isManagerRole(actor.role)) {
+        res.json({ data: existingBusiness });
+        return;
+      }
     } else {
       const businessId = payload.business_id != null ? String(payload.business_id) : null;
       if (!businessId) {
         res.status(400).json({ error: 'business_id is required' });
         return;
       }
-      if (actor.business_id) {
-        if (actor.business_id !== businessId) {
-          res.status(403).json({ error: 'Business access denied' });
-          return;
-        }
-      } else {
-        // No membership yet: only allow writes after the business row exists
-        // (created in the same onboarding sync as users/businesses anchors).
-        const biz = await AppDataSource.getRepository(Business).findOne({ where: { id: businessId } });
-        if (!biz) {
-          res.status(403).json({ error: 'Create or join a business first' });
-          return;
-        }
+      if (!actor.business_id) {
+        res.status(403).json({ error: 'Create or join a business first' });
+        return;
+      }
+      if (actor.business_id !== businessId) {
+        res.status(403).json({ error: 'Business access denied' });
+        return;
       }
     }
 
     const existing = await repo.findOne({ where: { id: payload.id } as ObjectLiteral });
+
+    if (
+      existing &&
+      table !== 'users' &&
+      table !== 'businesses' &&
+      (existing as { business_id?: string }).business_id !== actor.business_id
+    ) {
+      res.status(403).json({ error: 'Business access denied' });
+      return;
+    }
+
+    const decision = applyLimitedRoleRules(table, payload, existing, actor);
+    if (decision && 'reject' in decision) {
+      res.status(403).json({ error: decision.reject, code: 'ROLE_NOT_ALLOWED' });
+      return;
+    }
+    if (decision && 'keepExisting' in decision) {
+      res.json({ data: existing });
+      return;
+    }
+
+    if (table === 'audit_logs') {
+      if (existing) {
+        res.json({ data: existing });
+        return;
+      }
+      if (String(payload.action ?? '').startsWith('PLATFORM_') || payload.role === RESERVED_AUDIT_ROLE) {
+        res.status(403).json({ error: 'That activity entry is reserved', code: 'ROLE_NOT_ALLOWED' });
+        return;
+      }
+      const authorId = payload.user_id == null ? actor.id : String(payload.user_id);
+      const author = await AppDataSource.getRepository(User).findOne({ where: { id: authorId } });
+      if (!author || author.business_id !== actor.business_id) {
+        payload.user_id = actor.id;
+        payload.role = actor.role;
+      } else {
+        payload.user_id = author.id;
+        payload.role = author.role;
+      }
+    }
 
     // Only one open trading session per business. Late/offline opens collide explicitly.
     if (table === 'daily_closings' && String(payload.status ?? '') === 'open') {
@@ -566,6 +725,21 @@ syncRouter.delete('/:table/:id', async (req: AuthedRequest, res) => {
     if (!actor?.business_id) {
       res.status(403).json({ error: 'No business' });
       return;
+    }
+
+    if (!DELETABLE_TABLES.has(table)) {
+      res.status(403).json({ error: 'Delete not allowed for this table', code: 'ROLE_NOT_ALLOWED' });
+      return;
+    }
+
+    if (OWN_ONLY_DELETE_TABLES.has(table) && !isManagerRole(actor.role)) {
+      const row = await AppDataSource.getRepository(entity).findOne({
+        where: { id, business_id: actor.business_id } as ObjectLiteral,
+      });
+      if (row && String((row as { created_by?: string }).created_by) !== actor.id) {
+        res.status(403).json({ error: 'You can only delete records you created', code: 'ROLE_NOT_ALLOWED' });
+        return;
+      }
     }
 
     if (table === 'users') {
