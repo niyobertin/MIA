@@ -6,6 +6,8 @@ import { BarList, TrendChart } from '../ui/charts';
 import { Badge, Card, DataTable, PageHeader, QueryBoundary, Skeleton, Stat } from '../ui/kit';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
+import { exportReportPdf } from '../lib/pdf';
+import { ExportPdfButton } from './reports';
 
 export type OverviewData = {
   kpis: {
@@ -106,6 +108,33 @@ export function OverviewContent({ data, currency }: { data: OverviewData; curren
   );
 }
 
+function exportOverviewPdf(data: OverviewData, businessName: string, currency: string, period: PeriodValue) {
+  const { kpis } = data;
+  return exportReportPdf({
+    businessName,
+    currency,
+    period,
+    title: 'Dashboard summary',
+    stats: [
+      { label: 'Sales', value: kpis.sales_total },
+      { label: 'Net profit', value: kpis.net_profit },
+      { label: 'Payments received', value: kpis.payments_received },
+      { label: 'Outstanding balance', value: kpis.outstanding },
+      { label: 'Expenses', value: kpis.expenses },
+      { label: 'Cost of goods sold', value: kpis.cogs },
+      { label: 'Stock value', value: kpis.stock_value },
+      { label: 'Sales count', value: kpis.sales_count, kind: 'count' },
+      { label: 'Low-stock items', value: kpis.low_stock_count, kind: 'count' },
+    ],
+    trend: { title: 'Sales by day', labels: data.trend.map((point) => formatDay(point.day)), series: [{ name: 'Sales', color: '#059669', values: data.trend.map((point) => point.total) }] },
+    tables: [
+      { title: 'Sales by category', head: ['Category', 'Sales'], moneyColumns: [1], rows: data.categories.map((row) => [row.category, row.total]) },
+      { title: 'Unpaid sales', head: ['Sale', 'Customer', 'Balance', 'Date'], moneyColumns: [2], rows: data.unpaid.map((row) => [row.reference ?? 'Sale', row.customer ?? 'Walk-in', row.total - row.paid, formatDateTime(row.at)]) },
+      { title: 'Low-stock items', head: ['Product', 'In stock', 'Reorder at'], rightColumns: [1, 2], rows: data.low_stock.map((row) => [row.name, `${row.stock} ${row.unit}`, row.reorder_level]) },
+    ],
+  });
+}
+
 export function Overview() {
   const me = useDashboard();
   const [period, setPeriod] = useState<PeriodValue>({ period: '7d' });
@@ -120,7 +149,10 @@ export function Overview() {
         title="Dashboard"
         subtitle={`${me.business.name} · ${me.business.currency}`}
         action={(
-          <PeriodFilter value={period} onChange={setPeriod} />
+          <div className="flex flex-wrap items-start gap-2">
+            <PeriodFilter value={period} onChange={setPeriod} />
+            <ExportPdfButton disabled={!query.data} onExport={() => exportOverviewPdf(query.data!, me.business.name, me.business.currency, period)} />
+          </div>
         )}
       />
       <QueryBoundary query={query} skeleton={<Skeleton className="h-96" />}>

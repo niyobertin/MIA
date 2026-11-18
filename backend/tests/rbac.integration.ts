@@ -58,6 +58,7 @@ async function main() {
   const { authRouter } = await import('../src/routes/auth');
   const { syncRouter } = await import('../src/routes/sync');
   const { dashboardRouter } = await import('../src/routes/dashboard');
+  const { reportsRouter } = await import('../src/routes/reports');
   const { platformRouter } = await import('../src/routes/platform');
   const { seedPlatformAdmins } = await import('../src/scripts/seedPlatformAdmins');
   const { User, Business, Product, Category, Sale, SaleItem, Expense, Payment, StockMovement, Customer, AuditLog, PlatformAuditLog } = entities;
@@ -73,6 +74,7 @@ async function main() {
   app.use(express.json());
   app.use('/auth', authRouter);
   app.use('/sync', syncRouter);
+  app.use('/dashboard/reports', reportsRouter);
   app.use('/dashboard', dashboardRouter);
   app.use('/platform', platformRouter);
   const server = app.listen(0);
@@ -339,6 +341,7 @@ async function main() {
     ['/dashboard/movements', { ownerA: 200, managerA: 200, cashierA: 403, staffA: 403 }],
     ['/dashboard/expenses', { ownerA: 200, managerA: 200, cashierA: 403, staffA: 403 }],
     ['/dashboard/reports/closings', { ownerA: 200, managerA: 200, cashierA: 403, staffA: 403 }],
+    ['/dashboard/reports/summary', { ownerA: 200, managerA: 200, cashierA: 403, staffA: 403 }],
     ['/dashboard/staff', { ownerA: 200, managerA: 200, cashierA: 403, staffA: 403 }],
     ['/dashboard/audit', { ownerA: 200, managerA: 403, cashierA: 403, staffA: 403 }],
     ['/dashboard/support-access', { ownerA: 200, managerA: 403, cashierA: 403, staffA: 403 }],
@@ -364,6 +367,12 @@ async function main() {
   check('low stock uses real movements', k.low_stock_count === 1 && overview.low_stock[0].stock === 4, overview.low_stock);
   check('stock value is correct', k.stock_value === 2400, k.stock_value);
   check('overview contains only this business', !JSON.stringify(overview).includes('Soda B'));
+  const summary = (await call('GET', '/dashboard/reports/summary?period=today', { token: tokens.ownerA })).body;
+  const sk = summary.kpis;
+  check('report summary matches the overview', sk.sales_total === 16000 && sk.gross_profit === 6400 && sk.net_profit === 4900 && sk.cash_collected === 12000 && sk.outstanding_debt === 4000, sk);
+  check('report summary contains only this business', !JSON.stringify(summary).includes('Soda B'));
+  res = await call('GET', '/dashboard/reports/summary?period=custom&from=2026-05-02&to=2026-05-01', { token: tokens.ownerA });
+  check('report summary rejects a backwards range', res.status === 400, res.status);
   const salesB = await call('GET', '/dashboard/sales', { token: tokens.ownerB });
   check('tenant B sees only tenant B sales', salesB.body.total === 1 && salesB.body.rows[0].total_amount === 777000, salesB.body.total);
 

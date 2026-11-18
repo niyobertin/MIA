@@ -48,6 +48,9 @@ export interface Product {
   track_inventory: boolean;
   active: boolean;
   current_stock?: number | null;
+  image_url?: string | null;
+  description?: string | null;
+  category_name?: string | null;
   created_at: string;
   updated_at: string;
 }

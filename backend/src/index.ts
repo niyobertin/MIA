@@ -6,6 +6,7 @@ import { initDatabase } from './data-source';
 import { authRouter } from './routes/auth';
 import { syncRouter } from './routes/sync';
 import { dashboardRouter } from './routes/dashboard';
+import { reportsRouter } from './routes/reports';
 import { platformRouter } from './routes/platform';
 import { rateLimit, securityHeaders } from './middleware/security';
 
@@ -49,6 +50,7 @@ async function main() {
 
   app.use('/auth', authRouter);
   app.use('/sync', syncRouter);
+  app.use('/dashboard/reports', reportsRouter);
   app.use('/dashboard', dashboardRouter);
   app.use('/platform', platformRouter);
 

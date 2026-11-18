@@ -68,6 +68,20 @@
         "5174"
       ],
       "port": 5174
+    },
+    {
+      "name": "MIA app (web, test API 4002)",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "EXPO_PUBLIC_API_URL=http://localhost:4002",
+        "npx",
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8083"
+      ],
+      "port": 8083
     }
   ]
 }

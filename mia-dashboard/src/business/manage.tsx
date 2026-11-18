@@ -1,34 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/auth';
-import { formatDate, formatDateTime, formatMoney, humanize } from '../lib/format';
+import { formatDateTime, humanize } from '../lib/format';
 import { Badge, Button, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
 import { useDashboard } from './BusinessApp';
 import { Select } from '../ui/Select';
 
+export { Reports } from './reports';
+
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
-
-export function Reports() {
-  const me = useDashboard();
-  const money = (value: number) => formatMoney(value, me.business.currency);
-  return (
-    <>
-      <PageHeader title="Business reports" subtitle="Daily closings recorded in the MIA app." />
-      <PagedTable<Row>
-        client={api} path="/dashboard/reports/closings" queryKey="closings" rowKey={rowId} empty="No daily closings yet."
-        columns={[
-          { header: 'Date', cell: (row) => <span className="font-medium text-slate-900 whitespace-nowrap">{formatDate(row.business_date)} #{row.session_number}</span> },
-          { header: 'Status', cell: (row) => <Badge tone={row.status === 'closed' ? 'good' : 'info'}>{humanize(row.status)}</Badge> },
-          { header: 'Sales', align: 'right', cell: (row) => money(row.total_sales) },
-          { header: 'Gross profit', align: 'right', cell: (row) => money(row.gross_profit) },
-          { header: 'Expenses', align: 'right', cell: (row) => money(row.expenses) },
-          { header: 'Net profit', align: 'right', cell: (row) => money(row.net_profit) },
-          { header: 'Cash variance', align: 'right', cell: (row) => row.cash_variance === 0 ? money(0) : <span className="font-semibold text-rose-700">{money(row.cash_variance)}</span> },
-        ]}
-      />
-    </>
-  );
-}
 
 function StaffControls({ row }: { row: Row }) {
   const client = useQueryClient();

@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { MoneyText } from '@/components/MoneyText';
@@ -97,44 +98,81 @@ export function ProductGrid({
   );
 }
 
+function productDescription(product: Product): string {
+  if (product.description?.trim()) return product.description.trim();
+  const parts = [product.category_name, product.sku ? `SKU ${product.sku}` : null, product.unit].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function ProductCover({ product, quantity, stockLabel, out }: { product: Product; quantity: number; stockLabel: string | null; out: boolean }) {
+  const [failed, setFailed] = React.useState(false);
+  const color = tileColor(product.name);
+  const showImage = Boolean(product.image_url) && !failed;
+  return (
+    <View style={[styles.cover, { backgroundColor: `${color}1A` }]}>
+      {showImage ? (
+        <Image
+          source={{ uri: product.image_url as string }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+          accessibilityIgnoresInvertColors
+        />
+      ) : (
+        <View style={styles.placeholder} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <View style={[styles.placeholderBadge, { backgroundColor: color }]}>
+            <Text style={styles.initials}>{getInitials(product.name)}</Text>
+          </View>
+          <Ionicons name="image-outline" size={18} color={color} style={styles.placeholderIcon} />
+        </View>
+      )}
+      {stockLabel ? (
+        <View style={[styles.stockPill, out && styles.stockPillOut]}>
+          <Text style={[styles.stockPillText, out && styles.stockPillTextOut]} numberOfLines={1}>
+            {stockLabel}
+          </Text>
+        </View>
+      ) : null}
+      {quantity > 0 ? (
+        <View style={styles.qty}>
+          <Text style={styles.qtyText}>{quantity}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function ProductTile({ product, quantity, onPress }: { product: Product; quantity: number; onPress: () => void }) {
   const { t } = useTranslation();
   const selected = quantity > 0;
   const stock = product.track_inventory ? (product.current_stock ?? null) : null;
   const out = stock !== null && stock <= 0;
+  const stockLabel = stock === null ? null : out ? t('stock.outOfStock') : `${formatNumber(stock)} ${product.unit}`;
+  const description = productDescription(product);
   return (
     <TouchableOpacity
       style={[styles.card, selected && styles.cardSelected, out && styles.cardOut]}
       onPress={onPress}
       activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel={product.name}
+      accessibilityLabel={[product.name, description, stockLabel].filter(Boolean).join(', ')}
     >
-      <View style={[styles.swatch, { backgroundColor: tileColor(product.name) }]}>
-        <Text style={styles.initials}>{getInitials(product.name)}</Text>
-        {selected ? (
-          <View style={styles.qty}>
-            <Text style={styles.qtyText}>{quantity}</Text>
-          </View>
-        ) : null}
-      </View>
+      <ProductCover product={product} quantity={quantity} stockLabel={stockLabel} out={out} />
       <View style={styles.meta}>
         <Text style={styles.name} numberOfLines={2}>
           {product.name}
         </Text>
+        {description ? (
+          <Text style={styles.description} numberOfLines={2}>
+            {description}
+          </Text>
+        ) : null}
         <MoneyText
           amount={product.selling_price}
           size={16}
           weight="800"
           color={selected ? colors.primaryText : colors.ink}
         />
-        <Text style={[styles.stock, out && styles.stockOut]} numberOfLines={1}>
-          {stock !== null
-            ? out
-              ? t('stock.outOfStock')
-              : `${formatNumber(stock)} ${product.unit}`
-            : product.unit}
-        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -156,8 +194,24 @@ const styles = StyleSheet.create({
   },
   cardSelected: { borderColor: colors.primary, borderWidth: 2 },
   cardOut: { opacity: 0.6 },
-  swatch: { height: 72, alignItems: 'center', justifyContent: 'center' },
-  initials: { color: colors.white, fontSize: 24, fontWeight: '800', letterSpacing: 1 },
+  cover: { aspectRatio: 4 / 3, width: '100%', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  placeholder: { alignItems: 'center', justifyContent: 'center' },
+  placeholderBadge: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  placeholderIcon: { marginTop: 6, opacity: 0.8 },
+  initials: { color: colors.white, fontSize: 20, fontWeight: '800', letterSpacing: 1 },
+  stockPill: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    maxWidth: '80%',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  stockPillOut: { backgroundColor: colors.dangerText },
+  stockPillText: { fontSize: 12, fontWeight: '700', color: colors.ink },
+  stockPillTextOut: { color: colors.white },
   qty: {
     position: 'absolute',
     top: 8,
@@ -172,7 +226,6 @@ const styles = StyleSheet.create({
   },
   qtyText: { color: colors.white, fontSize: 15, fontWeight: '800' },
   meta: { padding: spacing.md, gap: 4 },
-  name: { fontSize: 16, fontWeight: '700', color: colors.ink, minHeight: 40 },
-  stock: { fontSize: 14, color: colors.muted },
-  stockOut: { color: colors.dangerText, fontWeight: '700' },
+  name: { fontSize: 16, fontWeight: '700', color: colors.ink },
+  description: { fontSize: 13, color: colors.muted, lineHeight: 18 },
 });
