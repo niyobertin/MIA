@@ -5,6 +5,7 @@ import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
 import { OverviewContent, type OverviewData } from '../business/Overview';
 import { useAdmin } from './PlatformGate';
+import { Select } from '../ui/Select';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -19,10 +20,17 @@ function useBusinessOptions() {
 function BusinessSelect({ id, value, onChange, allowAll }: { id: string; value: string; onChange: (value: string) => void; allowAll?: boolean }) {
   const options = useBusinessOptions();
   return (
-    <select id={id} required={!allowAll} value={value} onChange={(e) => onChange(e.target.value)} className={inputClass}>
-      <option value="">{allowAll ? 'All businesses' : 'Choose a business'}</option>
-      {(options.data ?? []).map((row) => <option key={row.id} value={row.id}>{row.name} ({row.business_code})</option>)}
-    </select>
+    <Select
+      id={id}
+      required={!allowAll}
+      value={value}
+      onChange={onChange}
+      placeholder="Choose a business"
+      options={[
+        ...(allowAll ? [{ value: '', label: 'All businesses' }] : []),
+        ...(options.data ?? []).map((row) => ({ value: row.id, label: row.name, hint: row.business_code })),
+      ]}
+    />
   );
 }
 
@@ -72,9 +80,7 @@ export function SupportAccess() {
             <div><label htmlFor="grant-business" className="block text-sm font-medium text-slate-700 mb-1.5">Business</label><BusinessSelect id="grant-business" value={businessId} onChange={setBusinessId} /></div>
             <div>
               <label htmlFor="grant-minutes" className="block text-sm font-medium text-slate-700 mb-1.5">Length</label>
-              <select id="grant-minutes" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={inputClass}>
-                <option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>60 minutes</option>
-              </select>
+              <Select id="grant-minutes" value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={[{ value: '15', label: '15 minutes' }, { value: '30', label: '30 minutes' }, { value: '60', label: '60 minutes' }]} />
             </div>
             <div><label htmlFor="grant-reason" className="block text-sm font-medium text-slate-700 mb-1.5">Reason (the owner sees this)</label><textarea id="grant-reason" required minLength={5} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass} /></div>
             {start.isError ? <ErrorNotice error={start.error} /> : null}
@@ -131,7 +137,7 @@ export function DataRecords() {
             <div><label htmlFor="dr-business" className="block text-sm font-medium text-slate-700 mb-1.5">Business</label><BusinessSelect id="dr-business" value={businessId} onChange={setBusinessId} /></div>
             <div>
               <label htmlFor="dr-type" className="block text-sm font-medium text-slate-700 mb-1.5">Type</label>
-              <select id="dr-type" value={type} onChange={(e) => setType(e.target.value)} className={inputClass}><option value="export">Export</option><option value="deletion">Deletion</option></select>
+              <Select id="dr-type" value={type} onChange={setType} options={[{ value: 'export', label: 'Export' }, { value: 'deletion', label: 'Deletion' }]} />
             </div>
             <div><label htmlFor="dr-notes" className="block text-sm font-medium text-slate-700 mb-1.5">Notes</label><textarea id="dr-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} /></div>
             {create.isError ? <ErrorNotice error={create.error} /> : null}
@@ -203,7 +209,7 @@ export function Announcements() {
             <div><label htmlFor="an-body" className="block text-sm font-medium text-slate-700 mb-1.5">Message</label><textarea id="an-body" required minLength={3} maxLength={1000} rows={3} value={body} onChange={(e) => setBody(e.target.value)} className={inputClass} /></div>
             <div>
               <label htmlFor="an-severity" className="block text-sm font-medium text-slate-700 mb-1.5">Type</label>
-              <select id="an-severity" value={severity} onChange={(e) => setSeverity(e.target.value)} className={inputClass}><option value="info">Information</option><option value="warning">Warning</option><option value="critical">Critical</option></select>
+              <Select id="an-severity" value={severity} onChange={setSeverity} options={[{ value: 'info', label: 'Information' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]} />
             </div>
             <div><label htmlFor="an-business" className="block text-sm font-medium text-slate-700 mb-1.5">Show to</label><BusinessSelect id="an-business" value={businessId} onChange={setBusinessId} allowAll /></div>
             {create.isError ? <ErrorNotice error={create.error} /> : null}
@@ -282,7 +288,7 @@ export function Admins() {
             <div><label htmlFor="ad-email" className="block text-sm font-medium text-slate-700 mb-1.5">Email</label><input id="ad-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} /></div>
             <div>
               <label htmlFor="ad-role" className="block text-sm font-medium text-slate-700 mb-1.5">Role</label>
-              <select id="ad-role" value={role} onChange={(e) => setRole(e.target.value)} className={inputClass}>{ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+              <Select id="ad-role" value={role} onChange={setRole} options={ROLE_OPTIONS} />
             </div>
             {create.isError ? <ErrorNotice error={create.error} /> : null}
             <Button type="submit" tone="primary" disabled={create.isPending}>Add admin</Button>
@@ -295,13 +301,12 @@ export function Admins() {
                 <DataTable rows={data.rows} rowKey={rowId} columns={[
                   { header: 'Admin', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}{row.id === me.id ? ' (you)' : ''}</div><div className="text-xs text-slate-500">{row.email}</div></div> },
                   { header: 'Role', cell: (row) => humanize(row.role) },
-                  { header: 'Two-factor', cell: (row) => row.totp_enabled ? <Badge tone="good">On</Badge> : <Badge tone="warn">Not set up</Badge> },
+                  { header: 'Two-factor', cell: (row) => row.two_factor === 'email' ? <Badge tone="good">Email code</Badge> : <Badge tone="warn">Off</Badge> },
                   { header: 'Status', cell: (row) => row.active ? <Badge tone="good">Active</Badge> : <Badge tone="bad">Deactivated</Badge> },
                   { header: 'Last sign-in', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(row.last_login_at)}</span> },
                   { header: 'Actions', align: 'right', cell: (row) => row.id === me.id ? null : (
                     <div className="flex flex-wrap justify-end gap-1.5">
                       <ReasonAction label="Reset password" title={`Reset the password for ${row.email}`} description="Creates a temporary password and signs them out." invalidate={['platform-admins']} run={action(row.id, 'reset-password')} onDone={(result) => setTemporary({ email: row.email, password: (result as { data: { temporary_password: string } }).data.temporary_password })} />
-                      <ReasonAction label="Reset 2FA" title={`Reset two-factor for ${row.email}`} description="They set it up again at their next sign-in." invalidate={['platform-admins']} run={action(row.id, 'reset-2fa')} />
                       {row.active
                         ? <ReasonAction label="Deactivate" tone="danger" title={`Deactivate ${row.email}`} invalidate={['platform-admins']} run={action(row.id, 'deactivate')} />
                         : <ReasonAction label="Reactivate" title={`Reactivate ${row.email}`} invalidate={['platform-admins']} run={action(row.id, 'reactivate')} />}

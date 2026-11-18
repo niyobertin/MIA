@@ -53,6 +53,24 @@ export class PlatformAdmin {
   updated_at!: Date;
 }
 
+@Entity('platform_login_codes')
+export class PlatformLoginCode {
+  @PrimaryColumn('uuid')
+  admin_id!: string;
+
+  @Column({ type: 'text' })
+  code_hash!: string;
+
+  @Column({ type: 'timestamptz' })
+  expires_at!: Date;
+
+  @Column({ type: 'integer', default: 0 })
+  attempts!: number;
+
+  @Column({ type: 'timestamptz' })
+  created_at!: Date;
+}
+
 @Entity('platform_audit_logs')
 export class PlatformAuditLog {
   @PrimaryColumn('uuid')

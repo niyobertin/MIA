@@ -7,7 +7,7 @@ export type PlatformAdmin = {
   email: string;
   role: 'SUPER_ADMIN' | 'SUPPORT' | 'FINANCE';
   active: boolean;
-  totp_enabled: boolean;
+  two_factor: 'email' | 'off';
   must_change_password: boolean;
   last_login_at: string | null;
   permissions: string[];
@@ -68,4 +68,4 @@ platformApi.interceptors.response.use(undefined, (error) => {
 
 export type LoginStep =
   | { step: 'done'; token: string; admin: PlatformAdmin }
-  | { step: 'verify' | 'enroll'; challenge: string };
+  | { step: 'verify'; channel: 'email'; sent_to: string; challenge: string };

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AppDataSource } from '../data-source';
 import { Announcement, Business, BusinessPlatformState, SupportAccessGrant, User } from '../entities';
 import { AuthedRequest, requireActiveUser, requireAuth } from '../middleware/auth';
-import { buildOverview, stockLevels, type Period } from '../lib/businessData';
+import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
 import {
   dashboardPermissionsFor,
   hasDashboardPermission,
@@ -23,7 +23,6 @@ const pageSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   q: z.string().trim().max(100).optional(),
 });
-const periodSchema = z.enum(['today', 'yesterday', '7d', '30d', '90d']).default('7d');
 
 function can(permission: DashboardPermission) {
   return (req: DashboardRequest, res: Response, next: NextFunction) => {
@@ -84,26 +83,32 @@ dashboardRouter.get('/me', async (req: DashboardRequest, res) => {
 });
 
 dashboardRouter.get('/overview', can('overview'), async (req: DashboardRequest, res) => {
-  const period = periodSchema.parse(req.query.period) as Period;
-  res.json(await buildOverview(bizId(req), req.business!.timezone, period));
+  const parsed = parsePeriodQuery(req.query);
+  if ('error' in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  res.json(await buildOverview(bizId(req), req.business!.timezone, parsed.period, parsed.custom));
 });
 
 dashboardRouter.get('/sales', can('sales'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
   const status = z.enum(['all', 'unpaid']).default('all').parse(req.query.status);
   const ownOnly = !hasDashboardPermission(req.member!.role, 'salesAll');
-  const params: unknown[] = [bizId(req), status, ownOnly ? req.member!.id : null, searchTerm(page.q)];
+  const customerId = req.query.customer_id ? z.string().uuid().parse(req.query.customer_id) : null;
+  const params: unknown[] = [bizId(req), status, ownOnly ? req.member!.id : null, searchTerm(page.q), customerId];
   const where = `s.business_id = $1
     AND ($2 = 'all' OR (s.voided = false AND s.total_amount > s.paid_amount))
     AND ($3::text IS NULL OR s.created_by::text = $3)
-    AND ($4::text IS NULL OR s.reference_number ILIKE $4 OR c.name ILIKE $4)`;
+    AND ($4::text IS NULL OR s.reference_number ILIKE $4 OR c.name ILIKE $4)
+    AND ($5::text IS NULL OR s.customer_id::text = $5)`;
   const from = `FROM sales s LEFT JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id
                 LEFT JOIN users u ON u.id = s.created_by`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT s.id, s.reference_number, s.total_amount, s.paid_amount, s.payment_status, s.voided, s.sale_date,
               c.name AS customer, u.name AS cashier
-       ${from} WHERE ${where} ORDER BY s.sale_date DESC LIMIT $5 OFFSET $6`,
+       ${from} WHERE ${where} ORDER BY s.sale_date DESC LIMIT $6 OFFSET $7`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
@@ -111,6 +116,47 @@ dashboardRouter.get('/sales', can('sales'), async (req: DashboardRequest, res) =
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, total_amount: num(row.total_amount), paid_amount: num(row.paid_amount) })),
+  });
+});
+
+dashboardRouter.get('/sales/:id', can('sales'), async (req: DashboardRequest, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) {
+    res.status(404).json({ error: 'Sale not found' });
+    return;
+  }
+  const ownOnly = !hasDashboardPermission(req.member!.role, 'salesAll');
+  const [sale] = await q(
+    `SELECT s.id, s.reference_number, s.total_amount, s.paid_amount, s.discount_amount, s.payment_status, s.voided,
+            s.sale_date, s.notes, c.name AS customer, u.name AS cashier
+     FROM sales s
+     LEFT JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id
+     LEFT JOIN users u ON u.id = s.created_by
+     WHERE s.business_id = $1 AND s.id = $2 AND ($3::text IS NULL OR s.created_by::text = $3)`,
+    [bizId(req), id.data, ownOnly ? req.member!.id : null],
+  );
+  if (!sale) {
+    res.status(404).json({ error: 'Sale not found' });
+    return;
+  }
+  const items = await q(
+    `SELECT i.id, i.quantity, i.selling_price, i.discount_amount, i.total_amount, p.name AS product, p.unit
+     FROM sale_items i LEFT JOIN products p ON p.id = i.product_id AND p.business_id = i.business_id
+     WHERE i.business_id = $1 AND i.sale_id = $2 ORDER BY p.name`,
+    [bizId(req), id.data],
+  );
+  res.json({
+    ...sale,
+    total_amount: num(sale.total_amount),
+    paid_amount: num(sale.paid_amount),
+    discount_amount: num(sale.discount_amount),
+    items: items.map((item) => ({
+      ...item,
+      quantity: num(item.quantity),
+      selling_price: num(item.selling_price),
+      discount_amount: num(item.discount_amount),
+      total_amount: num(item.total_amount),
+    })),
   });
 });
 
@@ -197,9 +243,40 @@ dashboardRouter.get('/purchases', can('purchases'), async (req: DashboardRequest
   });
 });
 
+dashboardRouter.get('/purchases/:id', can('purchases'), async (req: DashboardRequest, res) => {
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) {
+    res.status(404).json({ error: 'Purchase not found' });
+    return;
+  }
+  const [purchase] = await q(
+    `SELECT p.id, p.reference_number, p.total_amount, p.paid_amount, p.status, p.purchase_date, s.name AS supplier
+     FROM purchases p LEFT JOIN suppliers s ON s.id = p.supplier_id AND s.business_id = p.business_id
+     WHERE p.business_id = $1 AND p.id = $2`,
+    [bizId(req), id.data],
+  );
+  if (!purchase) {
+    res.status(404).json({ error: 'Purchase not found' });
+    return;
+  }
+  const items = await q(
+    `SELECT i.id, i.quantity, i.unit_cost, i.total_cost, pr.name AS product, pr.unit
+     FROM purchase_items i LEFT JOIN products pr ON pr.id = i.product_id AND pr.business_id = i.business_id
+     WHERE i.business_id = $1 AND i.purchase_id = $2 ORDER BY pr.name`,
+    [bizId(req), id.data],
+  );
+  res.json({
+    ...purchase,
+    total_amount: num(purchase.total_amount),
+    paid_amount: num(purchase.paid_amount),
+    items: items.map((item) => ({ ...item, quantity: num(item.quantity), unit_cost: num(item.unit_cost), total_cost: num(item.total_cost) })),
+  });
+});
+
 dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [bizId(req)];
+  const productId = req.query.product_id ? z.string().uuid().parse(req.query.product_id) : null;
+  const params = [bizId(req), productId];
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT m.id, m.occurred_at, m.type, m.quantity, m.previous_quantity, m.new_quantity, m.reason,
@@ -207,10 +284,11 @@ dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest
        FROM stock_movements m
        LEFT JOIN products p ON p.id = m.product_id AND p.business_id = m.business_id
        LEFT JOIN users u ON u.id = m.created_by
-       WHERE m.business_id = $1 ORDER BY m.occurred_at DESC LIMIT $2 OFFSET $3`,
+       WHERE m.business_id = $1 AND ($2::text IS NULL OR m.product_id::text = $2)
+       ORDER BY m.occurred_at DESC LIMIT $3 OFFSET $4`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM stock_movements WHERE business_id = $1`, params),
+    q(`SELECT COUNT(*) AS total FROM stock_movements WHERE business_id = $1 AND ($2::text IS NULL OR product_id::text = $2)`, params),
   ]);
   res.json({
     total: num(count.total),

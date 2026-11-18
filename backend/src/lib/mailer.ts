@@ -8,6 +8,9 @@ export type Mail = {
 
 let transporter: Transporter | null = null;
 
+/** Mails kept in memory when SMTP is not set outside production, so tests can read them. */
+export const devOutbox: Mail[] = [];
+
 function getTransporter(): Transporter | null {
   const host = process.env.SMTP_HOST;
   if (!host) return null;
@@ -36,5 +39,7 @@ export async function sendMail(mail: Mail): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SMTP_HOST is not set, so email cannot be sent');
   }
+  devOutbox.push(mail);
+  if (devOutbox.length > 50) devOutbox.shift();
   console.log(`[dev email, SMTP_HOST not set]\nTo: ${mail.to}\nSubject: ${mail.subject}\n\n${mail.text}\n`);
 }

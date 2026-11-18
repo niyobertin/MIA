@@ -1,7 +1,7 @@
 import { useState, type ButtonHTMLAttributes, type FormEvent, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { AxiosInstance } from 'axios';
-import { AlertCircle, ChevronLeft, ChevronRight, Inbox, Search, X } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Inbox, Search, X } from 'lucide-react';
 import { getErrorMessage } from '../lib/format';
 
 export const cardClass = 'bg-white rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)]';
@@ -97,9 +97,36 @@ export function QueryBoundary<T>({ query, children, skeleton }: { query: UseQuer
 
 export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right' };
 
-export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.' }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string }) {
-  if (rows.length === 0) return <EmptyNotice>{empty}</EmptyNotice>;
+export function Pager({ page, pageSize, total, onPage }: { page: number; pageSize: number; total: number; onPage: (page: number) => void }) {
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  if (total <= pageSize) {
+    return total > 0 ? <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-500">{total} {total === 1 ? 'row' : 'rows'}</div> : null;
+  }
+  const navButton = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40';
   return (
+    <nav aria-label="Pages" className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 text-sm text-slate-500">
+      <span>
+        <span className="font-semibold text-slate-700">{page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)}</span> of {total}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <button type="button" aria-label="First page" className={navButton} disabled={page === 0} onClick={() => onPage(0)}><ChevronsLeft size={16} /></button>
+        <button type="button" aria-label="Previous page" className={navButton} disabled={page === 0} onClick={() => onPage(page - 1)}><ChevronLeft size={16} /></button>
+        <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">Page {page + 1} of {lastPage + 1}</span>
+        <button type="button" aria-label="Next page" className={navButton} disabled={page >= lastPage} onClick={() => onPage(page + 1)}><ChevronRight size={16} /></button>
+        <button type="button" aria-label="Last page" className={navButton} disabled={page >= lastPage} onClick={() => onPage(lastPage)}><ChevronsRight size={16} /></button>
+      </div>
+    </nav>
+  );
+}
+
+export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.', pageSize = 10 }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string; pageSize?: number }) {
+  const [page, setPage] = useState(0);
+  const lastPage = pageSize > 0 ? Math.max(0, Math.ceil(rows.length / pageSize) - 1) : 0;
+  const current = Math.min(page, lastPage);
+  if (rows.length === 0) return <EmptyNotice>{empty}</EmptyNotice>;
+  const visible = pageSize > 0 ? rows.slice(current * pageSize, (current + 1) * pageSize) : rows;
+  return (
+    <div>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
@@ -110,7 +137,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {visible.map((row) => (
             <tr key={rowKey(row)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70">
               {columns.map((column) => (
                 <td key={column.header} className={`px-5 py-3 align-middle text-slate-700 ${column.align === 'right' ? 'text-right tabular-nums' : ''}`}>{column.cell(row)}</td>
@@ -119,6 +146,8 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
           ))}
         </tbody>
       </table>
+    </div>
+    {pageSize > 0 && rows.length > pageSize ? <Pager page={current} pageSize={pageSize} total={rows.length} onPage={setPage} /> : null}
     </div>
   );
 }
@@ -136,7 +165,10 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   empty?: string;
   rowsFrom?: (data: { rows: T[]; total?: number }) => T[];
 }) {
-  const [page, setPage] = useState(0);
+  const paramsKey = JSON.stringify(params ?? {});
+  const [paging, setPaging] = useState({ key: paramsKey, page: 0 });
+  const page = paging.key === paramsKey ? paging.page : 0;
+  const setPage = (next: number) => setPaging({ key: paramsKey, page: next });
   const [search, setSearch] = useState('');
   const query = useQuery({
     queryKey: [queryKey, path, page, search, params],
@@ -146,7 +178,6 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? query.data?.rows.length ?? 0;
-  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
   return (
     <div className={cardClass}>
       {searchPlaceholder ? (
@@ -159,26 +190,18 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
       ) : null}
       <div className={query.isError ? 'p-4' : ''}>
         <QueryBoundary query={query} skeleton={<div className="p-4"><Skeleton className="h-48" /></div>}>
-          {(data) => <DataTable columns={columns} rows={rowsFrom ? rowsFrom(data) : data.rows} rowKey={rowKey} empty={empty} />}
+          {(data) => <DataTable columns={columns} rows={rowsFrom ? rowsFrom(data) : data.rows} rowKey={rowKey} empty={empty} pageSize={0} />}
         </QueryBoundary>
       </div>
-      {total > PAGE_SIZE ? (
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 text-sm text-slate-500">
-          <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}</span>
-          <div className="flex gap-2">
-            <Button aria-label="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}><ChevronLeft size={16} /></Button>
-            <Button aria-label="Next page" disabled={page >= lastPage} onClick={() => setPage(page + 1)}><ChevronRight size={16} /></Button>
-          </div>
-        </div>
-      ) : null}
+      <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
     </div>
   );
 }
 
-export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Dialog({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
+      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl`}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <h3 className="text-lg font-bold text-slate-900">{title}</h3>
           <button onClick={onClose} aria-label="Close" className="p-1 text-slate-400 hover:text-slate-700"><X size={18} /></button>

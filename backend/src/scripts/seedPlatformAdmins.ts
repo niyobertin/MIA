@@ -40,7 +40,7 @@ export async function seedPlatformAdmins() {
       created_at: now,
       updated_at: now,
     }));
-    console.log(`Created super admin ${email}. Password change and two-factor setup are required on first sign-in.`);
+    console.log(`Created super admin ${email}. A password change is required on first sign-in, and every sign-in needs a code sent to this email.`);
     return;
   }
 

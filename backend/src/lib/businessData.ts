@@ -1,9 +1,31 @@
 import { AppDataSource } from '../data-source';
 
-export type Period = 'today' | 'yesterday' | '7d' | '30d' | '90d';
+export type Period = 'today' | 'yesterday' | '7d' | '30d' | '90d' | 'custom';
+export type CustomRange = { from: string; to: string };
 
 const q = (sql: string, params: unknown[] = []) => AppDataSource.query(sql, params) as Promise<any[]>;
 const num = (value: unknown) => Number(value ?? 0);
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_CUSTOM_DAYS = 366;
+
+/** Reads ?period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD; returns an error message when the range is not usable. */
+export function parsePeriodQuery(query: Record<string, unknown>): { period: Period; custom?: CustomRange } | { error: string } {
+  const raw = typeof query.period === 'string' ? query.period : '7d';
+  if (raw !== 'custom') {
+    const allowed = ['today', 'yesterday', '7d', '30d', '90d'];
+    return { period: (allowed.includes(raw) ? raw : '7d') as Period };
+  }
+  const from = typeof query.from === 'string' ? query.from : '';
+  const to = typeof query.to === 'string' ? query.to : '';
+  if (!ISO_DAY.test(from) || !ISO_DAY.test(to) || Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) {
+    return { error: 'Choose a start and end date' };
+  }
+  if (from > to) return { error: 'The start date must be on or before the end date' };
+  const span = (Date.parse(to) - Date.parse(from)) / (24 * 60 * 60 * 1000) + 1;
+  if (span > MAX_CUSTOM_DAYS) return { error: 'Choose a range of one year or less' };
+  return { period: 'custom', custom: { from, to } };
+}
 
 export function safeTimezone(timezone: string | null | undefined): string {
   try {
@@ -14,13 +36,23 @@ export function safeTimezone(timezone: string | null | undefined): string {
   }
 }
 
-export async function periodBounds(period: Period, timezone: string) {
+export async function periodBounds(period: Period, timezone: string, custom?: CustomRange) {
+  const day = 24 * 60 * 60 * 1000;
+  if (period === 'custom' && custom) {
+    const [range] = await q(
+      `SELECT (($2::date)::timestamp AT TIME ZONE $1) AS from_start,
+              ((($3::date) + 1)::timestamp AT TIME ZONE $1) AS to_end`,
+      [timezone, custom.from, custom.to],
+    );
+    const from = new Date(range.from_start);
+    const to = new Date(range.to_end);
+    return { from, to, days: Math.max(1, Math.round((to.getTime() - from.getTime()) / day)) };
+  }
   const [row] = await q(
     `SELECT (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1) AS today_start`,
     [timezone],
   );
   const todayStart = new Date(row.today_start);
-  const day = 24 * 60 * 60 * 1000;
   const tomorrow = new Date(todayStart.getTime() + day);
   const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '90d' ? 90 : 1;
   if (period === 'yesterday') {
@@ -68,9 +100,9 @@ export async function salesTotals(businessId: string, from: Date, to: Date) {
   return { count: num(row.count), total: num(row.total) };
 }
 
-export async function buildOverview(businessId: string, timezone: string, period: Period) {
+export async function buildOverview(businessId: string, timezone: string, period: Period, custom?: CustomRange) {
   const tz = safeTimezone(timezone);
-  const { from, to, days } = await periodBounds(period, tz);
+  const { from, to, days } = await periodBounds(period, tz, custom);
   const spanMs = to.getTime() - from.getTime();
   const previousFrom = new Date(from.getTime() - spanMs);
   const params = [businessId, from, to];

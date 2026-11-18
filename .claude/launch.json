@@ -4,14 +4,70 @@
     {
       "name": "MIA API (local)",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "backend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "backend",
+        "run",
+        "dev"
+      ],
       "port": 4000
     },
     {
       "name": "MIA app (web, local API)",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["EXPO_PUBLIC_API_URL=http://localhost:4000", "npx", "expo", "start", "--web", "--port", "8081"],
+      "runtimeArgs": [
+        "EXPO_PUBLIC_API_URL=http://localhost:4000",
+        "npx",
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8081"
+      ],
       "port": 8081
+    },
+    {
+      "name": "MIA dashboard (web)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "mia-dashboard",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5173"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "MIA API (test, 4002)",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "PORT=4002",
+        "npm",
+        "--prefix",
+        "backend",
+        "run",
+        "dev"
+      ],
+      "port": 4002
+    },
+    {
+      "name": "MIA dashboard (test API 4002)",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_API_URL=http://localhost:4002",
+        "npm",
+        "--prefix",
+        "mia-dashboard",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5174"
+      ],
+      "port": 5174
     }
   ]
 }

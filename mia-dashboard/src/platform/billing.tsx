@@ -4,6 +4,7 @@ import { formatDate, formatMoney, formatNumber, humanize } from '../lib/format';
 import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction, Stat } from '../ui/kit';
 import { useCan } from './PlatformGate';
+import { Select } from '../ui/Select';
 
 type Row = Record<string, any>;
 
@@ -26,9 +27,7 @@ function SubscriptionDialog({ row, onClose }: { row: Row; onClose: () => void })
         <div><label htmlFor="plan" className="block text-sm font-medium text-slate-700 mb-1.5">Plan</label><input id="plan" required minLength={2} value={plan} onChange={(e) => setPlan(e.target.value)} className={inputClass} /></div>
         <div>
           <label htmlFor="sub-status" className="block text-sm font-medium text-slate-700 mb-1.5">Status</label>
-          <select id="sub-status" value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
-            <option value="trial">Trial</option><option value="active">Active</option><option value="past_due">Past due</option><option value="cancelled">Cancelled</option>
-          </select>
+          <Select id="sub-status" value={status} onChange={setStatus} options={[{ value: 'trial', label: 'Trial' }, { value: 'active', label: 'Active' }, { value: 'past_due', label: 'Past due' }, { value: 'cancelled', label: 'Cancelled' }]} />
         </div>
         <div><label htmlFor="period-end" className="block text-sm font-medium text-slate-700 mb-1.5">Paid until</label><input id="period-end" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className={inputClass} /></div>
         <div><label htmlFor="sub-reason" className="block text-sm font-medium text-slate-700 mb-1.5">Reason (saved in the audit log)</label><textarea id="sub-reason" required minLength={5} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass} /></div>

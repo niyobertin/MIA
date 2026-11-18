@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, formatDay, formatMoney, humanize } from '../lib/format';
 import { BarList, TrendChart } from '../ui/charts';
-import { Badge, Card, DataTable, inputClass, PageHeader, QueryBoundary, Skeleton, Stat } from '../ui/kit';
+import { Badge, Card, DataTable, PageHeader, QueryBoundary, Skeleton, Stat } from '../ui/kit';
+import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
 
 export type OverviewData = {
@@ -18,14 +19,6 @@ export type OverviewData = {
   low_stock: { id: string; name: string; unit: string; stock: number; reorder_level: number }[];
   movements: { id: string; at: string; type: string; quantity: number; product: string | null; user: string | null }[];
 };
-
-const PERIODS = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: '7d', label: 'Last 7 days' },
-  { value: '30d', label: 'Last 30 days' },
-  { value: '90d', label: 'Last 90 days' },
-];
 
 function salesChange(current: number, previous: number) {
   if (previous === 0) return current === 0 ? 'No change from the previous period' : 'No sales in the previous period';
@@ -115,10 +108,10 @@ export function OverviewContent({ data, currency }: { data: OverviewData; curren
 
 export function Overview() {
   const me = useDashboard();
-  const [period, setPeriod] = useState('7d');
+  const [period, setPeriod] = useState<PeriodValue>({ period: '7d' });
   const query = useQuery({
     queryKey: ['overview', me.user.id, period],
-    queryFn: async () => (await api.get<OverviewData>('/dashboard/overview', { params: { period } })).data,
+    queryFn: async () => (await api.get<OverviewData>('/dashboard/overview', { params: period })).data,
     refetchInterval: 60000,
   });
   return (
@@ -127,9 +120,7 @@ export function Overview() {
         title="Dashboard"
         subtitle={`${me.business.name} · ${me.business.currency}`}
         action={(
-          <select aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)} className={`${inputClass} !w-auto`}>
-            {PERIODS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+          <PeriodFilter value={period} onChange={setPeriod} />
         )}
       />
       <QueryBoundary query={query} skeleton={<Skeleton className="h-96" />}>

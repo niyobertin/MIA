@@ -3,6 +3,7 @@ import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
 import { Badge, Card, DataTable, PagedTable, PageHeader, QueryBoundary, Stat } from '../ui/kit';
 import { useDashboard } from './BusinessApp';
+import { CustomerSalesDialog, ProductHistoryDialog, PurchaseDetailDialog, RowButton, SaleDetailDialog, useRowDialog } from './details';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -14,6 +15,7 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
   const me = useDashboard();
   const own = !me.permissions.includes('salesAll');
   const money = (value: number) => formatMoney(value, me.business.currency);
+  const detail = useRowDialog<string>();
   return (
     <>
       <PageHeader
@@ -36,8 +38,10 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
           { header: 'Total', align: 'right', cell: (row) => money(row.total_amount) },
           { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)) },
           { header: 'Date', cell: (row) => dateCell(row.sale_date) },
+          { header: 'Actions', align: 'right', cell: (row) => <RowButton label={`View sale ${row.reference_number ?? ''}`} onClick={() => detail.open(String(row.id))}>View</RowButton> },
         ]}
       />
+      {detail.row ? <SaleDetailDialog saleId={detail.row} onClose={detail.close} /> : null}
     </>
   );
 }
@@ -65,6 +69,7 @@ export function Payments() {
 export function Customers() {
   const me = useDashboard();
   const money = (value: number) => formatMoney(value, me.business.currency);
+  const detail = useRowDialog<Row>();
   return (
     <>
       <PageHeader title="Customers" />
@@ -75,8 +80,15 @@ export function Customers() {
           { header: 'Phone', cell: (row) => row.phone ?? '—' },
           { header: 'Credit limit', align: 'right', cell: (row) => money(row.credit_limit) },
           { header: 'Balance owed', align: 'right', cell: (row) => row.balance > 0 ? <span className="font-semibold text-rose-700">{money(row.balance)}</span> : money(0) },
+          { header: 'Actions', align: 'right', cell: (row) => (
+            <div className="flex justify-end gap-1.5">
+              {row.phone ? <a href={`tel:${String(row.phone).replace(/\s+/g, '')}`} className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Call</a> : null}
+              <RowButton label={`Sales to ${row.name}`} onClick={() => detail.open(row)}>Sales</RowButton>
+            </div>
+          ) },
         ]}
       />
+      {detail.row ? <CustomerSalesDialog customer={detail.row} onClose={detail.close} /> : null}
     </>
   );
 }
@@ -103,7 +115,9 @@ export function Expenses() {
 export function Products() {
   const me = useDashboard();
   const showCosts = me.permissions.includes('costs');
+  const canSeeHistory = me.permissions.includes('movements');
   const money = (value: number) => formatMoney(value, me.business.currency);
+  const history = useRowDialog<Row>();
   const query = useQuery({
     queryKey: ['products', me.user.id],
     queryFn: async () => (await api.get<{ rows: Row[] }>('/dashboard/products')).data,
@@ -125,18 +139,21 @@ export function Products() {
                   { header: 'In stock', align: 'right', cell: (row) => row.track_inventory ? <Badge tone={row.stock <= row.reorder_level ? 'warn' : 'neutral'}>{row.stock} {row.unit}</Badge> : '—' },
                   { header: 'Selling price', align: 'right', cell: (row) => money(row.selling_price) },
                   ...(showCosts ? [{ header: 'Average cost', align: 'right' as const, cell: (row: Row) => money(row.average_cost) }] : []),
+                  ...(canSeeHistory ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => <RowButton label={`Stock history for ${row.name}`} onClick={() => history.open(row)}>History</RowButton> }] : []),
                 ]}
               />
             )}
           </QueryBoundary>
         </div>
       </Card>
+      {history.row ? <ProductHistoryDialog product={history.row} onClose={history.close} /> : null}
     </>
   );
 }
 
 export function Purchases() {
   const me = useDashboard();
+  const detail = useRowDialog<string>();
   return (
     <>
       <PageHeader title="Stock-in" subtitle="Purchases from suppliers. New stock is recorded in the MIA app." />
@@ -149,8 +166,10 @@ export function Purchases() {
           { header: 'Total', align: 'right', cell: (row) => formatMoney(row.total_amount, me.business.currency) },
           { header: 'Paid', align: 'right', cell: (row) => formatMoney(row.paid_amount, me.business.currency) },
           { header: 'Date', cell: (row) => dateCell(row.purchase_date) },
+          { header: 'Actions', align: 'right', cell: (row) => <RowButton label={`View stock-in ${row.reference_number ?? ''}`} onClick={() => detail.open(String(row.id))}>View</RowButton> },
         ]}
       />
+      {detail.row ? <PurchaseDetailDialog purchaseId={detail.row} onClose={detail.close} /> : null}
     </>
   );
 }

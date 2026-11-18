@@ -49,7 +49,12 @@ async function main() {
   const { AppDataSource, initDatabase } = await import('../src/data-source');
   const entities = await import('../src/entities');
   const { hashPassword } = await import('../src/lib/auth');
-  const { totpCode, currentTotpStep } = await import('../src/lib/totp');
+  delete process.env.SMTP_HOST;
+  const { devOutbox } = await import('../src/lib/mailer');
+  const codeFor = (email: string) => {
+    const mail = [...devOutbox].reverse().find((m) => m.to === email && m.subject.includes('sign-in code'));
+    return mail?.text.match(/\b(\d{6})\b/)?.[1] ?? '';
+  };
   const { authRouter } = await import('../src/routes/auth');
   const { syncRouter } = await import('../src/routes/sync');
   const { dashboardRouter } = await import('../src/routes/dashboard');
@@ -400,31 +405,40 @@ async function main() {
 
   const signIn = async (email: string, password: string) => {
     const first = await call('POST', '/platform/auth/login', { body: { email, password } });
-    const setup = await call('POST', '/platform/auth/2fa/setup', { body: { challenge: first.body.challenge } });
-    const code = totpCode(setup.body.secret, currentTotpStep());
+    const code = codeFor(email);
     const done = await call('POST', '/platform/auth/2fa/verify', { body: { challenge: first.body.challenge, code } });
-    return { first, setup, code, done };
+    return { first, code, done };
   };
   res = await call('POST', '/platform/auth/login', { body: { email: 'superadmin@mia.rw', password: 'wrong-password' } });
   check('wrong platform password is rejected', res.status === 401, res.status);
   res = await call('POST', '/platform/auth/login', { body: { email: 'owner-a@example.test', password: '7391' } });
   check('business owner cannot sign in as platform admin', res.status === 401, res.status);
   const superLogin = await signIn('superadmin@mia.rw', 'SuperAdmin#2026');
-  check('password alone gives no session', superLogin.first.body.step === 'enroll' && !superLogin.first.body.token, superLogin.first.body.step);
+  check('password alone gives no session', superLogin.first.body.step === 'verify' && !superLogin.first.body.token, superLogin.first.body.step);
+  check('sign-in code is sent by email', superLogin.first.body.channel === 'email' && /^\d{6}$/.test(superLogin.code), superLogin.first.body);
+  check('email address is masked in the response', typeof superLogin.first.body.sent_to === 'string' && !superLogin.first.body.sent_to.includes('superadmin@'), superLogin.first.body.sent_to);
   const challengeAsToken = await call('GET', '/platform/overview', { token: superLogin.first.body.challenge });
   check('2FA challenge is not a session', challengeAsToken.status === 401, challengeAsToken.status);
-  check('2FA enrollment gives a session', superLogin.done.status === 200 && Boolean(superLogin.done.body.token), superLogin.done.body);
+  check('email code gives a session', superLogin.done.status === 200 && Boolean(superLogin.done.body.token), superLogin.done.body);
   const superToken = superLogin.done.body.token;
   res = await call('GET', '/dashboard/me', { token: superToken });
   check('platform token cannot reach the business dashboard', res.status === 401, res.status);
   res = await call('GET', '/sync/pull', { token: superToken });
   check('platform token cannot reach sync', res.status === 401, res.status);
   const again = await call('POST', '/platform/auth/login', { body: { email: 'superadmin@mia.rw', password: 'SuperAdmin#2026' } });
-  check('later sign-ins ask for a code', again.body.step === 'verify', again.body.step);
+  check('every sign-in asks for a new code', again.body.step === 'verify' && codeFor('superadmin@mia.rw') !== superLogin.code, again.body.step);
   res = await call('POST', '/platform/auth/2fa/verify', { body: { challenge: again.body.challenge, code: superLogin.code } });
-  check('a used 2FA code cannot be replayed', res.status === 401, res.status);
+  check('a used code cannot be replayed', res.status === 401, res.status);
+  res = await call('POST', '/platform/auth/2fa/resend', { body: { challenge: again.body.challenge } });
+  check('a new code cannot be requested within a minute', res.status === 429, res.status);
   res = await call('POST', '/platform/auth/2fa/setup', { body: { challenge: again.body.challenge } });
-  check('2FA secret cannot be replaced once enrolled', res.status === 409, res.status);
+  check('authenticator setup is gone', res.status === 404 || res.status === 401, res.status);
+  for (let i = 0; i < 5; i += 1) {
+    await call('POST', '/platform/auth/2fa/verify', { body: { challenge: again.body.challenge, code: '000000' } });
+  }
+  res = await call('POST', '/platform/auth/2fa/verify', { body: { challenge: again.body.challenge, code: codeFor('superadmin@mia.rw') } });
+  check('five wrong codes cancel the code', res.status === 401 || res.status === 423, res.status);
+  await repo(entities.PlatformAdmin).update({ email: 'superadmin@mia.rw' }, { locked_until: null, failed_attempts: 0 });
 
   const supportToken = (await signIn('support@mia.rw', 'SupportTeam#2026')).done.body.token;
   const financeToken = (await signIn('finance@mia.rw', 'FinanceTeam#2026')).done.body.token;
@@ -522,7 +536,7 @@ async function main() {
   res = await call('GET', `/platform/businesses/${ids.bizA}/export`, { token: superToken });
   check('export needs a reason', res.status === 400, res.status);
   const logged = await repo(PlatformAuditLog).find();
-  for (const action of ['business.suspended', 'business.reactivated', 'business.flags_changed', 'support.access_started', 'user.signed_out', 'business.exported', 'admin.login', 'admin.2fa_enrolled']) {
+  for (const action of ['business.suspended', 'business.reactivated', 'business.flags_changed', 'support.access_started', 'user.signed_out', 'business.exported', 'admin.login', 'admin.code_sent', 'admin.2fa_failed']) {
     check(`audit log records ${action}`, logged.some((row) => row.action === action));
   }
   const auditRoutes = await call('DELETE', `/platform/audit/${logged[0].id}`, { token: superToken });

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDate, formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Button, Card, DataTable, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
+import { Badge, Button, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
 import { useDashboard } from './BusinessApp';
+import { Select } from '../ui/Select';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -38,11 +39,7 @@ function StaffControls({ row }: { row: Row }) {
   return (
     <div className="flex items-center justify-end gap-2">
       {mutation.isError ? <ErrorNotice error={mutation.error} /> : null}
-      <select aria-label={`Role for ${row.name}`} value={row.role ?? 'STAFF'} disabled={mutation.isPending} onChange={(e) => mutation.mutate({ role: e.target.value })} className={`${inputClass} !w-auto !py-1.5`}>
-        <option value="MANAGER">Manager</option>
-        <option value="CASHIER">Cashier</option>
-        <option value="STAFF">Staff</option>
-      </select>
+      <Select ariaLabel={`Role for ${row.name}`} size="sm" className="w-32" value={row.role ?? 'STAFF'} disabled={mutation.isPending} onChange={(role) => mutation.mutate({ role })} options={[{ value: 'MANAGER', label: 'Manager' }, { value: 'CASHIER', label: 'Cashier' }, { value: 'STAFF', label: 'Staff' }]} />
       <Button className="!px-2.5 !py-1.5 !text-xs" disabled={mutation.isPending} onClick={() => mutation.mutate({ active: !row.active })}>{row.active ? 'Deactivate' : 'Reactivate'}</Button>
     </div>
   );

@@ -25,6 +25,7 @@ export {
 export {
   PlatformAdmin,
   PlatformAuditLog,
+  PlatformLoginCode,
   BusinessPlatformState,
   SubscriptionInvoice,
   SupportAccessGrant,

@@ -6,6 +6,7 @@ import { formatDate, formatDateTime, formatNumber, getErrorMessage, humanize } f
 import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction, Stat } from '../ui/kit';
 import { useCan } from './PlatformGate';
+import { Select } from '../ui/Select';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -19,11 +20,7 @@ export function Businesses() {
       <PageHeader
         title="Businesses"
         action={(
-          <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value)} className={`${inputClass} !w-auto`}>
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-          </select>
+          <Select ariaLabel="Filter by status" className="w-44" value={status} onChange={setStatus} options={[{ value: 'all', label: 'All statuses' }, { value: 'active', label: 'Active' }, { value: 'suspended', label: 'Suspended' }]} />
         )}
       />
       <PagedTable<Row>
@@ -36,6 +33,7 @@ export function Businesses() {
           { header: 'Plan', cell: (row) => <span>{humanize(row.plan)} · {humanize(row.subscription_status)}</span> },
           { header: 'Users', align: 'right', cell: (row) => row.users },
           { header: 'Joined', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDate(row.created_at)}</span> },
+          { header: 'Actions', align: 'right', cell: (row) => <Link to={`/platform/businesses/${row.id}`} className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</Link> },
         ]}
       />
     </>

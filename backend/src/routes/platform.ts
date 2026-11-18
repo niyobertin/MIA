@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'crypto';
+import { randomBytes, randomInt, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Router, type NextFunction, type Response } from 'express';
@@ -13,13 +13,14 @@ import {
   PinHelpRequest,
   PlatformAdmin,
   PlatformAuditLog,
+  PlatformLoginCode,
   SubscriptionInvoice,
   SupportAccessGrant,
   User,
   type PlatformRole,
 } from '../entities';
 import { hashPassword, verifyPassword } from '../lib/auth';
-import { buildOverview, stockLevels, type Period } from '../lib/businessData';
+import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
 import { getBusinessState, upsertBusinessState } from '../lib/businessState';
 import { notifyBusinessOwners, recordPlatformAudit } from '../lib/platformAudit';
 import {
@@ -30,7 +31,7 @@ import {
   verifyPlatformToken,
 } from '../lib/platformAuth';
 import { FEATURE_FLAGS, platformPermissionsFor, resolveFlags } from '../lib/rbac';
-import { decryptSecret, encryptSecret, findTotpStep, generateTotpSecret, totpUri } from '../lib/totp';
+import { sendMail } from '../lib/mailer';
 import { emailAndIpKey, rateLimit } from '../middleware/security';
 import {
   requirePasswordCurrent,
@@ -71,7 +72,7 @@ function publicAdmin(admin: PlatformAdmin) {
     email: admin.email,
     role: admin.role,
     active: admin.active,
-    totp_enabled: admin.totp_enabled,
+    two_factor: isTwoFactorRequired() ? 'email' : 'off',
     must_change_password: admin.must_change_password,
     last_login_at: admin.last_login_at,
     permissions: platformPermissionsFor(admin.role),
@@ -103,6 +104,46 @@ async function completeLogin(req: PlatformRequest, res: Response, admin: Platfor
 
 const LOCKED_RESPONSE = { error: 'Too many failed attempts. Try again in 15 minutes.', code: 'LOCKED' };
 
+const LOGIN_CODE_TTL_MS = 10 * 60 * 1000;
+const LOGIN_CODE_RESEND_MS = 60 * 1000;
+const LOGIN_CODE_MAX_ATTEMPTS = 5;
+
+function maskEmail(email: string): string {
+  const [name, domain] = email.split('@');
+  if (!domain) return email;
+  const shown = name.length <= 2 ? name.charAt(0) : `${name.slice(0, 2)}`;
+  return `${shown}${'•'.repeat(Math.max(1, name.length - shown.length))}@${domain}`;
+}
+
+async function sendLoginCode(admin: PlatformAdmin, force = false): Promise<'sent' | 'wait'> {
+  const codes = AppDataSource.getRepository(PlatformLoginCode);
+  const existing = await codes.findOne({ where: { admin_id: admin.id } });
+  const now = Date.now();
+  if (!force && existing && now - existing.created_at.getTime() < LOGIN_CODE_RESEND_MS) return 'wait';
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  await codes.save(
+    codes.create({
+      admin_id: admin.id,
+      code_hash: await hashPassword(code),
+      expires_at: new Date(now + LOGIN_CODE_TTL_MS),
+      attempts: 0,
+      created_at: new Date(now),
+    }),
+  );
+  await sendMail({
+    to: admin.email,
+    subject: `Your MIA Platform sign-in code: ${code}`,
+    text: [
+      `Hello ${admin.name},`,
+      '',
+      `Your MIA Platform sign-in code is ${code}. It expires in 10 minutes.`,
+      '',
+      'If you did not try to sign in, someone may know your password. Change it and tell your team lead.',
+    ].join('\n'),
+  });
+  return 'sent';
+}
+
 platformRouter.post('/auth/login', loginLimiter, async (req: PlatformRequest, res) => {
   const body = z.object({ email: z.string().email(), password: z.string().min(1).max(200) }).parse(req.body);
   const email = body.email.trim().toLowerCase();
@@ -123,12 +164,22 @@ platformRouter.post('/auth/login', loginLimiter, async (req: PlatformRequest, re
     res.status(401).json(INVALID_LOGIN);
     return;
   }
-  if (!isTwoFactorRequired() && !admin.totp_enabled) {
+  if (!isTwoFactorRequired()) {
     await completeLogin(req, res, admin);
     return;
   }
+  try {
+    await sendLoginCode(admin, true);
+  } catch (error) {
+    console.error('Could not send platform sign-in code', error);
+    res.status(503).json({ error: 'We could not send your sign-in code. Try again in a minute.', code: 'EMAIL_FAILED' });
+    return;
+  }
+  await recordPlatformAudit({ req, admin, action: 'admin.code_sent' });
   res.json({
-    step: admin.totp_enabled ? 'verify' : 'enroll',
+    step: 'verify',
+    channel: 'email',
+    sent_to: maskEmail(admin.email),
     challenge: signPlatformChallenge(admin.id, admin.token_version),
   });
 });
@@ -140,22 +191,34 @@ async function adminFromChallenge(challenge: string) {
   return admin;
 }
 
-platformRouter.post('/auth/2fa/setup', challengeLimiter, async (req, res) => {
+const CHALLENGE_EXPIRED = { error: 'Your sign-in expired. Start again.', code: 'CHALLENGE_EXPIRED' };
+
+platformRouter.post('/auth/2fa/resend', challengeLimiter, async (req: PlatformRequest, res) => {
   const body = z.object({ challenge: z.string().min(10) }).parse(req.body);
   let admin: PlatformAdmin;
   try {
     admin = await adminFromChallenge(body.challenge);
   } catch {
-    res.status(401).json({ error: 'Your sign-in expired. Start again.', code: 'CHALLENGE_EXPIRED' });
+    res.status(401).json(CHALLENGE_EXPIRED);
     return;
   }
-  if (admin.totp_enabled) {
-    res.status(409).json({ error: 'Two-factor authentication is already set up' });
+  if (isLocked(admin)) {
+    res.status(423).json(LOCKED_RESPONSE);
     return;
   }
-  const secret = generateTotpSecret();
-  await AppDataSource.getRepository(PlatformAdmin).update(admin.id, { totp_secret: encryptSecret(secret) });
-  res.json({ secret, otpauth_uri: totpUri(secret, admin.email) });
+  try {
+    const result = await sendLoginCode(admin);
+    if (result === 'wait') {
+      res.status(429).json({ error: 'Wait a minute before asking for another code.', code: 'RESEND_TOO_SOON' });
+      return;
+    }
+  } catch (error) {
+    console.error('Could not send platform sign-in code', error);
+    res.status(503).json({ error: 'We could not send your sign-in code. Try again in a minute.', code: 'EMAIL_FAILED' });
+    return;
+  }
+  await recordPlatformAudit({ req, admin, action: 'admin.code_sent' });
+  res.json({ ok: true, sent_to: maskEmail(admin.email) });
 });
 
 platformRouter.post('/auth/2fa/verify', challengeLimiter, async (req: PlatformRequest, res) => {
@@ -164,28 +227,30 @@ platformRouter.post('/auth/2fa/verify', challengeLimiter, async (req: PlatformRe
   try {
     admin = await adminFromChallenge(body.challenge);
   } catch {
-    res.status(401).json({ error: 'Your sign-in expired. Start again.', code: 'CHALLENGE_EXPIRED' });
+    res.status(401).json(CHALLENGE_EXPIRED);
     return;
   }
   if (isLocked(admin)) {
     res.status(423).json(LOCKED_RESPONSE);
     return;
   }
-  if (!admin.totp_secret) {
-    res.status(400).json({ error: 'Set up two-factor authentication first' });
+  const codes = AppDataSource.getRepository(PlatformLoginCode);
+  const stored = await codes.findOne({ where: { admin_id: admin.id } });
+  if (!stored || stored.expires_at.getTime() < Date.now()) {
+    if (stored) await codes.delete({ admin_id: admin.id });
+    res.status(401).json({ error: 'That code has expired. Ask for a new one.', code: 'CODE_EXPIRED' });
     return;
   }
-  const step = findTotpStep(decryptSecret(admin.totp_secret), body.code, num(admin.totp_last_step));
-  if (step === null) {
+  if (!(await verifyPassword(body.code, stored.code_hash))) {
+    const attempts = stored.attempts + 1;
+    if (attempts >= LOGIN_CODE_MAX_ATTEMPTS) await codes.delete({ admin_id: admin.id });
+    else await codes.update({ admin_id: admin.id }, { attempts });
     await recordFailure(admin);
     await recordPlatformAudit({ req, admin, action: 'admin.2fa_failed' });
     res.status(401).json({ error: 'That code is not correct', code: 'INVALID_CODE' });
     return;
   }
-  const enrolling = !admin.totp_enabled;
-  await AppDataSource.getRepository(PlatformAdmin).update(admin.id, { totp_enabled: true, totp_last_step: step });
-  if (enrolling) await recordPlatformAudit({ req, admin, action: 'admin.2fa_enrolled' });
-  admin.totp_enabled = true;
+  await codes.delete({ admin_id: admin.id });
   await completeLogin(req, res, admin);
 });
 
@@ -793,9 +858,13 @@ platformRouter.get('/support/:businessId/overview', requirePermission('support:a
   const id = uuidSchema.parse(req.params.businessId);
   const business = await requireBusiness(id, res);
   if (!business) return;
-  const period = z.enum(['today', 'yesterday', '7d', '30d', '90d']).default('7d').parse(req.query.period) as Period;
+  const parsed = parsePeriodQuery(req.query);
+  if ('error' in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
   await recordPlatformAudit({ req, admin: req.admin, action: 'support.viewed_overview', targetType: 'business', targetId: id, businessId: id });
-  res.json({ business, overview: await buildOverview(id, business.timezone, period) });
+  res.json({ business, overview: await buildOverview(id, business.timezone, parsed.period, parsed.custom) });
 });
 
 platformRouter.get('/support/:businessId/products', requirePermission('support:access'), requireActiveGrant, async (req: PlatformRequest, res) => {
@@ -951,7 +1020,7 @@ platformRouter.post('/admins', requirePermission('admins:manage'), async (req: P
 
 platformRouter.post('/admins/:id/:action', requirePermission('admins:manage'), async (req: PlatformRequest, res) => {
   const id = uuidSchema.parse(req.params.id);
-  const action = z.enum(['deactivate', 'reactivate', 'reset-2fa', 'reset-password', 'set-role']).parse(req.params.action);
+  const action = z.enum(['deactivate', 'reactivate', 'reset-password', 'set-role']).parse(req.params.action);
   const { reason } = reasonSchema.parse(req.body);
   if (id === req.admin!.id) {
     res.status(400).json({ error: 'Ask another super admin to change your own account.' });
@@ -968,7 +1037,6 @@ platformRouter.post('/admins/:id/:action', requirePermission('admins:manage'), a
   let temporary: string | undefined;
   if (action === 'deactivate') await repo.update(id, { active: false, token_version: version, updated_at: now });
   if (action === 'reactivate') await repo.update(id, { active: true, updated_at: now });
-  if (action === 'reset-2fa') await repo.update(id, { totp_enabled: false, totp_secret: null, totp_last_step: 0, token_version: version, updated_at: now });
   if (action === 'set-role') await repo.update(id, { role: roleSchema.parse(req.body.role) as PlatformRole, token_version: version, updated_at: now });
   if (action === 'reset-password') {
     temporary = temporaryPassword();

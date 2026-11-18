@@ -3,8 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { formatDateTime, humanize } from '../lib/format';
 import { platformApi } from '../lib/platformAuth';
-import { Badge, Button, Card, DataTable, Dialog, inputClass, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
+import { Badge, Button, Card, DataTable, Dialog, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
 import { useCan } from './PlatformGate';
+import { Select } from '../ui/Select';
 
 type HelpRequest = {
   id: string;
@@ -96,11 +97,7 @@ export function PinHelpRequests() {
         title="PIN help requests"
         subtitle="People who forgot their PIN and have no email. Call them, confirm who they are, then give a temporary PIN."
         action={(
-          <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={`${inputClass} !w-auto`}>
-            <option value="open">Open</option>
-            <option value="resolved">Resolved</option>
-            <option value="rejected">Closed</option>
-          </select>
+          <Select ariaLabel="Filter by status" className="w-40" value={status} onChange={(v) => setStatus(v as typeof status)} options={[{ value: 'open', label: 'Open' }, { value: 'resolved', label: 'Resolved' }, { value: 'rejected', label: 'Closed' }]} />
         )}
       />
       <Card>
