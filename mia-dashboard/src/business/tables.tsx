@@ -1,15 +1,50 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { Plus } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Card, DataTable, PagedTable, PageHeader, QueryBoundary, Stat } from '../ui/kit';
+import { Badge, Button, Card, DataTable, PagedTable, PageHeader, QueryBoundary, Stat } from '../ui/kit';
+import { LIST_KEYS, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 import { CustomerSalesDialog, ProductHistoryDialog, PurchaseDetailDialog, RowButton, SaleDetailDialog, useRowDialog } from './details';
+import { AdjustStockDialog, CategoriesDialog, ProductDialog } from './productForms';
+import { CustomerDialog, EXPENSE_CATEGORIES, ExpenseDialog, PartyPaymentDialog } from './partyForms';
+import { StockInDialog } from './stockIn';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
 const dateCell = (value: unknown) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(value as string)}</span>;
 
 const STATUS_TONE: Record<string, 'good' | 'info' | 'warn'> = { paid: 'good', partial: 'info', unpaid: 'warn', credit: 'warn' };
+
+/** Summary numbers for the stat cards, read from the same list endpoint. */
+function useSummary<T>(key: string, path: string) {
+  const me = useDashboard();
+  return useQuery({
+    queryKey: [key, me.user.id, 'summary'],
+    queryFn: async () => (await api.get<{ summary: T }>(path, { params: { limit: 1 } })).data.summary,
+  });
+}
+
+export function AddButton({ children, onClick, to }: { children: string; onClick?: () => void; to?: string }) {
+  const className = 'inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800';
+  if (to) return <Link to={to} className={className}><Plus size={16} aria-hidden />{children}</Link>;
+  return <button type="button" onClick={onClick} className={className}><Plus size={16} aria-hidden />{children}</button>;
+}
+
+export function StatRow({ children }: { children: React.ReactNode }) {
+  return <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">{children}</div>;
+}
+
+function ToggleActive({ path, active, label }: { path: string; active: boolean; label: string }) {
+  const save = useSave('patch', LIST_KEYS);
+  return (
+    <RowButton label={`${active ? 'Deactivate' : 'Reactivate'} ${label}`} onClick={() => save.mutate({ path, body: { active: !active } })}>
+      {save.isPending ? '…' : active ? 'Deactivate' : 'Reactivate'}
+    </RowButton>
+  );
+}
 
 export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
   const me = useDashboard();
@@ -20,7 +55,8 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
     <>
       <PageHeader
         title={unpaidOnly ? 'Unpaid sales' : 'Sales'}
-        subtitle={own ? 'Sales you recorded. New sales are made in the MIA app.' : 'New sales are made in the MIA app.'}
+        subtitle={own ? 'Sales you recorded.' : undefined}
+        action={me.permissions.includes('salesCreate') ? <AddButton to="/new-sale">New sale</AddButton> : undefined}
       />
       <PagedTable<Row>
         client={api}
@@ -70,13 +106,24 @@ export function Customers() {
   const me = useDashboard();
   const money = (value: number) => formatMoney(value, me.business.currency);
   const detail = useRowDialog<Row>();
+  const edit = useRowDialog<Row | 'new'>();
+  const pay = useRowDialog<Row>();
+  const canWrite = me.permissions.includes('customersWrite');
+  const canPay = me.permissions.includes('paymentsWrite');
+  const canDeactivate = canWrite && me.user.role !== 'CASHIER';
+  const summary = useSummary<{ active: number; owed: number; debtors: number }>('customers', '/dashboard/customers');
   return (
     <>
-      <PageHeader title="Customers" />
+      <PageHeader title="Customers" action={canWrite ? <AddButton onClick={() => edit.open('new')}>Add customer</AddButton> : undefined} />
+      <StatRow>
+        <Stat label="Customers" value={summary.data?.active ?? '—'} hint="Active" />
+        <Stat label="Owed to you" value={summary.data ? money(summary.data.owed) : '—'} hint="All unpaid sales" />
+        <Stat label="Customers who owe" value={summary.data?.debtors ?? '—'} />
+      </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/customers" queryKey="customers" rowKey={rowId} searchPlaceholder="Search name or phone" empty="No customers yet."
         columns={[
-          { header: 'Name', cell: (row) => <span className="font-semibold text-slate-900">{row.name}</span> },
+          { header: 'Name', cell: (row) => <div><span className="font-semibold text-slate-900">{row.name}</span>{row.active === false ? <span className="ml-2"><Badge>Inactive</Badge></span> : null}</div> },
           { header: 'Phone', cell: (row) => row.phone ?? '—' },
           { header: 'Credit limit', align: 'right', cell: (row) => money(row.credit_limit) },
           { header: 'Balance owed', align: 'right', cell: (row) => row.balance > 0 ? <span className="font-semibold text-rose-700">{money(row.balance)}</span> : money(0) },
@@ -84,30 +131,53 @@ export function Customers() {
             <div className="flex justify-end gap-1.5">
               {row.phone ? <a href={`tel:${String(row.phone).replace(/\s+/g, '')}`} className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Call</a> : null}
               <RowButton label={`Sales to ${row.name}`} onClick={() => detail.open(row)}>Sales</RowButton>
+              {canPay && row.balance > 0 ? <RowButton label={`Take payment from ${row.name}`} onClick={() => pay.open(row)}>Take payment</RowButton> : null}
+              {canWrite ? <RowButton label={`Edit ${row.name}`} onClick={() => edit.open(row)}>Edit</RowButton> : null}
+              {canDeactivate ? <ToggleActive path={`/dashboard/customers/${row.id}`} active={row.active !== false} label={row.name} /> : null}
             </div>
           ) },
         ]}
       />
       {detail.row ? <CustomerSalesDialog customer={detail.row} onClose={detail.close} /> : null}
+      {edit.row ? <CustomerDialog customer={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
+      {pay.row ? <PartyPaymentDialog kind="customer" party={pay.row} onClose={pay.close} /> : null}
     </>
   );
 }
 
+const EXPENSE_LABEL: Record<string, string> = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.value, c.label]));
+
 export function Expenses() {
   const me = useDashboard();
+  const money = (value: number) => formatMoney(value, me.business.currency);
+  const edit = useRowDialog<Row | 'new'>();
+  const canWrite = me.permissions.includes('expensesWrite');
+  const summary = useSummary<{ today: number; month: number; all_time: number }>('expenses', '/dashboard/expenses');
   return (
     <>
-      <PageHeader title="Expenses" />
+      <PageHeader
+        title="Expenses"
+        subtitle={me.day.open ? undefined : 'Start the day to record an expense.'}
+        action={canWrite && me.day.open ? <AddButton onClick={() => edit.open('new')}>Record expense</AddButton> : undefined}
+      />
+      <StatRow>
+        <Stat label="This open day" value={summary.data ? money(summary.data.today) : '—'} />
+        <Stat label="This month" value={summary.data ? money(summary.data.month) : '—'} />
+        <Stat label="All time" value={summary.data ? money(summary.data.all_time) : '—'} />
+      </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/expenses" queryKey="expenses" rowKey={rowId} empty="No expenses yet."
         columns={[
-          { header: 'Category', cell: (row) => <span className="font-medium text-slate-900">{row.category}</span> },
+          { header: 'Category', cell: (row) => <span className="font-medium text-slate-900">{EXPENSE_LABEL[row.category] ?? humanize(row.category)}</span> },
           { header: 'Description', cell: (row) => row.description ?? '—' },
           { header: 'Method', cell: (row) => humanize(row.payment_method) },
-          { header: 'Amount', align: 'right', cell: (row) => formatMoney(row.amount, me.business.currency) },
+          { header: 'Recorded by', cell: (row) => row.recorded_by ?? '—' },
+          { header: 'Amount', align: 'right', cell: (row) => money(row.amount) },
           { header: 'Date', cell: (row) => dateCell(row.expense_date) },
+          ...(canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => row.editable ? <RowButton label="Edit expense" onClick={() => edit.open(row)}>Edit</RowButton> : <span className="text-xs text-slate-400">Closed day</span> }] : []),
         ]}
       />
+      {edit.row ? <ExpenseDialog expense={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
     </>
   );
 }
@@ -116,30 +186,63 @@ export function Products() {
   const me = useDashboard();
   const showCosts = me.permissions.includes('costs');
   const canSeeHistory = me.permissions.includes('movements');
+  const canWrite = me.permissions.includes('productsWrite');
+  const canAdjust = me.permissions.includes('stockAdjust') && me.day.open;
   const money = (value: number) => formatMoney(value, me.business.currency);
   const history = useRowDialog<Row>();
+  const edit = useRowDialog<Row | 'new'>();
+  const adjust = useRowDialog<Row>();
+  const [showCategories, setShowCategories] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const query = useQuery({
     queryKey: ['products', me.user.id],
-    queryFn: async () => (await api.get<{ rows: Row[] }>('/dashboard/products')).data,
+    queryFn: async () => (await api.get<{ rows: Row[]; summary: { active: number; low_stock: number; out_of_stock: number; stock_value?: number } }>('/dashboard/products')).data,
   });
+  const summary = query.data?.summary;
   return (
     <>
-      <PageHeader title="Products" subtitle={`Current stock is worked out from recorded stock movements.`} />
+      <PageHeader
+        title="Products"
+        subtitle="Stock is worked out from recorded stock movements."
+        action={canWrite ? (
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setShowCategories(true)}>Categories</Button>
+            <AddButton onClick={() => edit.open('new')}>Add product</AddButton>
+          </div>
+        ) : undefined}
+      />
+      <StatRow>
+        <Stat label="Products" value={summary?.active ?? '—'} hint="Active" />
+        <Stat label="Running low" value={summary?.low_stock ?? '—'} hint="At or below the warning level" />
+        <Stat label="Out of stock" value={summary?.out_of_stock ?? '—'} />
+        {showCosts ? <Stat label="Stock value" value={summary?.stock_value != null ? money(summary.stock_value) : '—'} hint="At average cost" /> : null}
+      </StatRow>
+      <label className="mb-3 flex items-center gap-2 text-sm text-slate-600">
+        <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} className="h-4 w-4 accent-emerald-700" />
+        Show deactivated products
+      </label>
       <Card>
         <div className={query.isError ? 'p-4' : ''}>
           <QueryBoundary query={query}>
             {(data) => (
               <DataTable
-                rows={data.rows}
+                rows={data.rows.filter((row) => showHidden || row.active)}
                 rowKey={rowId}
                 empty="No products yet."
                 columns={[
-                  { header: 'Product', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.sku ?? ''}</div></div> },
+                  { header: 'Product', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}{row.active ? null : <span className="ml-2"><Badge>Inactive</Badge></span>}</div><div className="text-xs text-slate-500">{row.sku ?? ''}</div></div> },
                   { header: 'Category', cell: (row) => row.category ?? '—' },
                   { header: 'In stock', align: 'right', cell: (row) => row.track_inventory ? <Badge tone={row.stock <= row.reorder_level ? 'warn' : 'neutral'}>{row.stock} {row.unit}</Badge> : '—' },
                   { header: 'Selling price', align: 'right', cell: (row) => money(row.selling_price) },
                   ...(showCosts ? [{ header: 'Average cost', align: 'right' as const, cell: (row: Row) => money(row.average_cost) }] : []),
-                  ...(canSeeHistory ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => <RowButton label={`Stock history for ${row.name}`} onClick={() => history.open(row)}>History</RowButton> }] : []),
+                  ...(canSeeHistory || canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => (
+                    <div className="flex justify-end gap-1.5">
+                      {canWrite ? <RowButton label={`Edit ${row.name}`} onClick={() => edit.open(row)}>Edit</RowButton> : null}
+                      {canAdjust && row.track_inventory && row.active ? <RowButton label={`Adjust stock for ${row.name}`} onClick={() => adjust.open(row)}>Adjust</RowButton> : null}
+                      {canSeeHistory ? <RowButton label={`Stock history for ${row.name}`} onClick={() => history.open(row)}>History</RowButton> : null}
+                      {canWrite ? <ToggleActive path={`/dashboard/products/${row.id}`} active={row.active} label={row.name} /> : null}
+                    </div>
+                  ) }] : []),
                 ]}
               />
             )}
@@ -147,6 +250,9 @@ export function Products() {
         </div>
       </Card>
       {history.row ? <ProductHistoryDialog product={history.row} onClose={history.close} /> : null}
+      {edit.row ? <ProductDialog product={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
+      {adjust.row ? <AdjustStockDialog product={adjust.row} onClose={adjust.close} /> : null}
+      {showCategories ? <CategoriesDialog onClose={() => setShowCategories(false)} /> : null}
     </>
   );
 }
@@ -154,9 +260,15 @@ export function Products() {
 export function Purchases() {
   const me = useDashboard();
   const detail = useRowDialog<string>();
+  const [adding, setAdding] = useState(false);
+  const canCreate = me.permissions.includes('purchasesCreate');
   return (
     <>
-      <PageHeader title="Stock-in" subtitle="Purchases from suppliers. New stock is recorded in the MIA app." />
+      <PageHeader
+        title="Stock-in"
+        subtitle={me.day.open ? 'Stock bought from suppliers.' : 'Start the day to record new stock.'}
+        action={canCreate && me.day.open ? <AddButton onClick={() => setAdding(true)}>New stock-in</AddButton> : undefined}
+      />
       <PagedTable<Row>
         client={api} path="/dashboard/purchases" queryKey="purchases" rowKey={rowId} empty="No purchases yet."
         columns={[
@@ -170,6 +282,7 @@ export function Purchases() {
         ]}
       />
       {detail.row ? <PurchaseDetailDialog purchaseId={detail.row} onClose={detail.close} /> : null}
+      {adding ? <StockInDialog onClose={() => setAdding(false)} /> : null}
     </>
   );
 }

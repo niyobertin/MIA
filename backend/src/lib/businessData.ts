@@ -63,8 +63,8 @@ export async function periodBounds(period: Period, timezone: string, custom?: Cu
 }
 
 const STOCK_SQL = `
-  SELECT p.id, p.name, p.sku, p.unit, p.selling_price, p.average_cost, p.reorder_level, p.track_inventory, p.active,
-         c.name AS category,
+  SELECT p.id, p.name, p.sku, p.barcode, p.unit, p.selling_price, p.average_cost, p.reorder_level, p.track_inventory, p.active,
+         p.category_id, p.preferred_supplier_id, c.name AS category,
          COALESCE(SUM(CASE WHEN m.type IN ('opening','purchase','return_in','adjustment_in') THEN m.quantity
                            WHEN m.id IS NULL THEN 0 ELSE -m.quantity END), 0) AS stock
   FROM products p
@@ -80,6 +80,9 @@ export async function stockLevels(businessId: string) {
     id: row.id as string,
     name: row.name as string,
     sku: row.sku as string | null,
+    barcode: row.barcode as string | null,
+    category_id: row.category_id as string | null,
+    preferred_supplier_id: row.preferred_supplier_id as string | null,
     unit: row.unit as string,
     category: row.category as string | null,
     selling_price: num(row.selling_price),

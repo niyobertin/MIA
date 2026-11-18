@@ -129,7 +129,10 @@ These are pure functions, heavily tested.
 
 ## Web Dashboard and Super Admin
 
-- `mia-dashboard/` reads only from the API: `/dashboard/*` for businesses and `/platform/*` for MIA staff at the `/platform` URL. Writes such as sales stay in the mobile app.
+- `mia-dashboard/` talks only to the API: `/dashboard/*` for businesses and `/platform/*` for MIA staff at the `/platform` URL.
+- The dashboard can also write (products, customers, suppliers, expenses, sales, stock-in, payments, start/close day, waiter tabs). Those writes go through `backend/src/books/*`, which mirrors the phone services and writes the same rows; phones receive them on the next pull. Keep the two in step: when phone book logic changes, change `backend/src/books` too.
+- The API runs the app's own maths from `backend/src/shared/*`, generated from `src/services/financial/calculations.ts`, `src/services/books/stockDelta.ts` and `waiterAllocation.ts` by `npm run shared:sync`. Never edit the copies; `__tests__/sharedCopies.test.ts` fails when they drift.
+- Run `npm --prefix backend run test:books` after changing `backend/src/books` (throwaway `mia_books_test` database).
 - Role rules live in `backend/src/lib/rbac.ts`. The backend enforces them; the dashboard only hides what a role cannot use.
 - Platform admins are a separate table with separate tokens and required two-factor sign-in: after the password, a 6-digit code is emailed through nodemailer (`backend/src/lib/mailer.ts`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`). Without SMTP outside production the code is printed in the API log. Roles: SUPER_ADMIN, SUPPORT, FINANCE. A business user can never become one.
 - Sync writes mirror the phone's own role guards (`applyLimitedRoleRules` in `backend/src/routes/sync.ts`). When you change who can do something on the phone, change the server rule too, or offline work gets rejected. Phones must still pull `average_cost`, because cost of goods sold is worked out offline.

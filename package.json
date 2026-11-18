@@ -19,7 +19,8 @@
     "backend:dev": "npm --prefix backend run dev",
     "backend:init-db": "npm --prefix backend run db:init",
     "backend:migrate": "npm --prefix backend run db:migrate",
-    "backend:seed": "npm --prefix backend run db:seed"
+    "backend:seed": "npm --prefix backend run db:seed",
+    "shared:sync": "node scripts/sync-shared.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",

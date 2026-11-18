@@ -2,7 +2,8 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Button, DataTable, Dialog, PagedTable, QueryBoundary, Skeleton } from '../ui/kit';
+import { Badge, Button, DataTable, Dialog, PagedTable, QueryBoundary, ReasonAction, Skeleton } from '../ui/kit';
+import { LIST_KEYS } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 
 type Row = Record<string, any>;
@@ -70,6 +71,13 @@ export function SaleDetailDialog({ saleId, onClose }: { saleId: string; onClose:
               <span className="text-base font-extrabold text-slate-900">Total {money(sale.total_amount)}</span>
             </div>
             {sale.notes ? <p className="mt-3 text-xs text-slate-500">Note: {sale.notes}</p> : null}
+            {me.permissions.includes('salesVoid') && !sale.voided && me.day.open ? (
+              <div className="mt-4 flex justify-end">
+                <ReasonAction label="Void sale" tone="danger" title={`Void ${sale.reference_number ?? 'this sale'}`}
+                  description="Stock goes back on the shelf and the money is taken out of today's books. Only sales from the open day can be voided."
+                  invalidate={LIST_KEYS} run={(reason) => api.post(`/dashboard/sales/${saleId}/void`, { reason })} onDone={onClose} />
+              </div>
+            ) : null}
           </>
         )}
       </QueryBoundary>
@@ -106,6 +114,13 @@ export function PurchaseDetailDialog({ purchaseId, onClose }: { purchaseId: stri
               ]}
             />
             <div className="mt-4 flex justify-end border-t border-slate-100 pt-3 text-base font-extrabold text-slate-900">Total {money(purchase.total_amount)}</div>
+            {me.permissions.includes('purchasesVoid') && purchase.status !== 'cancelled' && me.day.open ? (
+              <div className="mt-4 flex justify-end">
+                <ReasonAction label="Cancel stock-in" tone="danger" title={`Cancel ${purchase.reference_number ?? 'this stock-in'}`}
+                  description="The stock is taken back off the shelf. Only stock-in from the open day can be cancelled, and only if it has not been sold."
+                  invalidate={LIST_KEYS} run={(reason) => api.post(`/dashboard/purchases/${purchaseId}/void`, { reason })} onDone={onClose} />
+              </div>
+            ) : null}
           </>
         )}
       </QueryBoundary>

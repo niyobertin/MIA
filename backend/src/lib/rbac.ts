@@ -20,6 +20,20 @@ export const DASHBOARD_PERMISSIONS = {
   staffManage: ['OWNER'],
   audit: ['OWNER'],
   supportAccess: ['OWNER'],
+  productsWrite: ['OWNER', 'MANAGER'],
+  customersWrite: ['OWNER', 'MANAGER', 'CASHIER'],
+  suppliers: ['OWNER', 'MANAGER', 'CASHIER'],
+  suppliersWrite: ['OWNER', 'MANAGER', 'CASHIER'],
+  expensesWrite: ['OWNER', 'MANAGER', 'CASHIER'],
+  salesCreate: ['OWNER', 'MANAGER', 'CASHIER'],
+  salesVoid: ['OWNER', 'MANAGER'],
+  purchasesCreate: ['OWNER', 'MANAGER', 'CASHIER'],
+  purchasesVoid: ['OWNER', 'MANAGER'],
+  paymentsWrite: ['OWNER', 'MANAGER', 'CASHIER'],
+  stockAdjust: ['OWNER', 'MANAGER'],
+  dayOpen: ['OWNER', 'MANAGER', 'CASHIER'],
+  dayClose: ['OWNER', 'MANAGER'],
+  waiterTabs: ['OWNER', 'MANAGER'],
 } as const satisfies Record<string, readonly BusinessRole[]>;
 
 export type DashboardPermission = keyof typeof DASHBOARD_PERMISSIONS;

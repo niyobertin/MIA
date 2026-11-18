@@ -2,7 +2,7 @@
   "name": "mia-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "MIA API — Express + TypeORM + PostgreSQL",
+  "description": "MIA API \u2014 Express + TypeORM + PostgreSQL",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -20,7 +20,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "user:reset-pin": "tsx src/scripts/resetPin.ts",
     "test:rbac": "bash scripts/test-rbac.sh",
-    "platform:seed": "tsx src/scripts/seedPlatformAdmins.ts"
+    "platform:seed": "tsx src/scripts/seedPlatformAdmins.ts",
+    "test:books": "bash scripts/test-books.sh"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

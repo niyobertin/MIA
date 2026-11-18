@@ -2,7 +2,9 @@ import { Router, type NextFunction, type Response } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../data-source';
 import { Announcement, Business, BusinessPlatformState, SupportAccessGrant, User } from '../entities';
-import { AuthedRequest, requireActiveUser, requireAuth } from '../middleware/auth';
+import { requireActiveUser, requireAuth } from '../middleware/auth';
+import { bizId, can, type DashboardRequest } from './dashboardShared';
+import { dashboardWriteRouter } from './dashboardWrite';
 import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
 import {
   dashboardPermissionsFor,
@@ -16,7 +18,6 @@ export const dashboardRouter = Router();
 const q = (sql: string, params: unknown[] = []) => AppDataSource.query(sql, params) as Promise<any[]>;
 const num = (value: unknown) => Number(value ?? 0);
 
-type DashboardRequest = AuthedRequest & { business?: Business; flags?: Record<string, boolean> };
 
 const pageSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -24,22 +25,8 @@ const pageSchema = z.object({
   q: z.string().trim().max(100).optional(),
 });
 
-function can(permission: DashboardPermission) {
-  return (req: DashboardRequest, res: Response, next: NextFunction) => {
-    if (!hasDashboardPermission(req.member?.role, permission)) {
-      res.status(403).json({ error: 'Your role does not have access to this', code: 'FORBIDDEN' });
-      return;
-    }
-    next();
-  };
-}
-
 function searchTerm(value: string | undefined) {
   return value ? `%${value.replace(/[%_\\]/g, '\\$&')}%` : null;
-}
-
-function bizId(req: DashboardRequest) {
-  return req.member!.business_id as string;
 }
 
 dashboardRouter.use(requireAuth, requireActiveUser, async (req: DashboardRequest, res, next) => {
@@ -73,9 +60,15 @@ dashboardRouter.get('/me', async (req: DashboardRequest, res) => {
     .andWhere('(a.business_id IS NULL OR a.business_id = :business)', { business: member.business_id })
     .orderBy('a.starts_at', 'DESC')
     .getMany();
+  const [openDay] = await q(
+    `SELECT id, session_number, opened_at, to_char(business_date, 'YYYY-MM-DD') AS business_date
+     FROM daily_closings WHERE business_id = $1 AND status = 'open' ORDER BY opened_at DESC NULLS LAST LIMIT 1`,
+    [member.business_id],
+  );
   res.json({
     user: { id: member.id, name: member.name, email: member.email, role: member.role },
     business: req.business,
+    day: openDay ? { open: true, id: openDay.id, session_number: num(openDay.session_number), opened_at: openDay.opened_at, business_date: openDay.business_date } : { open: false },
     permissions: dashboardPermissionsFor(member.role),
     flags: req.flags,
     announcements: announcements.map(({ id, title, body, severity }) => ({ id, title, body, severity })),
@@ -181,9 +174,9 @@ dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest
   const page = pageSchema.parse(req.query);
   const params = [bizId(req), searchTerm(page.q)];
   const where = `c.business_id = $1 AND ($2::text IS NULL OR c.name ILIKE $2 OR c.phone ILIKE $2)`;
-  const [rows, [count]] = await Promise.all([
+  const [rows, [count], [summary]] = await Promise.all([
     q(
-      `SELECT c.id, c.name, c.phone, c.email, c.credit_limit, c.active,
+      `SELECT c.id, c.name, c.phone, c.email, c.address, c.credit_limit, c.active,
               COALESCE((SELECT SUM(s.total_amount - s.paid_amount) FROM sales s
                         WHERE s.customer_id = c.id AND s.business_id = c.business_id
                           AND s.voided = false AND s.total_amount > s.paid_amount), 0) AS balance
@@ -191,19 +184,36 @@ dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM customers c WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) FILTER (WHERE c.active) AS active_count,
+              COALESCE(SUM(d.owed), 0) AS owed, COUNT(*) FILTER (WHERE d.owed > 0) AS debtors
+       FROM customers c
+       LEFT JOIN LATERAL (SELECT COALESCE(SUM(s.total_amount - s.paid_amount), 0) AS owed FROM sales s
+                          WHERE s.customer_id = c.id AND s.business_id = c.business_id AND s.voided = false AND s.total_amount > s.paid_amount) d ON true
+       WHERE c.business_id = $1`,
+      [params[0]],
+    ),
   ]);
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, credit_limit: num(row.credit_limit), balance: num(row.balance) })),
+    summary: { active: num(summary.active_count), owed: num(summary.owed), debtors: num(summary.debtors) },
   });
 });
 
 dashboardRouter.get('/products', can('products'), async (req: DashboardRequest, res) => {
   const showCosts = hasDashboardPermission(req.member!.role, 'costs');
   const rows = await stockLevels(bizId(req));
+  const tracked = rows.filter((row) => row.active && row.track_inventory);
   res.json({
     total: rows.length,
     rows: rows.map(({ average_cost, ...row }) => (showCosts ? { ...row, average_cost } : row)),
+    summary: {
+      active: rows.filter((row) => row.active).length,
+      low_stock: tracked.filter((row) => row.stock <= row.reorder_level).length,
+      out_of_stock: tracked.filter((row) => row.stock <= 0).length,
+      ...(showCosts ? { stock_value: tracked.reduce((sum, row) => sum + Math.max(row.stock, 0) * row.average_cost, 0) } : {}),
+    },
   });
 });
 
@@ -304,15 +314,29 @@ dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest
 dashboardRouter.get('/expenses', can('expenses'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
   const params = [bizId(req)];
-  const [rows, [count]] = await Promise.all([
+  const [rows, [count], [summary]] = await Promise.all([
     q(
-      `SELECT id, category, amount, payment_method, description, expense_date FROM expenses
-       WHERE business_id = $1 ORDER BY expense_date DESC LIMIT $2 OFFSET $3`,
+      `SELECT e.id, e.category, e.amount, e.payment_method, e.description, e.reference_number, e.expense_date, e.created_at,
+              (e.session_id IS NOT NULL AND e.session_id = (SELECT id FROM daily_closings WHERE business_id = $1 AND status = 'open' LIMIT 1)) AS editable,
+              u.name AS recorded_by
+       FROM expenses e LEFT JOIN users u ON u.id = e.created_by
+       WHERE e.business_id = $1 ORDER BY e.expense_date DESC, e.created_at DESC LIMIT $2 OFFSET $3`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM expenses WHERE business_id = $1`, params),
+    q(
+      `SELECT COALESCE(SUM(amount) FILTER (WHERE session_id = (SELECT id FROM daily_closings WHERE business_id = $1 AND status = 'open' LIMIT 1)), 0) AS today,
+              COALESCE(SUM(amount) FILTER (WHERE expense_date >= date_trunc('month', now())), 0) AS month,
+              COALESCE(SUM(amount), 0) AS all_time
+       FROM expenses WHERE business_id = $1`,
+      params,
+    ),
   ]);
-  res.json({ total: num(count.total), rows: rows.map((row) => ({ ...row, amount: num(row.amount) })) });
+  res.json({
+    total: num(count.total),
+    rows: rows.map((row) => ({ ...row, amount: num(row.amount) })),
+    summary: { today: num(summary.today), month: num(summary.month), all_time: num(summary.all_time) },
+  });
 });
 
 dashboardRouter.get('/reports/closings', can('reports'), async (req: DashboardRequest, res) => {
@@ -412,3 +436,5 @@ dashboardRouter.use((error: unknown, _req: DashboardRequest, res: Response, next
   console.error(error);
   res.status(500).json({ error: 'Could not load this data' });
 });
+
+dashboardRouter.use(dashboardWriteRouter);

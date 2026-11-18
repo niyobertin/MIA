@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
-import { BarChart3, ClipboardList, CreditCard, FileText, LayoutDashboard, PackageSearch, ReceiptText, Settings, ShieldCheck, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
+import { Link, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { BarChart3, Building2, CalendarClock, ClipboardList, CreditCard, FileText, HandPlatter, LayoutDashboard, PackageSearch, PlusCircle, ReceiptText, Settings, ShieldCheck, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
 import { signOut, type Session } from '../lib/auth';
 import { Shell, type NavGroup } from '../ui/Shell';
 import { Button, ErrorNotice, Skeleton } from '../ui/kit';
@@ -8,17 +8,25 @@ import { useMe, type Me } from './useMe';
 import { Overview } from './Overview';
 import { Customers, Expenses, Movements, Payments, Products, Purchases, Sales, StockReport } from './tables';
 import { Activity, BusinessSettings, Reports, Staff } from './manage';
+import { NewSale } from './pos';
+import { DayPage } from './day';
+import { Suppliers } from './suppliers';
+import { WaiterTabs } from './waiter';
 
 const NAV: (NavGroup['items'][number] & { group: string; permission: string; flag?: string })[] = [
   { group: 'Overview', to: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'overview', end: true },
   { group: 'Overview', to: '/reports', label: 'Business reports', icon: FileText, permission: 'reports' },
+  { group: 'Business', to: '/new-sale', label: 'New sale', icon: PlusCircle, permission: 'salesCreate' },
+  { group: 'Business', to: '/day', label: 'Day', icon: CalendarClock, permission: 'sales' },
   { group: 'Business', to: '/sales', label: 'Sales', icon: ShoppingCart, permission: 'sales' },
   { group: 'Business', to: '/unpaid', label: 'Unpaid sales', icon: ClipboardList, permission: 'sales' },
+  { group: 'Business', to: '/waiter-tabs', label: 'Waiter tabs', icon: HandPlatter, permission: 'waiterTabs' },
   { group: 'Business', to: '/payments', label: 'Payments', icon: CreditCard, permission: 'payments' },
   { group: 'Business', to: '/customers', label: 'Customers', icon: Users, permission: 'customers' },
   { group: 'Business', to: '/expenses', label: 'Expenses', icon: ReceiptText, permission: 'expenses' },
   { group: 'Inventory', to: '/products', label: 'Products', icon: PackageSearch, permission: 'products' },
   { group: 'Inventory', to: '/stock-in', label: 'Stock-in', icon: Truck, permission: 'purchases' },
+  { group: 'Inventory', to: '/suppliers', label: 'Suppliers', icon: Building2, permission: 'suppliers' },
   { group: 'Inventory', to: '/movements', label: 'Stock movements', icon: Warehouse, permission: 'movements' },
   { group: 'Inventory', to: '/stock-report', label: 'Stock report', icon: BarChart3, permission: 'stockReport', flag: 'stock_reports' },
   { group: 'Management', to: '/staff', label: 'Staff & roles', icon: Users, permission: 'staff' },
@@ -68,8 +76,15 @@ export default function BusinessApp({ session }: { session: Session }) {
     .map((label) => ({ label, items: items.filter((item) => item.group === label) }))
     .filter((group) => group.items.length > 0);
 
-  const banner = data.announcements.length > 0 ? (
+  const dayBanner = !data.day.open && (data.permissions.includes('salesCreate') || data.permissions.includes('dayOpen')) ? (
+    <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 sm:px-8">
+      <span><span className="font-semibold">The day is not open.</span> Start it before selling or recording money.</span>
+      <Link to="/day" className="rounded-lg bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700">Start the day</Link>
+    </div>
+  ) : null;
+  const banner = data.announcements.length > 0 || dayBanner ? (
     <div className="space-y-px">
+      {dayBanner}
       {data.announcements.map((a) => (
         <div key={a.id} role="status" className={`border-b px-4 py-2.5 text-sm sm:px-8 ${SEVERITY[a.severity]}`}>
           <span className="font-semibold">{a.title}: </span>{a.body}
@@ -89,6 +104,10 @@ export default function BusinessApp({ session }: { session: Session }) {
           <Route path="sales" element={<Sales />} />
           <Route path="unpaid" element={<Sales unpaidOnly />} />
         </Route>
+        <Route element={<Guard permission="salesCreate" />}><Route path="new-sale" element={<NewSale />} /></Route>
+        <Route element={<Guard permission="sales" />}><Route path="day" element={<DayPage />} /></Route>
+        <Route element={<Guard permission="waiterTabs" />}><Route path="waiter-tabs" element={<WaiterTabs />} /></Route>
+        <Route element={<Guard permission="suppliers" />}><Route path="suppliers" element={<Suppliers />} /></Route>
         <Route element={<Guard permission="payments" />}><Route path="payments" element={<Payments />} /></Route>
         <Route element={<Guard permission="customers" />}><Route path="customers" element={<Customers />} /></Route>
         <Route element={<Guard permission="expenses" />}><Route path="expenses" element={<Expenses />} /></Route>

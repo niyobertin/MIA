@@ -4,6 +4,7 @@ import { api } from '../lib/auth';
 export type Me = {
   user: { id: string; name: string; email: string; role: string };
   business: { id: string; name: string; currency: string; country: string; timezone: string; business_code: string };
+  day: { open: true; id: string; session_number: number; opened_at: string | null; business_date: string } | { open: false };
   permissions: string[];
   flags: Record<string, boolean>;
   announcements: { id: string; title: string; body: string; severity: 'info' | 'warning' | 'critical' }[];
@@ -13,6 +14,6 @@ export function useMe(userId: string) {
   return useQuery({
     queryKey: ['dashboard-me', userId],
     queryFn: async () => (await api.get<Me>('/dashboard/me')).data,
-    staleTime: 60000,
+    staleTime: 30000,
   });
 }
