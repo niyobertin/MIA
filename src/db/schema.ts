@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 14;
+export const DATABASE_VERSION = 16;
 
 export const CREATE_APP_SETTINGS_SQL = `
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   business_id TEXT REFERENCES businesses(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
+  email TEXT UNIQUE,
   phone TEXT,
   password_hash TEXT NOT NULL,
   role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF', 'SUPER_ADMIN')),
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS waiter_tabs (
   session_id TEXT NOT NULL,
   waiter_user_id TEXT NOT NULL REFERENCES users(id),
   customer_id TEXT REFERENCES customers(id),
+  client_label TEXT,
   sale_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'partial', 'paid', 'debt', 'cancelled')),
   paid_amount INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +121,7 @@ CREATE TABLE IF NOT EXISTS waiter_tab_items (
   selling_price INTEGER NOT NULL,
   unit_cost INTEGER NOT NULL DEFAULT 0,
   quantity_outstanding INTEGER NOT NULL,
+  paid_amount INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

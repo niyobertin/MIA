@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 
 const createBusinessSchema = z.object({
-  name: z.string().min(2, 'Business name must be at least 2 characters'),
+  name: z.string().min(2, 'validation.businessNameMin'),
   currency: z.string(),
   country: z.string(),
   timezone: z.string(),

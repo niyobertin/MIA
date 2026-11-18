@@ -32,7 +32,7 @@ const expenseSchema = z.object({
   amount: z.number().int().positive('Amount must be positive'),
   paymentMethod: z.enum(EXPENSE_PAYMENT_METHODS.map((p) => p.value) as [string, ...string[]]),
   description: z.string().optional(),
-  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
+  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.invalidDate'),
 });
 
 type ExpenseForm = z.infer<typeof expenseSchema>;

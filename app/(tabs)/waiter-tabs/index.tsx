@@ -82,6 +82,11 @@ export default function WaiterTabsScreen() {
                   <Text style={styles.waiterName} numberOfLines={1}>
                     {item.waiter_name ?? '—'}
                   </Text>
+                  {item.client_label ? (
+                    <Text style={styles.client} numberOfLines={1}>
+                      {t('waiterTabs.client')}: {item.client_label}
+                    </Text>
+                  ) : null}
                   <Text style={styles.cardDate}>{formatRecordDateTime(item.created_at)}</Text>
                   {item.notes ? (
                     <Text style={styles.cardNotes} numberOfLines={1}>
@@ -150,7 +155,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     gap: spacing.sm,
   },
-  waiterName: { fontSize: 14, fontWeight: '700', color: colors.ink },
+  waiterName: { fontSize: 16, fontWeight: '700', color: colors.ink },
+  client: { fontSize: 15, fontWeight: '600', color: colors.primary, marginTop: 2 },
   cardDate: { fontSize: 11, color: colors.muted, marginTop: 2 },
   cardNotes: { fontSize: 11, color: colors.body, fontStyle: 'italic', marginTop: 2 },
   cardBottom: {

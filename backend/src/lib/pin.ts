@@ -1,3 +1,5 @@
+import { randomInt } from 'crypto';
+
 export const PIN_LENGTH = 4;
 export const PIN_ATTEMPTS_BEFORE_LOCK = 5;
 
@@ -36,4 +38,11 @@ export function pinLockDurationMs(failedAttempts: number): number {
   }
   const level = failedAttempts / PIN_ATTEMPTS_BEFORE_LOCK - 1;
   return Math.min(BASE_LOCK_MS * 2 ** level, MAX_LOCK_MS);
+}
+
+export function generateTemporaryPin(): string {
+  for (;;) {
+    const pin = String(randomInt(0, 10 ** PIN_LENGTH)).padStart(PIN_LENGTH, '0');
+    if (!isWeakPin(pin)) return pin;
+  }
 }

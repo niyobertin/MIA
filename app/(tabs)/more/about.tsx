@@ -2,6 +2,8 @@ import { FormScrollView } from '@/components';
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 import { APP_VERSION, APP_NAME } from '@/constants';
 import { useTranslation } from 'react-i18next';
 import { Logo } from '@/components';
@@ -31,7 +33,7 @@ export default function AboutScreen() {
           <FeatureItem icon="add-circle" title={t('features.purchases')} desc={t('features.purchasesDesc')} />
           <FeatureItem icon="cash" title={t('features.expenses')} desc={t('features.expensesDesc')} />
           <FeatureItem icon="analytics" title={t('features.reports')} desc={t('features.reportsDesc')} />
-          <FeatureItem icon="wifi-off" title={t('features.offline')} desc={t('features.offlineDesc')} />
+          <FeatureItem icon="cloud-offline" title={t('features.offline')} desc={t('features.offlineDesc')} />
         </View>
       </View>
 
@@ -53,7 +55,7 @@ export default function AboutScreen() {
   );
 }
 
-function FeatureItem({ icon, title, desc }: { icon: string; title: string; desc: string }) {
+function FeatureItem({ icon, title, desc }: { icon: IoniconName; title: string; desc: string }) {
   return (
     <View style={styles.featureItem}>
       <View style={styles.featureIcon}>
@@ -67,7 +69,7 @@ function FeatureItem({ icon, title, desc }: { icon: string; title: string; desc:
   );
 }
 
-function LinkItem({ icon, title, onPress }: { icon: string; title: string; onPress: () => void }) {
+function LinkItem({ icon, title, onPress }: { icon: IoniconName; title: string; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.linkItem} onPress={onPress}>
       <View style={styles.linkIcon}>

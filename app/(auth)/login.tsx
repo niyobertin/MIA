@@ -4,7 +4,6 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 import { colors, radius } from '@/theme/tokens';
@@ -16,8 +15,7 @@ import {
   RememberedAccount,
 } from '@/services/auth/pinAuth';
 import type { PinInputHandle } from '@/components/PinInput';
-
-const emailSchema = z.string().trim().email();
+import { formatPhone, parseIdentifier } from '@/utils/identity';
 
 export default function LoginScreen() {
   const { t } = useTranslation();
@@ -26,11 +24,11 @@ export default function LoginScreen() {
   const setError = useAuthStore((s) => s.setError);
 
   const [remembered, setRemembered] = React.useState<RememberedAccount | null>(null);
-  const [email, setEmail] = React.useState('');
+  const [identifier, setIdentifier] = React.useState('');
   const [pin, setPin] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [usePassword, setUsePassword] = React.useState(false);
-  const [emailError, setEmailError] = React.useState<string | undefined>();
+  const [identifierError, setIdentifierError] = React.useState<string | undefined>();
   const [secretError, setSecretError] = React.useState<string | undefined>();
   const [submitting, setSubmitting] = React.useState(false);
   const pinRef = React.useRef<PinInputHandle>(null);
@@ -40,7 +38,7 @@ export default function LoginScreen() {
     void getRememberedAccount().then((account) => {
       if (account) {
         setRemembered(account);
-        setEmail(account.email);
+        setIdentifier(account.identifier);
       }
     });
   }, [setError]);
@@ -48,19 +46,19 @@ export default function LoginScreen() {
   const submit = async (pinOverride?: string) => {
     if (submitting) return;
     const secret = usePassword ? password : pinOverride ?? pin;
-    const emailValid = emailSchema.safeParse(email).success;
-    setEmailError(emailValid ? undefined : t('auth.invalidEmail'));
+    const identifierValid = parseIdentifier(identifier) !== null;
+    setIdentifierError(identifierValid ? undefined : t('auth.invalidIdentifier'));
     if (usePassword) {
       setSecretError(secret.length >= 4 ? undefined : t('auth.passwordRequired'));
-      if (!emailValid || secret.length < 4) return;
+      if (!identifierValid || secret.length < 4) return;
     } else {
       setSecretError(isPinFormat(secret) ? undefined : t('auth.pinRequired'));
-      if (!emailValid || !isPinFormat(secret)) return;
+      if (!identifierValid || !isPinFormat(secret)) return;
     }
 
     setSubmitting(true);
     try {
-      await login(email.trim(), secret);
+      await login(identifier.trim(), secret);
       if (!useAuthStore.getState().isAuthenticated) {
         setPin('');
         setPassword('');
@@ -74,7 +72,7 @@ export default function LoginScreen() {
   const switchAccount = () => {
     void forgetRememberedAccount();
     setRemembered(null);
-    setEmail('');
+    setIdentifier('');
     setPin('');
     setError(null);
   };
@@ -104,11 +102,13 @@ export default function LoginScreen() {
           {remembered ? (
             <View style={styles.accountCard}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{getInitials(remembered.name || remembered.email)}</Text>
+                <Text style={styles.avatarText}>{getInitials(remembered.name || remembered.identifier)}</Text>
               </View>
               <Text style={styles.welcomeBack}>{t('auth.welcomeBack')}</Text>
               <Text style={styles.accountName} numberOfLines={1}>{remembered.name}</Text>
-              <Text style={styles.accountEmail} numberOfLines={1}>{remembered.email}</Text>
+              <Text style={styles.accountEmail} numberOfLines={1}>
+                {remembered.identifier.includes('@') ? remembered.identifier : formatPhone(remembered.identifier)}
+              </Text>
               <TouchableOpacity onPress={switchAccount} hitSlop={8} accessibilityRole="button">
                 <Text style={styles.link}>{t('auth.notYou')}</Text>
               </TouchableOpacity>
@@ -118,23 +118,24 @@ export default function LoginScreen() {
               <Text style={styles.title}>{t('auth.signIn')}</Text>
               <Text style={styles.subtitle}>{t('auth.onlineLoginHint')}</Text>
               <Input
-                label={t('auth.email')}
-                placeholder="name@example.com"
+                label={t('auth.emailOrPhone')}
+                placeholder={t('auth.emailOrPhonePlaceholder')}
                 placeholderTextColor={colors.faint}
-                value={email}
+                value={identifier}
                 onChangeText={(value) => {
-                  setEmail(value);
-                  setEmailError(undefined);
+                  setIdentifier(value);
+                  setIdentifierError(undefined);
                   if (error) setError(null);
                 }}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                autoComplete="email"
+                autoComplete="username"
                 autoCorrect={false}
                 returnKeyType="next"
                 onSubmitEditing={() => pinRef.current?.focus()}
-                error={emailError}
+                error={identifierError}
                 required
+                testID="login-identifier"
               />
             </>
           )}

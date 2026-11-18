@@ -180,6 +180,7 @@ async function main() {
   const syncBase = { business_id: ids.bizA, created_by: ids.cashierA, device_id: device, sync_status: 'synced', created_at: cashierAt, updated_at: cashierAt };
   const cashierPush = (table: string, body: Record<string, unknown>) => call('POST', `/sync/${table}`, { token: tokens.cashierA, body });
   const newId = () => randomUUID();
+  const ownerPushUser = (body: Record<string, unknown>) => call('POST', '/sync/users', { token: tokens.ownerA, body });
   const cashierSaleId = newId();
   for (const [table, body] of [
     ['customers', { id: newId(), business_id: ids.bizA, name: 'New customer', active: true, created_at: cashierAt, updated_at: cashierAt }],
@@ -566,6 +567,63 @@ async function main() {
   check('PIN reset ends old sessions', res.status === 401, res.status);
   res = await login('manager-a@example.test', '8264');
   check('new PIN gives a working session', res.status === 200 && (await call('GET', '/dashboard/me', { token: res.body.token })).status === 200, res.status);
+
+  // Sign up and sign in with a phone number
+  res = await call('POST', '/auth/register', { body: { name: 'Phone Only', phone: '0788 555 111', password: '7391' } });
+  check('sign up with only a phone number works', res.status === 201 && res.body.user.phone === '+250788555111' && res.body.user.email === null, res.body);
+  const phoneUserId = res.body?.user?.id as string;
+  res = await call('POST', '/auth/register', { body: { name: 'Copy Cat', phone: '+250 788-555-111', password: '7391' } });
+  check('the same phone number cannot sign up twice', res.status === 409 && res.body.code === 'PHONE_TAKEN', res.body);
+  res = await call('POST', '/auth/register', { body: { name: 'Nobody', password: '7391' } });
+  check('sign up needs an email or a phone', res.status === 400 && res.body.code === 'IDENTIFIER_REQUIRED', res.body);
+  res = await call('POST', '/auth/register', { body: { name: 'Both Ways', email: 'both@example.test', phone: '0788555222', password: '7391' } });
+  check('sign up with email and phone works', res.status === 201, res.body);
+  res = await call('POST', '/auth/login', { body: { identifier: '0788555111', password: '7391' } });
+  check('sign in with a local phone number works', res.status === 200 && Boolean(res.body.token), res.status);
+  res = await call('POST', '/auth/login', { body: { identifier: '+250788555222', password: '7391' } });
+  check('sign in with phone works for an account that also has email', res.status === 200, res.status);
+  res = await call('POST', '/auth/login', { body: { identifier: 'both@example.test', password: '7391' } });
+  check('sign in with email still works', res.status === 200, res.status);
+  res = await call('POST', '/auth/login', { body: { identifier: '0788555111', password: '1593' } });
+  check('wrong PIN with a phone number is refused', res.status === 401, res.status);
+  res = await call('POST', '/auth/login', { body: { identifier: 'not valid', password: '7391' } });
+  check('a made-up sign-in name is refused', res.status === 400 && res.body.code === 'IDENTIFIER_INVALID', res.body);
+
+  // Owners can add a team member with only a phone number
+  res = await ownerPushUser({ id: newId(), business_id: ids.bizA, name: 'Waiter Phone', phone: '0788 555 333', role: 'STAFF', password_hash: pinHash, active: true });
+  check('owner can add a team member with only a phone', res.status === 200, res.text.slice(0, 200));
+  res = await ownerPushUser({ id: newId(), business_id: ids.bizA, name: 'Clash', phone: '0788555111', role: 'STAFF', password_hash: pinHash, active: true });
+  check('a team member cannot take someone else\'s phone number', res.status === 409, res.status);
+  res = await ownerPushUser({ id: newId(), business_id: ids.bizA, name: 'No Contact', role: 'STAFF', password_hash: pinHash, active: true });
+  check('a team member needs an email or phone', res.status === 400, res.status);
+
+  // PIN help through MIA support
+  res = await call('POST', '/auth/pin-help', { body: { identifier: '0788555111', name: 'Phone Only' } });
+  check('anyone can ask MIA support for PIN help', res.status === 200, res.status);
+  res = await call('POST', '/auth/pin-help', { body: { identifier: '0788999999', name: 'Stranger' } });
+  check('PIN help for an unknown number looks the same', res.status === 200, res.status);
+  res = await call('GET', '/platform/pin-help', { token: financeToken });
+  check('finance cannot see PIN help requests', res.status === 403, res.status);
+  res = await call('GET', '/platform/pin-help', { token: supportToken });
+  const helpRows = (res.body?.rows ?? []) as any[];
+  const helpRow = helpRows.find((row) => row.user_id === phoneUserId);
+  const strangerRow = helpRows.find((row) => row.identifier === '+250788999999');
+  check('support sees open PIN help requests', res.status === 200 && Boolean(helpRow) && helpRow.contact_phone === '+250788555111', res.body);
+  res = await call('POST', `/platform/pin-help/${strangerRow?.id}/temporary-pin`, { token: supportToken, body: reason });
+  check('no temporary PIN without a matching account', res.status === 400, res.status);
+  res = await call('POST', `/platform/pin-help/${helpRow?.id}/temporary-pin`, { token: supportToken, body: reason });
+  const tempPin = res.body?.pin as string;
+  check('support can give a temporary PIN', res.status === 200 && /^\d{4}$/.test(tempPin ?? ''), res.body);
+  res = await call('POST', '/auth/login', { body: { identifier: '0788555111', password: '7391' } });
+  check('the old PIN stops working after a temporary PIN', res.status === 401, res.status);
+  res = await call('POST', '/auth/login', { body: { identifier: '0788555111', password: tempPin } });
+  check('temporary PIN signs in and asks for a new PIN', res.status === 200 && res.body.pin_setup_required === true, res.body?.pin_setup_required);
+  res = await call('POST', `/platform/pin-help/${helpRow?.id}/temporary-pin`, { token: supportToken, body: reason });
+  check('a resolved request cannot issue another PIN', res.status === 404, res.status);
+  res = await call('POST', `/platform/pin-help/${strangerRow?.id}/close`, { token: supportToken, body: reason });
+  check('support can close a request', res.status === 200, res.status);
+  const pinAudit = await repo(PlatformAuditLog).findOneBy({ action: 'user.temporary_pin_issued', target_id: phoneUserId });
+  check('temporary PINs are in the audit log', Boolean(pinAudit));
 
   server.close();
   await AppDataSource.destroy();

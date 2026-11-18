@@ -1,13 +1,13 @@
 import i18n from '@/i18n';
 import { ApiError } from '@/lib/api';
 import { settingsStorage } from '@/repositories/settings';
-import { PinValidationError } from '@/repositories/users/users';
+import { DuplicateAccountError, MissingIdentifierError, PinValidationError } from '@/repositories/users/users';
 import { pinLockDurationMs, PIN_ATTEMPTS_BEFORE_LOCK } from '@/utils/pin';
 
 const LAST_ACCOUNT_KEY = 'mia.auth.last_account';
 const LOCK_KEY_PREFIX = 'mia.auth.lock.';
 
-export type RememberedAccount = { email: string; name: string };
+export type RememberedAccount = { identifier: string; name: string };
 
 type LocalLock = { fails: number; lockedUntil: number | null };
 
@@ -22,8 +22,9 @@ export async function getRememberedAccount(): Promise<RememberedAccount | null> 
   try {
     const raw = await settingsStorage.getItem(LAST_ACCOUNT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as RememberedAccount;
-    return parsed?.email ? parsed : null;
+    const parsed = JSON.parse(raw) as Partial<RememberedAccount> & { email?: string };
+    const identifier = parsed?.identifier ?? parsed?.email;
+    return identifier ? { identifier, name: parsed.name ?? '' } : null;
   } catch {
     return null;
   }
@@ -45,9 +46,13 @@ export async function forgetRememberedAccount(): Promise<void> {
   }
 }
 
-async function readLock(email: string): Promise<LocalLock> {
+function lockKey(identifier: string): string {
+  return LOCK_KEY_PREFIX + identifier.replace(/[\s()-]/g, '').toLowerCase();
+}
+
+async function readLock(identifier: string): Promise<LocalLock> {
   try {
-    const raw = await settingsStorage.getItem(LOCK_KEY_PREFIX + email);
+    const raw = await settingsStorage.getItem(lockKey(identifier));
     return raw ? (JSON.parse(raw) as LocalLock) : { fails: 0, lockedUntil: null };
   } catch {
     return { fails: 0, lockedUntil: null };
@@ -71,7 +76,7 @@ export async function recordLocalFailure(email: string): Promise<string> {
   const fails = lock.fails + 1;
   const lockMs = pinLockDurationMs(fails);
   const lockedUntil = lockMs > 0 ? Date.now() + lockMs : null;
-  await settingsStorage.setItem(LOCK_KEY_PREFIX + email, JSON.stringify({ fails, lockedUntil }));
+  await settingsStorage.setItem(lockKey(email), JSON.stringify({ fails, lockedUntil }));
   if (lockedUntil) return lockedMessage(lockedUntil);
   return i18n.t('auth.attemptsLeft', {
     count: PIN_ATTEMPTS_BEFORE_LOCK - (fails % PIN_ATTEMPTS_BEFORE_LOCK),
@@ -80,7 +85,7 @@ export async function recordLocalFailure(email: string): Promise<string> {
 
 export async function clearLocalFailures(email: string): Promise<void> {
   try {
-    await settingsStorage.removeItem(LOCK_KEY_PREFIX + email);
+    await settingsStorage.removeItem(lockKey(email));
   } catch {
     return;
   }
@@ -103,11 +108,28 @@ export function describePinError(error: unknown): string | null {
     if (error.status === 429) {
       return lockedMessage(Date.now() + 15 * 60 * 1000);
     }
+    if (error.code === 'PHONE_AMBIGUOUS') return i18n.t('auth.phoneAmbiguous');
+    if (error.code === 'IDENTIFIER_INVALID') return i18n.t('auth.invalidIdentifier');
     const lower = error.message.toLowerCase();
     if (lower.includes('too easy')) return i18n.t('auth.pinTooEasy');
     if (lower.includes('4 digits')) return i18n.t('auth.pinInvalid');
   }
   return null;
+}
+
+export function describeAccountError(error: unknown): string | null {
+  if (error instanceof DuplicateAccountError) {
+    return i18n.t(error.field === 'email' ? 'auth.emailTaken' : 'auth.phoneTaken');
+  }
+  if (error instanceof MissingIdentifierError) return i18n.t(`auth.${error.problem}`);
+  if (error instanceof ApiError) {
+    if (error.code === 'EMAIL_TAKEN') return i18n.t('auth.emailTaken');
+    if (error.code === 'PHONE_TAKEN') return i18n.t('auth.phoneTaken');
+    if (error.code === 'EMAIL_INVALID') return i18n.t('auth.invalidEmail');
+    if (error.code === 'PHONE_INVALID') return i18n.t('auth.invalidPhone');
+    if (error.code === 'IDENTIFIER_REQUIRED') return i18n.t('auth.identifierRequired');
+  }
+  return describePinError(error);
 }
 
 export function describePinResetError(error: unknown): string {

@@ -9,7 +9,7 @@ import { Button } from '@/components/Button';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { getInitials } from '@/utils/formatters';
-import { canManageBusiness, canManageUsers, canCloseDay, canSeeProfit } from '@/utils/permissions';
+import { canManageBusiness, canManageUsers, canSeeProfit } from '@/utils/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { APP_VERSION } from '@/constants';
@@ -29,17 +29,9 @@ export default function MoreScreen() {
 
   const operations = [
     { title: t('navigation.reports'), icon: 'analytics', screen: '/reports' },
-    { title: t('navigation.stockReport'), icon: 'cube', screen: '/stock-report' },
-    { title: t('navigation.stockMovements'), icon: 'swap-horizontal', screen: '/stock-movements' },
     { title: t('customers.customers'), icon: 'people', screen: '/customers' },
     { title: t('suppliers.suppliers'), icon: 'business', screen: '/suppliers' },
-    ...(canCloseDay(user?.role)
-      ? [{ title: t('cash.cashDay'), icon: 'sunny', screen: '/closing' }]
-      : []),
-    { title: t('navigation.stockIn'), icon: 'cube', screen: '/stock-in' },
-    { title: t('navigation.expense'), icon: 'cash', screen: '/expense' },
-    { title: t('navigation.customerPayment'), icon: 'person', screen: '/payment/customer-payment' },
-    { title: t('navigation.supplierPayment'), icon: 'business', screen: '/payment/supplier-payment' },
+    { title: t('navigation.stockMovements'), icon: 'swap-horizontal', screen: '/stock-movements' },
   ];
 
   const menuItems = [
@@ -50,7 +42,6 @@ export default function MoreScreen() {
       ? [{ title: t('settings.userManagement'), icon: 'people', screen: 'user-management' }]
       : []),
     { title: t('auth.changePin'), icon: 'keypad', screen: 'change-pin' },
-    { title: t('settings.language'), icon: 'globe', screen: 'language' },
     { title: t('settings.sync'), icon: 'sync', screen: 'sync' },
     ...(canSeeProfit(user?.role)
       ? [{ title: t('settings.auditLog'), icon: 'list', screen: 'audit' }]

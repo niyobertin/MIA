@@ -3,6 +3,7 @@ import { generateUUID } from '@/utils/uuid';
 import { hashPassword } from '@/utils/password';
 import { getPinProblem } from '@/utils/pin';
 import { User, UserRole } from '@/types';
+import { Identifier, normalizeEmail, normalizePhone, parseIdentifier } from '@/utils/identity';
 
 export class PinValidationError extends Error {
   constructor(public problem: 'pinInvalid' | 'pinTooEasy') {
@@ -20,7 +21,7 @@ type UserRow = {
   id: string;
   business_id: string | null;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   password_hash: string;
   role: UserRole | null;
@@ -29,9 +30,34 @@ type UserRow = {
   updated_at: string;
 };
 
+export class DuplicateAccountError extends Error {
+  constructor(public field: 'email' | 'phone') {
+    super(field === 'email' ? 'An account with this email already exists' : 'An account with this phone number already exists');
+    this.name = 'DuplicateAccountError';
+  }
+}
+
+export class MissingIdentifierError extends Error {
+  constructor(public problem: 'identifierRequired' | 'invalidEmail' | 'invalidPhone') {
+    super(problem);
+    this.name = 'MissingIdentifierError';
+  }
+}
+
+function normalizeContact(email: string | null | undefined, phone: string | null | undefined) {
+  const rawEmail = (email ?? '').trim();
+  const rawPhone = (phone ?? '').trim();
+  const normalizedEmail = rawEmail ? normalizeEmail(rawEmail) : null;
+  const normalizedPhone = rawPhone ? normalizePhone(rawPhone) : null;
+  if (rawEmail && !normalizedEmail) throw new MissingIdentifierError('invalidEmail');
+  if (rawPhone && !normalizedPhone) throw new MissingIdentifierError('invalidPhone');
+  if (!normalizedEmail && !normalizedPhone) throw new MissingIdentifierError('identifierRequired');
+  return { email: normalizedEmail, phone: normalizedPhone };
+}
+
 export type CreateAccountInput = {
   name: string;
-  email: string;
+  email?: string | null;
   password: string;
   phone?: string | null;
   /** When set (cloud auth user id), use this id instead of generating one. */
@@ -40,7 +66,7 @@ export type CreateAccountInput = {
 
 export type CreateBusinessUserInput = {
   name: string;
-  email: string;
+  email?: string | null;
   password: string;
   phone?: string | null;
   role: UserRole;
@@ -86,36 +112,54 @@ export class UserRepository {
     return row ? mapUser(row) : null;
   }
 
-  async findCredentialByEmail(email: string): Promise<{ user: User; password_hash: string } | null> {
+  private async findRowsByIdentifier(identifier: Identifier, businessId?: string): Promise<UserRow[]> {
     const db = await this.getDb();
-    const row = await db.getFirstAsync<UserRow>(
-      `SELECT * FROM ${this.tableName} WHERE lower(email) = lower(?)`,
-      [email.trim()]
+    const scope = businessId ? ' AND business_id = ?' : '';
+    if (identifier.kind === 'email') {
+      const params: string[] = businessId ? [identifier.value, businessId] : [identifier.value];
+      return db.getAllAsync<UserRow>(
+        `SELECT * FROM ${this.tableName} WHERE lower(email) = lower(?)${scope}`,
+        params
+      );
+    }
+    const all = await db.getAllAsync<UserRow>(
+      `SELECT * FROM ${this.tableName} WHERE phone IS NOT NULL${scope}`,
+      businessId ? [businessId] : []
     );
-    if (!row) return null;
-    return { user: mapUser(row), password_hash: row.password_hash };
+    return all.filter((row) => normalizePhone(row.phone) === identifier.value);
+  }
+
+  async findCredentialByIdentifier(raw: string): Promise<{ user: User; password_hash: string } | null> {
+    const identifier = parseIdentifier(raw);
+    if (!identifier) return null;
+    const rows = await this.findRowsByIdentifier(identifier);
+    if (rows.length !== 1) return null;
+    return { user: mapUser(rows[0]), password_hash: rows[0].password_hash };
+  }
+
+  async findByIdentifier(raw: string, businessId?: string): Promise<User | null> {
+    const identifier = parseIdentifier(raw);
+    if (!identifier) return null;
+    const rows = await this.findRowsByIdentifier(identifier, businessId);
+    return rows[0] ? mapUser(rows[0]) : null;
   }
 
   async findByEmail(email: string, businessId?: string): Promise<User | null> {
-    const db = await this.getDb();
-    if (businessId) {
-      const row = await db.getFirstAsync<UserRow>(
-        `SELECT * FROM ${this.tableName} WHERE lower(email) = lower(?) AND business_id = ?`,
-        [email.trim(), businessId]
-      );
-      return row ? mapUser(row) : null;
-    }
-
-    const row = await db.getFirstAsync<UserRow>(
-      `SELECT * FROM ${this.tableName} WHERE lower(email) = lower(?)`,
-      [email.trim()]
-    );
-    return row ? mapUser(row) : null;
+    const value = normalizeEmail(email);
+    if (!value) return null;
+    const rows = await this.findRowsByIdentifier({ kind: 'email', value }, businessId);
+    return rows[0] ? mapUser(rows[0]) : null;
   }
 
-  async emailExists(email: string): Promise<boolean> {
-    const existing = await this.findByEmail(email);
-    return !!existing;
+  private async assertContactFree(email: string | null, phone: string | null, exceptId?: string): Promise<void> {
+    if (email) {
+      const rows = await this.findRowsByIdentifier({ kind: 'email', value: email });
+      if (rows.some((row) => row.id !== exceptId)) throw new DuplicateAccountError('email');
+    }
+    if (phone) {
+      const rows = await this.findRowsByIdentifier({ kind: 'phone', value: phone });
+      if (rows.some((row) => row.id !== exceptId)) throw new DuplicateAccountError('phone');
+    }
   }
 
   async findByRole(businessId: string, role: UserRole): Promise<User[]> {
@@ -150,21 +194,16 @@ export class UserRepository {
 
   async createAccount(input: CreateAccountInput): Promise<User> {
     const db = await this.getDb();
-    const normalizedEmail = input.email.trim().toLowerCase();
+    const { email: normalizedEmail, phone: normalizedPhone } = normalizeContact(input.email, input.phone);
     const name = input.name.trim();
 
     if (!name) {
       throw new Error('Enter your name.');
     }
-    if (!normalizedEmail.includes('@')) {
-      throw new Error('Enter a valid email address.');
-    }
     assertValidPin(input.password);
 
-    if (await this.emailExists(normalizedEmail)) {
-      if (!input.id) {
-        throw new Error('An account with this email already exists');
-      }
+    if (!input.id) {
+      await this.assertContactFree(normalizedEmail, normalizedPhone);
     }
 
     const id = input.id ?? generateUUID();
@@ -173,16 +212,19 @@ export class UserRepository {
 
     // Clear stale local row with same email but different id (device switched to cloud auth)
     if (input.id) {
-      await db.runAsync(
-        `DELETE FROM ${this.tableName} WHERE lower(email) = ? AND id != ? AND business_id IS NULL`,
-        [normalizedEmail, input.id]
-      );
-      const clash = await this.findByEmail(normalizedEmail);
-      if (clash && clash.id !== input.id) {
-        await db.runAsync(
-          `UPDATE ${this.tableName} SET email = ? WHERE id = ?`,
-          [`legacy+${clash.id.slice(0, 8)}@local.mia`, clash.id]
-        );
+      for (const identifier of [
+        normalizedEmail ? { kind: 'email' as const, value: normalizedEmail } : null,
+        normalizedPhone ? { kind: 'phone' as const, value: normalizedPhone } : null,
+      ]) {
+        if (!identifier) continue;
+        const clashes = (await this.findRowsByIdentifier(identifier)).filter((row) => row.id !== input.id);
+        for (const clash of clashes) {
+          if (!clash.business_id) {
+            await db.runAsync(`DELETE FROM ${this.tableName} WHERE id = ?`, [clash.id]);
+          } else if (identifier.kind === 'email') {
+            await db.runAsync(`UPDATE ${this.tableName} SET email = NULL WHERE id = ?`, [clash.id]);
+          }
+        }
       }
     }
 
@@ -201,7 +243,7 @@ export class UserRepository {
           id,
           name,
           normalizedEmail,
-          input.phone?.trim() || null,
+          normalizedPhone,
           password_hash,
           now,
           now,
@@ -227,7 +269,7 @@ export class UserRepository {
             id,
             name,
             normalizedEmail,
-            input.phone?.trim() || null,
+            normalizedPhone,
             password_hash,
             now,
             now,
@@ -248,11 +290,8 @@ export class UserRepository {
     options: { allowNonPin?: boolean } = {}
   ): Promise<User> {
     const db = await this.getDb();
-    const normalizedEmail = input.email.trim().toLowerCase();
-
-    if (await this.emailExists(normalizedEmail)) {
-      throw new Error('An account with this email already exists');
-    }
+    const { email: normalizedEmail, phone: normalizedPhone } = normalizeContact(input.email, input.phone);
+    await this.assertContactFree(normalizedEmail, normalizedPhone);
 
     if (!options.allowNonPin) assertValidPin(input.password);
     const id = generateUUID();
@@ -268,7 +307,7 @@ export class UserRepository {
         input.businessId,
         input.name.trim(),
         normalizedEmail,
-        input.phone?.trim() || null,
+        normalizedPhone,
         password_hash,
         input.role,
         now,
@@ -311,7 +350,7 @@ export class UserRepository {
     businessId: string,
     input: {
       name: string;
-      email: string;
+      email?: string | null;
       phone?: string | null;
       role: UserRole;
       password?: string;
@@ -324,11 +363,8 @@ export class UserRepository {
       throw new Error('OWNER_LOCKED');
     }
 
-    const normalizedEmail = input.email.trim().toLowerCase();
-    const emailOwner = await this.findByEmail(normalizedEmail);
-    if (emailOwner && emailOwner.id !== id) {
-      throw new Error('An account with this email already exists');
-    }
+    const { email: normalizedEmail, phone: normalizedPhone } = normalizeContact(input.email, input.phone);
+    await this.assertContactFree(normalizedEmail, normalizedPhone, id);
 
     const db = await this.getDb();
     const now = new Date().toISOString();
@@ -343,7 +379,7 @@ export class UserRepository {
         [
           input.name.trim(),
           normalizedEmail,
-          input.phone?.trim() || null,
+          normalizedPhone,
           existing.role === 'OWNER' ? 'OWNER' : input.role,
           input.active === false ? 0 : 1,
           password_hash,
@@ -360,7 +396,7 @@ export class UserRepository {
         [
           input.name.trim(),
           normalizedEmail,
-          input.phone?.trim() || null,
+          normalizedPhone,
           existing.role === 'OWNER' ? 'OWNER' : input.role,
           input.active === false ? 0 : 1,
           now,
@@ -394,6 +430,15 @@ export class UserRepository {
       [id, businessId]
     );
     return result.changes > 0;
+  }
+
+  async getPasswordHash(id: string): Promise<string | null> {
+    const db = await this.getDb();
+    const row = await db.getFirstAsync<{ password_hash: string }>(
+      `SELECT password_hash FROM ${this.tableName} WHERE id = ?`,
+      [id]
+    );
+    return row?.password_hash ?? null;
   }
 
   async setPin(id: string, pin: string): Promise<void> {

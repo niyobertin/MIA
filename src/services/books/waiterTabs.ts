@@ -22,6 +22,51 @@ import { settleCustomerAccount } from './settle';
 import { audit } from './audit';
 import { guardError } from './guards';
 import { canCloseDay } from '@/utils/permissions';
+import { allocateItemPayment, rebalanceItemPayments, AllocItem } from './waiterAllocation';
+
+function toAllocItems(items: WaiterTabItem[]): AllocItem[] {
+  return items.map((i) => ({
+    id: i.id,
+    value: i.quantity_outstanding * i.selling_price,
+    paid: i.paid_amount ?? 0,
+    issuedAt: i.created_at,
+  }));
+}
+
+async function persistItemPaid(
+  businessId: string,
+  items: WaiterTabItem[],
+  next: Record<string, number>
+): Promise<void> {
+  for (const item of items) {
+    const paid = next[item.id] ?? 0;
+    if (paid === (item.paid_amount ?? 0)) continue;
+    const updated = await waiterTabItemRepository.update(item.id, businessId, { paid_amount: paid });
+    if (updated) {
+      await queueSync(
+        'waiter_tab_items',
+        item.id,
+        'update',
+        updated as unknown as Record<string, unknown>,
+        businessId
+      );
+    }
+  }
+}
+
+/** Keep line paid amounts in step with the tab's paid total after quantities change. */
+async function rebalanceTabItems(businessId: string, tabId: string): Promise<void> {
+  const tab = await waiterTabRepository.findById(tabId, businessId);
+  if (!tab) return;
+  const items = await waiterTabItemRepository.findByTab(tabId, businessId);
+  await persistItemPaid(businessId, items, rebalanceItemPayments(toAllocItems(items), tab.paid_amount ?? 0));
+}
+
+export type IssueWaiterResult = WaiterTab & { joinedExisting: boolean };
+
+function sameLabel(a: string | null | undefined, b: string | null | undefined): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+}
 
 export type WaiterIssueLine = {
   productId: string;
@@ -102,6 +147,7 @@ async function issueLines(input: {
       selling_price: sellingPrice,
       unit_cost: product.average_cost ?? 0,
       quantity_outstanding: line.quantity,
+      paid_amount: 0,
     });
     await queueSync(
       'waiter_tab_items',
@@ -141,11 +187,32 @@ export async function issueWaiterTab(input: {
   role: UserRole | null;
   lines: WaiterIssueLine[];
   notes?: string | null;
-}): Promise<WaiterTab> {
+  clientLabel?: string | null;
+}): Promise<IssueWaiterResult> {
   if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
   if (!input.lines.length) throw guardError('ITEMS_REQUIRED');
 
   const session = await requireOpenSession(input.businessId);
+
+  const openTabs = await waiterTabRepository.findOpenForWaiter(
+    input.businessId,
+    session.id,
+    input.waiterUserId
+  );
+  const label = input.clientLabel?.trim() || null;
+  const existing = label ? openTabs.find((t) => sameLabel(t.client_label, label)) : openTabs[0];
+  if (existing) {
+    const joined = await addItemsToWaiterTab({
+      businessId: input.businessId,
+      tabId: existing.id,
+      userId: input.userId,
+      deviceId: input.deviceId,
+      role: input.role,
+      lines: input.lines,
+    });
+    return { ...joined, joinedExisting: true };
+  }
+
   const customerId = await ensureWaiterCustomer(input.businessId, input.waiterUserId);
 
   const tab = await waiterTabRepository.create({
@@ -154,6 +221,7 @@ export async function issueWaiterTab(input: {
     session_id: session.id,
     waiter_user_id: input.waiterUserId,
     customer_id: customerId,
+    client_label: input.clientLabel?.trim().slice(0, 60) || null,
     sale_id: null,
     status: 'draft',
     paid_amount: 0,
@@ -187,11 +255,12 @@ export async function issueWaiterTab(input: {
     action: 'waiter.issue',
     entity: 'waiter_tab',
     entityId: tab.id,
-    after: { waiter_user_id: input.waiterUserId, lines: input.lines.length },
+    after: { waiter_user_id: input.waiterUserId, client_label: input.clientLabel?.trim() || null, lines: input.lines.length },
     deviceId: input.deviceId,
   });
 
-  return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId)) ?? tab;
+  const created = (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId)) ?? tab;
+  return { ...created, joinedExisting: false };
 }
 
 /** Add more items to an open draft tab. */
@@ -474,6 +543,7 @@ export async function adjustWaiterTabItemQuantity(input: {
     after: { item_id: item.id, delta: input.delta },
     deviceId: input.deviceId,
   });
+  await rebalanceTabItems(input.businessId, tab.id);
 
   return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId))!;
 }
@@ -723,6 +793,7 @@ export async function returnWaiterTabItems(input: {
     reason: input.reason,
     deviceId: input.deviceId,
   });
+  await rebalanceTabItems(input.businessId, tab.id);
 
   return (await waiterTabRepository.findByIdWithMeta(tab.id, input.businessId))!;
 }
@@ -765,7 +836,9 @@ async function createSaleFromTab(input: {
     voided: false,
     payment_status: input.paid ? 'paid' : 'credit',
     sale_date: today,
-    notes: `Waiter tab ${input.tab.id.slice(0, 8)}`,
+    notes: input.tab.client_label
+      ? `Waiter tab ${input.tab.id.slice(0, 8)} · ${input.tab.client_label}`
+      : `Waiter tab ${input.tab.id.slice(0, 8)}`,
     created_by: input.userId,
     device_id: input.deviceId,
     sync_status: 'pending',
@@ -849,6 +922,8 @@ export async function recordWaiterPayment(input: {
   amount: number;
   paymentMethod: 'cash' | 'mobile_money' | 'bank';
   notes?: string | null;
+  /** Lines the customer says they are paying for; they are marked paid first. */
+  itemIds?: string[];
 }): Promise<WaiterTab> {
   if (!canCloseDay(input.role)) throw guardError('NO_PERMISSION');
   if (!Number.isInteger(input.amount) || input.amount < 1) throw guardError('INVALID_PRICE');
@@ -921,6 +996,10 @@ export async function recordWaiterPayment(input: {
 
   const newPaid = (tab.paid_amount ?? 0) + input.amount;
   const remaining = tabDue(items, newPaid);
+
+  const settled = rebalanceItemPayments(toAllocItems(items), tab.paid_amount ?? 0);
+  const allocItems = toAllocItems(items).map((i) => ({ ...i, paid: settled[i.id] ?? 0 }));
+  await persistItemPaid(input.businessId, items, allocateItemPayment(allocItems, input.amount, input.itemIds ?? []));
   const sale = await saleRepository.findById(saleId, input.businessId);
   const fullyPaid = remaining <= 0 || sale?.payment_status === 'paid';
 

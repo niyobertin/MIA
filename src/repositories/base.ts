@@ -1,3 +1,4 @@
+import type { SQLiteBindValue } from 'expo-sqlite';
 import { getDatabase } from '@/db/database';
 import { generateUUID } from '@/utils/uuid';
 import { SyncStatus } from '@/types';
@@ -31,9 +32,10 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return row as T;
   }
 
-  protected toBindValue(value: unknown): unknown {
+  protected toBindValue(value: unknown): SQLiteBindValue {
     if (typeof value === 'boolean') return value ? 1 : 0;
-    return value;
+    if (value === undefined) return null;
+    return value as SQLiteBindValue;
   }
 
   async findById(id: string, businessId: string): Promise<T | null> {
@@ -50,11 +52,11 @@ export abstract class BaseRepository<T extends BaseEntity> {
     const { limit = 100, offset = 0, orderBy = 'created_at', orderDirection = 'DESC', where = {} } = options;
     
     let query = `SELECT * FROM ${this.tableName} WHERE business_id = ?`;
-    const params: unknown[] = [businessId];
+    const params: SQLiteBindValue[] = [businessId];
     
     for (const [key, value] of Object.entries(where)) {
       query += ` AND ${key} = ?`;
-      params.push(value);
+      params.push(this.toBindValue(value));
     }
     
     query += ` ORDER BY ${orderBy} ${orderDirection} LIMIT ? OFFSET ?`;
@@ -67,11 +69,11 @@ export abstract class BaseRepository<T extends BaseEntity> {
   async findOne(businessId: string, where: Record<string, unknown>): Promise<T | null> {
     const db = await this.getDb();
     let query = `SELECT * FROM ${this.tableName} WHERE business_id = ?`;
-    const params: unknown[] = [businessId];
+    const params: SQLiteBindValue[] = [businessId];
     
     for (const [key, value] of Object.entries(where)) {
       query += ` AND ${key} = ?`;
-      params.push(value);
+      params.push(this.toBindValue(value));
     }
     
     query += ` LIMIT 1`;
@@ -83,11 +85,11 @@ export abstract class BaseRepository<T extends BaseEntity> {
   async count(businessId: string, where: Record<string, unknown> = {}): Promise<number> {
     const db = await this.getDb();
     let query = `SELECT COUNT(*) as count FROM ${this.tableName} WHERE business_id = ?`;
-    const params: unknown[] = [businessId];
+    const params: SQLiteBindValue[] = [businessId];
     
     for (const [key, value] of Object.entries(where)) {
       query += ` AND ${key} = ?`;
-      params.push(value);
+      params.push(this.toBindValue(value));
     }
     
     const row = await db.getFirstAsync<{ count: number }>(query, params);
@@ -102,7 +104,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     const reserved = ['id', 'business_id', 'created_at', 'updated_at'];
     const columns = ['id', 'business_id', ...this.columns.filter(c => !reserved.includes(c)), 'created_at', 'updated_at'];
     const placeholders = columns.map(() => '?').join(', ');
-    const values = [
+    const values: SQLiteBindValue[] = [
       id,
       entity.business_id,
       ...this.columns
@@ -127,7 +129,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     const now = new Date().toISOString();
     
     const setClause = Object.keys(updates).map(key => `${key} = ?`).join(', ');
-    const values = [...Object.values(updates).map(v => this.toBindValue(v)), now, id, businessId];
+    const values: SQLiteBindValue[] = [...Object.values(updates).map(v => this.toBindValue(v)), now, id, businessId];
     
     await db.runAsync(
       `UPDATE ${this.tableName} SET ${setClause}, updated_at = ? WHERE id = ? AND business_id = ?`,
@@ -156,16 +158,20 @@ export abstract class BaseRepository<T extends BaseEntity> {
   }
 
   async markAsSynced(id: string, businessId: string): Promise<void> {
-    await this.update(id, businessId, { sync_status: 'synced', updated_at: new Date().toISOString() });
+    await this.update(id, businessId, { sync_status: 'synced' } as Partial<Omit<T, 'id' | 'business_id' | 'created_at'>>);
   }
 
   async markAsFailed(id: string, businessId: string, errorMessage: string): Promise<void> {
-    await this.update(id, businessId, { sync_status: 'failed', updated_at: new Date().toISOString() });
+    await this.update(id, businessId, { sync_status: 'failed' } as Partial<Omit<T, 'id' | 'business_id' | 'created_at'>>);
   }
 
-  async executeInTransaction<T>(callback: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+  async executeInTransaction<R>(callback: (db: SQLite.SQLiteDatabase) => Promise<R>): Promise<R> {
     const db = await this.getDb();
-    return db.withTransactionAsync(callback);
+    let result: R | undefined;
+    await db.withTransactionAsync(async () => {
+      result = await callback(db);
+    });
+    return result as R;
   }
 }
 

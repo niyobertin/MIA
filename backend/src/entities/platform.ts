@@ -258,3 +258,41 @@ export class Announcement {
   @Column({ type: 'timestamptz' })
   created_at!: Date;
 }
+
+@Entity('pin_help_requests')
+export class PinHelpRequest {
+  @PrimaryColumn('uuid')
+  id!: string;
+
+  @Column({ type: 'text' })
+  identifier!: string;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  user_id!: string | null;
+
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'text', nullable: true })
+  contact_phone!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  message!: string | null;
+
+  @Index()
+  @Column({ type: 'text', default: 'open' })
+  status!: 'open' | 'resolved' | 'rejected';
+
+  @Column({ type: 'uuid', nullable: true })
+  resolved_by!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  resolution_note!: string | null;
+
+  @Column({ type: 'timestamptz' })
+  created_at!: Date;
+
+  @Column({ type: 'timestamptz' })
+  updated_at!: Date;
+}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import type { TextStyle } from 'react-native';
 import { colors, radius } from '@/theme/tokens';
 
 interface ButtonProps {
@@ -46,6 +47,9 @@ export const Button: React.FC<ButtonProps> = ({
     style,
   ];
 
+  const variantTextStyle = styles[`text${capitalize(variant)}` as keyof typeof styles] as TextStyle;
+  const sizeTextStyle = styles[`text${capitalize(size)}` as keyof typeof styles] as TextStyle;
+
   return (
     <TouchableOpacity
       style={baseStyles}
@@ -63,19 +67,11 @@ export const Button: React.FC<ButtonProps> = ({
           {children != null ? (
             React.Children.map(children, (child) => (
               typeof child === 'string' || typeof child === 'number' ? (
-                <Text style={[
-                  styles.text,
-                  styles[`text${variant.charAt(0).toUpperCase() + variant.slice(1)}`],
-                  styles[`text${size.charAt(0).toUpperCase() + size.slice(1)}`],
-                ]}>{child}</Text>
+                <Text style={[styles.text, variantTextStyle, sizeTextStyle]}>{child}</Text>
               ) : child
             ))
           ) : (
-            <Text style={[
-              styles.text,
-              styles[`text${variant.charAt(0).toUpperCase() + variant.slice(1)}`],
-              styles[`text${size.charAt(0).toUpperCase() + size.slice(1)}`],
-            ]}>
+            <Text style={[styles.text, variantTextStyle, sizeTextStyle]}>
               {title}
             </Text>
           )}
@@ -85,6 +81,10 @@ export const Button: React.FC<ButtonProps> = ({
     </TouchableOpacity>
   );
 };
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 const styles = StyleSheet.create({
   base: {

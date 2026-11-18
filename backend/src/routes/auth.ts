@@ -1,9 +1,8 @@
 import { randomInt, randomUUID } from 'crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { ILike } from 'typeorm';
 import { AppDataSource } from '../data-source';
-import { Business, PinResetCode, User } from '../entities';
+import { Business, PinHelpRequest, PinResetCode, User } from '../entities';
 import {
   hashPassword,
   issueTokenPair,
@@ -16,6 +15,14 @@ import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { isBusinessSuspended, SUSPENDED_RESPONSE } from '../lib/businessState';
 import { sendMail } from '../lib/mailer';
 import { getPinProblem, isPinFormat, pinLockDurationMs, PIN_ATTEMPTS_BEFORE_LOCK } from '../lib/pin';
+import {
+  findUserByIdentifier,
+  findUsersByPhone,
+  identifierFromBody,
+  normalizeEmail,
+  normalizePhone,
+  parseIdentifier,
+} from '../lib/identity';
 
 export const authRouter = Router();
 
@@ -27,6 +34,10 @@ const lookupLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 30 });
 const refreshLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 60 });
 const pinResetLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 10, key: emailAndIpKey });
 const pinResetIpLimiter = rateLimit({ windowMs: FIFTEEN_MINUTES, max: 30 });
+const pinHelpLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5 });
+
+const INVALID_CREDENTIALS = { error: 'Wrong email, phone number or PIN', code: 'INVALID_CREDENTIALS' };
+const IDENTIFIER_INVALID = { error: 'Enter a valid email address or phone number', code: 'IDENTIFIER_INVALID' };
 
 const RESET_CODE_TTL_MS = FIFTEEN_MINUTES;
 const RESET_CODE_RESEND_MS = 60 * 1000;
@@ -43,14 +54,13 @@ const pinSchema = z.string().superRefine((value, ctx) => {
 });
 
 const registerSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email(),
+  name: z.string().trim().min(2),
+  email: z.string().trim().optional().nullable(),
   password: pinSchema,
-  phone: z.string().optional().nullable(),
+  phone: z.string().trim().optional().nullable(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
   password: z.string().min(4).max(200),
 });
 
@@ -59,12 +69,13 @@ const changePinSchema = z.object({
   pin: pinSchema,
 });
 
-const forgotPinSchema = z.object({
-  email: z.string().email(),
+const pinHelpSchema = z.object({
+  name: z.string().trim().min(2).max(100),
+  contact_phone: z.string().trim().max(30).optional().nullable(),
+  message: z.string().trim().max(500).optional().nullable(),
 });
 
 const resetPinSchema = z.object({
-  email: z.string().email(),
   code: z.string().regex(/^\d{6}$/, 'The code must be 6 digits'),
   pin: pinSchema,
 });
@@ -102,8 +113,7 @@ async function checkSecret(user: User, secret: string): Promise<
       ok: false,
       status: 401,
       body: {
-        error: 'Invalid email or PIN',
-        code: 'INVALID_CREDENTIALS',
+        ...INVALID_CREDENTIALS,
         attempts_left: PIN_ATTEMPTS_BEFORE_LOCK - (attempts % PIN_ATTEMPTS_BEFORE_LOCK),
       },
     };
@@ -154,12 +164,30 @@ function tokensFor(user: User) {
 authRouter.post('/register', registerLimiter, async (req, res) => {
   try {
     const body = registerSchema.parse(req.body);
-    const email = body.email.trim().toLowerCase();
-    const users = AppDataSource.getRepository(User);
+    const rawEmail = body.email?.trim() ?? '';
+    const rawPhone = body.phone?.trim() ?? '';
+    const email = rawEmail ? normalizeEmail(rawEmail) : null;
+    const phone = rawPhone ? normalizePhone(rawPhone) : null;
+    if (rawEmail && !email) {
+      res.status(400).json({ error: 'Enter a valid email address', code: 'EMAIL_INVALID' });
+      return;
+    }
+    if (rawPhone && !phone) {
+      res.status(400).json({ error: 'Enter a valid phone number', code: 'PHONE_INVALID' });
+      return;
+    }
+    if (!email && !phone) {
+      res.status(400).json({ error: 'Enter an email address or a phone number', code: 'IDENTIFIER_REQUIRED' });
+      return;
+    }
 
-    const existing = await users.findOne({ where: { email: ILike(email) } });
-    if (existing) {
-      res.status(409).json({ error: 'An account with this email already exists' });
+    const users = AppDataSource.getRepository(User);
+    if (email && (await findUserByIdentifier({ kind: 'email', value: email })).user) {
+      res.status(409).json({ error: 'An account with this email already exists', code: 'EMAIL_TAKEN' });
+      return;
+    }
+    if (phone && (await findUsersByPhone(phone)).length > 0) {
+      res.status(409).json({ error: 'An account with this phone number already exists', code: 'PHONE_TAKEN' });
       return;
     }
 
@@ -169,7 +197,7 @@ authRouter.post('/register', registerLimiter, async (req, res) => {
       business_id: null,
       name: body.name.trim(),
       email,
-      phone: body.phone?.trim() || null,
+      phone,
       password_hash: await hashPassword(body.password),
       role: null,
       active: true,
@@ -196,13 +224,23 @@ authRouter.post('/register', registerLimiter, async (req, res) => {
 authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
   try {
     const body = loginSchema.parse(req.body);
-    const email = body.email.trim().toLowerCase();
-    const users = AppDataSource.getRepository(User);
+    const identifier = parseIdentifier(identifierFromBody(req.body));
+    if (!identifier) {
+      res.status(400).json(IDENTIFIER_INVALID);
+      return;
+    }
     const businesses = AppDataSource.getRepository(Business);
 
-    const user = await users.findOne({ where: { email: ILike(email) } });
+    const { user, ambiguous } = await findUserByIdentifier(identifier);
+    if (ambiguous) {
+      res.status(409).json({
+        error: 'More than one account uses this phone number. Sign in with your email, or ask MIA support for help.',
+        code: 'PHONE_AMBIGUOUS',
+      });
+      return;
+    }
     if (!user || !user.active) {
-      res.status(401).json({ error: 'Invalid email or PIN', code: 'INVALID_CREDENTIALS' });
+      res.status(401).json(INVALID_CREDENTIALS);
       return;
     }
 
@@ -237,9 +275,8 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
   }
 });
 
-export async function issuePinResetCode(email: string) {
-  const user = await AppDataSource.getRepository(User).findOne({ where: { email: ILike(email) } });
-  if (!user || !user.active) return;
+export async function issuePinResetCode(user: User) {
+  if (!user.active || !user.email) return;
 
   const codes = AppDataSource.getRepository(PinResetCode);
   const existing = await codes.findOne({ where: { user_id: user.id } });
@@ -271,28 +308,77 @@ export async function issuePinResetCode(email: string) {
 }
 
 authRouter.post('/forgot-pin', pinResetIpLimiter, pinResetLimiter, async (req, res) => {
-  try {
-    const body = forgotPinSchema.parse(req.body);
-    res.json({ ok: true });
-    issuePinResetCode(body.email.trim().toLowerCase()).catch((error) => {
+  const identifier = parseIdentifier(identifierFromBody(req.body));
+  if (!identifier) {
+    res.status(400).json(IDENTIFIER_INVALID);
+    return;
+  }
+  res.json({ ok: true });
+  findUserByIdentifier(identifier)
+    .then(({ user }) => (user ? issuePinResetCode(user) : undefined))
+    .catch((error) => {
       console.error('Could not send PIN reset email', error);
     });
+});
+
+authRouter.post('/pin-help', pinHelpLimiter, async (req, res) => {
+  try {
+    const body = pinHelpSchema.parse(req.body);
+    const identifier = parseIdentifier(identifierFromBody(req.body));
+    if (!identifier) {
+      res.status(400).json(IDENTIFIER_INVALID);
+      return;
+    }
+    const rawContact = body.contact_phone?.trim() ?? '';
+    const contactPhone = rawContact ? normalizePhone(rawContact) : identifier.kind === 'phone' ? identifier.value : null;
+    if (rawContact && !contactPhone) {
+      res.status(400).json({ error: 'Enter a valid phone number', code: 'PHONE_INVALID' });
+      return;
+    }
+
+    const { user } = await findUserByIdentifier(identifier);
+    const requests = AppDataSource.getRepository(PinHelpRequest);
+    const now = new Date();
+    const open = await requests.findOne({ where: { identifier: identifier.value, status: 'open' } });
+    if (open) {
+      await requests.update(open.id, {
+        name: body.name,
+        contact_phone: contactPhone,
+        message: body.message?.trim() || open.message,
+        user_id: user?.id ?? null,
+        updated_at: now,
+      });
+    } else {
+      await requests.insert({
+        id: randomUUID(),
+        identifier: identifier.value,
+        user_id: user?.id ?? null,
+        name: body.name,
+        contact_phone: contactPhone,
+        message: body.message?.trim() || null,
+        status: 'open',
+        resolved_by: null,
+        resolution_note: null,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+    res.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ error: 'Enter a valid email address' });
+      res.status(400).json({ error: error.issues[0]?.message ?? 'Invalid input' });
       return;
     }
     console.error(error);
-    res.status(500).json({ error: 'Could not start PIN reset' });
+    res.status(500).json({ error: 'Could not send your request' });
   }
 });
 
 authRouter.post('/reset-pin', pinResetIpLimiter, pinResetLimiter, async (req, res) => {
   try {
     const body = resetPinSchema.parse(req.body);
-    const user = await AppDataSource.getRepository(User).findOne({
-      where: { email: ILike(body.email.trim().toLowerCase()) },
-    });
+    const identifier = parseIdentifier(identifierFromBody(req.body));
+    const user = identifier ? (await findUserByIdentifier(identifier)).user : null;
     if (!user || !user.active) {
       await hashPassword(body.code);
       res.status(400).json(RESET_CODE_INVALID);

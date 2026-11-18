@@ -1,20 +1,12 @@
 import 'reflect-metadata';
-import { randomInt } from 'crypto';
 import dotenv from 'dotenv';
 import { ILike } from 'typeorm';
 import { initDatabase, AppDataSource } from '../data-source';
 import { User } from '../entities';
 import { hashPassword } from '../lib/auth';
-import { isWeakPin, PIN_LENGTH } from '../lib/pin';
+import { generateTemporaryPin } from '../lib/pin';
 
 dotenv.config();
-
-function temporaryPin(): string {
-  for (;;) {
-    const pin = String(randomInt(0, 10 ** PIN_LENGTH)).padStart(PIN_LENGTH, '0');
-    if (!isWeakPin(pin)) return pin;
-  }
-}
 
 async function main() {
   const email = process.argv[2]?.trim().toLowerCase();
@@ -35,7 +27,7 @@ async function main() {
     process.exit(1);
   }
 
-  const pin = temporaryPin();
+  const pin = generateTemporaryPin();
   await users.update(user.id, {
     password_hash: await hashPassword(pin),
     failed_login_attempts: 0,

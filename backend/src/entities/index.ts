@@ -30,5 +30,6 @@ export {
   SupportAccessGrant,
   DataRequest,
   Announcement,
+  PinHelpRequest,
 } from './platform';
 export type { PlatformRole } from './platform';

@@ -4,7 +4,7 @@ import axios, { type AxiosRequestConfig } from 'axios';
 export type SessionUser = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   role: string | null;
   business_id: string | null;
 };
@@ -97,18 +97,18 @@ function getLoginErrorMessage(error: unknown): string {
   if (status === 401 || status === 400) {
     const left = data?.attempts_left;
     if (typeof left === 'number' && left <= 2) {
-      return `Wrong email or PIN. ${left} ${left === 1 ? 'attempt' : 'attempts'} left before a temporary lock.`;
+      return `Wrong email, phone number or PIN. ${left} ${left === 1 ? 'attempt' : 'attempts'} left before a temporary lock.`;
     }
-    return 'Wrong email or PIN.';
+    return 'Wrong email, phone number or PIN.';
   }
   return 'Could not sign in. Please try again.';
 }
 
-export async function signIn(email: string, pin: string) {
+export async function signIn(identifier: string, pin: string) {
   let data: AuthResponse;
   try {
     const response = await axios.post<AuthResponse>(`${import.meta.env.VITE_API_URL}/auth/login`, {
-      email: email.trim(),
+      identifier: identifier.trim(),
       password: pin,
     });
     data = response.data;
@@ -129,17 +129,17 @@ function getResetErrorMessage(error: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
-export async function requestPinReset(email: string) {
+export async function requestPinReset(identifier: string) {
   try {
-    await axios.post(`${import.meta.env.VITE_API_URL}/auth/forgot-pin`, { email: email.trim() });
+    await axios.post(`${import.meta.env.VITE_API_URL}/auth/forgot-pin`, { identifier: identifier.trim() });
   } catch (error) {
     throw new Error(getResetErrorMessage(error));
   }
 }
 
-export async function resetPin(email: string, code: string, pin: string) {
+export async function resetPin(identifier: string, code: string, pin: string) {
   try {
-    await axios.post(`${import.meta.env.VITE_API_URL}/auth/reset-pin`, { email: email.trim(), code: code.trim(), pin });
+    await axios.post(`${import.meta.env.VITE_API_URL}/auth/reset-pin`, { identifier: identifier.trim(), code: code.trim(), pin });
   } catch (error) {
     throw new Error(getResetErrorMessage(error));
   }

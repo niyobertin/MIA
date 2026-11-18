@@ -2,6 +2,8 @@ import { FormScrollView } from '@/components';
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 import { useTranslation } from 'react-i18next';
 
 const FAQ = [
@@ -108,7 +110,7 @@ export default function HelpScreen() {
   );
 }
 
-function QuickActionButton({ icon, title, subtitle, onPress }: { icon: string; title: string; subtitle: string; onPress: () => void }) {
+function QuickActionButton({ icon, title, subtitle, onPress }: { icon: IoniconName; title: string; subtitle: string; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.quickActionButton} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.quickActionIcon}>
@@ -137,7 +139,7 @@ function FAQItem({ question, answer, expanded, onPress }: { question: string; an
   );
 }
 
-function GuideItem({ icon, title, desc, onPress }: { icon: string; title: string; desc: string; onPress: () => void }) {
+function GuideItem({ icon, title, desc, onPress }: { icon: IoniconName; title: string; desc: string; onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.guideItem} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.guideIcon}>

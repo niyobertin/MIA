@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/authStore';
 
 const joinBusinessSchema = z.object({
-  businessCode: z.string().min(6, 'Enter a valid business code'),
+  businessCode: z.string().min(6, 'validation.businessCodeInvalid'),
 });
 
 type JoinBusinessForm = z.infer<typeof joinBusinessSchema>;

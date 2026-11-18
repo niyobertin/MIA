@@ -66,11 +66,11 @@ export default function AdminDashboardScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md, paddingBottom: spacing.xl },
-  hero: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md, ...shadows.sm },
+  hero: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, marginBottom: spacing.md, ...shadows.card },
   heroTitle: { fontSize: 22, fontWeight: '800', color: colors.ink },
   heroSub: { fontSize: 14, color: colors.muted, marginTop: 2 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  card: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md, ...shadows.sm },
+  card: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md, ...shadows.card },
   cardTitle: { fontSize: 16, fontWeight: '700', color: colors.ink, marginBottom: spacing.sm },
   actionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: colors.borderSoft },
   actionText: { fontSize: 15, color: colors.body },

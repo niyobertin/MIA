@@ -48,9 +48,10 @@ export class User {
   @Column({ type: 'text' })
   name!: string;
 
-  @Column({ type: 'text', unique: true })
-  email!: string;
+  @Column({ type: 'text', unique: true, nullable: true })
+  email!: string | null;
 
+  @Index()
   @Column({ type: 'text', nullable: true })
   phone!: string | null;
 

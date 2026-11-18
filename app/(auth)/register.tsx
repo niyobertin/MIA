@@ -10,13 +10,15 @@ import { z } from 'zod';
 import { useTranslation } from 'react-i18next';
 import { TFunction } from 'i18next';
 import { useAuthStore } from '@/stores/authStore';
+import { colors } from '@/theme/tokens';
 import { getPinProblem } from '@/utils/pin';
+import { normalizeEmail, normalizePhone } from '@/utils/identity';
 
 function buildRegisterSchema(t: TFunction) {
   return z.object({
     name: z.string().trim().min(2, t('auth.nameRequired')),
-    email: z.string().trim().email(t('auth.invalidEmail')),
-    phone: z.string().optional(),
+    email: z.string().trim().refine((value) => !value || normalizeEmail(value) !== null, t('auth.invalidEmail')),
+    phone: z.string().trim().refine((value) => !value || normalizePhone(value) !== null, t('auth.invalidPhone')),
     password: z.string().superRefine((value, ctx) => {
       const problem = getPinProblem(value);
       if (problem) ctx.addIssue({ code: 'custom', message: t(`auth.${problem}`) });
@@ -25,6 +27,9 @@ function buildRegisterSchema(t: TFunction) {
   }).refine((data) => data.password === data.confirmPassword, {
     message: t('auth.pinMismatch'),
     path: ['confirmPassword'],
+  }).refine((data) => Boolean(data.email || data.phone), {
+    message: t('auth.identifierRequired'),
+    path: ['phone'],
   });
 }
 
@@ -37,7 +42,8 @@ export default function RegisterScreen() {
   const error = useAuthStore((s) => s.error);
   const clearError = useAuthStore((s) => s.setError);
   const registerSchema = React.useMemo(() => buildRegisterSchema(t), [t]);
-  const { control, handleSubmit, formState: { isSubmitting } } = useForm<RegisterForm>({
+  const [step, setStep] = React.useState<1 | 2>(1);
+  const { control, handleSubmit, trigger, getValues, setError, formState: { isSubmitting } } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
     defaultValues: { name: '', email: '', phone: '', password: '', confirmPassword: '' },
   });
@@ -46,11 +52,24 @@ export default function RegisterScreen() {
     clearError(null);
   }, [clearError]);
 
+  const goToPinStep = async () => {
+    const fieldsValid = await trigger(['name', 'phone', 'email']);
+    const { email, phone } = getValues();
+    if (!email.trim() && !phone.trim()) {
+      setError('phone', { message: t('auth.identifierRequired') });
+      return;
+    }
+    if (fieldsValid) {
+      clearError(null);
+      setStep(2);
+    }
+  };
+
   const onSubmit = async (data: RegisterForm) => {
     await registerUser({
       name: data.name,
-      email: data.email,
-      phone: data.phone,
+      email: data.email || undefined,
+      phone: data.phone || undefined,
       password: data.password,
     });
     const { user, isAuthenticated } = useAuthStore.getState();
@@ -63,21 +82,34 @@ export default function RegisterScreen() {
     <SafeAreaView style={styles.container}>
       <FormScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Link href="/(auth)" asChild>
-            <TouchableOpacity style={styles.backButton}>
+          {step === 2 ? (
+            <TouchableOpacity style={styles.backButton} onPress={() => setStep(1)} accessibilityRole="button" accessibilityLabel={t('common.back')}>
               <Ionicons name="chevron-back" size={28} color="#374151" />
             </TouchableOpacity>
-          </Link>
+          ) : (
+            <Link href="/(auth)" asChild>
+              <TouchableOpacity style={styles.backButton} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+                <Ionicons name="chevron-back" size={28} color="#374151" />
+              </TouchableOpacity>
+            </Link>
+          )}
         </View>
 
         <View style={styles.content}>
           <Logo size={88} style={styles.logo} />
-          <Text style={styles.title}>{t('auth.createAccount')}</Text>
-          <Text style={styles.subtitle}>{t('auth.registerDescription')}</Text>
+          <View style={styles.steps} accessibilityLabel={t('auth.stepOf', { step, total: 2 })}>
+            <View style={[styles.stepBar, styles.stepBarActive]} />
+            <View style={[styles.stepBar, step === 2 && styles.stepBarActive]} />
+          </View>
+          <Text style={styles.stepLabel}>{t('auth.stepOf', { step, total: 2 })}</Text>
+          <Text style={styles.title}>{step === 1 ? t('auth.createAccount') : t('auth.choosePinStepTitle')}</Text>
+          <Text style={styles.subtitle}>{step === 1 ? t('auth.registerDescription') : t('auth.choosePinStepSubtitle')}</Text>
 
           {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
           <View style={styles.form}>
+            {step === 1 ? (
+              <>
             <FormInput
               control={control}
               name="name"
@@ -87,24 +119,27 @@ export default function RegisterScreen() {
               autoComplete="name"
               required
             />
-            <FormInput
-              control={control}
-              name="email"
-              label={t('auth.email')}
-              placeholder={t('auth.email')}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoComplete="email"
-              required
-            />
+            <Text style={styles.contactHint}>{t('auth.contactHint')}</Text>
             <FormInput
               control={control}
               name="phone"
               label={t('auth.phone')}
-              placeholder={t('auth.phone')}
+              placeholder="0788 123 456"
               keyboardType="phone-pad"
               autoComplete="tel"
             />
+            <FormInput
+              control={control}
+              name="email"
+              label={t('auth.emailOptional')}
+              placeholder="name@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+            />
+              </>
+            ) : (
+              <>
             <FormPinInput
               control={control}
               name="password"
@@ -119,6 +154,8 @@ export default function RegisterScreen() {
               allowReveal={false}
               testID="register-pin-confirm"
             />
+              </>
+            )}
           </View>
 
           <Button
@@ -126,9 +163,9 @@ export default function RegisterScreen() {
             size="lg"
             fullWidth
             loading={isSubmitting}
-            onPress={() => handleSubmit(onSubmit)()}
+            onPress={() => (step === 1 ? void goToPinStep() : handleSubmit(onSubmit)())}
           >
-            {t('auth.createAccount')}
+            {step === 1 ? t('common.next') : t('auth.createAccount')}
           </Button>
 
           <View style={styles.divider}>
@@ -149,6 +186,32 @@ export default function RegisterScreen() {
 }
 
 const styles = StyleSheet.create({
+  steps: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  stepBar: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#e5e7eb',
+  },
+  stepBarActive: {
+    backgroundColor: colors.primary,
+  },
+  stepLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 8,
+  },
+  contactHint: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#4b5563',
+    marginBottom: 12,
+  },
   container: {
     flex: 1,
     backgroundColor: '#fff',

@@ -10,6 +10,7 @@ import {
   Business,
   BusinessPlatformState,
   DataRequest,
+  PinHelpRequest,
   PlatformAdmin,
   PlatformAuditLog,
   SubscriptionInvoice,
@@ -38,6 +39,7 @@ import {
   type PlatformRequest,
 } from '../middleware/platform';
 import { issuePinResetCode } from './auth';
+import { generateTemporaryPin } from '../lib/pin';
 
 export const platformRouter = Router();
 
@@ -434,8 +436,12 @@ platformRouter.post('/users/:id/:action', requirePermission('users:manage'), asy
       res.status(400).json({ error: 'Reactivate this user before sending a reset.' });
       return;
     }
+    if (!user.email) {
+      res.status(400).json({ error: 'This user has no email. Issue a temporary PIN from a PIN help request instead.' });
+      return;
+    }
     await AppDataSource.query(`DELETE FROM pin_reset_codes WHERE user_id = $1`, [id]);
-    await issuePinResetCode(user.email);
+    await issuePinResetCode(user);
     await recordPlatformAudit({ req, admin: req.admin, action: 'user.pin_reset_sent', targetType: 'user', targetId: id, businessId: user.business_id, reason });
     res.json({ ok: true });
     return;
@@ -447,6 +453,93 @@ platformRouter.post('/users/:id/:action', requirePermission('users:manage'), asy
   }
   await users.update(id, { ...definition.changes(user), updated_at: new Date() });
   await recordPlatformAudit({ req, admin: req.admin, action: definition.action, targetType: 'user', targetId: id, businessId: user.business_id, reason });
+  res.json({ ok: true });
+});
+
+const pinHelpStatusSchema = z.object({
+  status: z.enum(['open', 'resolved', 'rejected']).default('open'),
+});
+
+platformRouter.get('/pin-help', requirePermission('users:read'), async (req, res) => {
+  const { status } = pinHelpStatusSchema.parse(req.query);
+  const rows = await q(
+    `SELECT r.id, r.identifier, r.name, r.contact_phone, r.message, r.status, r.resolution_note,
+            r.created_at, r.updated_at, r.user_id,
+            u.name AS user_name, u.email AS user_email, u.phone AS user_phone, u.role AS user_role,
+            u.active AS user_active, b.name AS business_name
+     FROM pin_help_requests r
+     LEFT JOIN users u ON u.id = r.user_id
+     LEFT JOIN businesses b ON b.id = u.business_id
+     WHERE r.status = $1
+     ORDER BY r.created_at ${status === 'open' ? 'ASC' : 'DESC'}
+     LIMIT 200`,
+    [status],
+  );
+  res.json({ rows });
+});
+
+platformRouter.post('/pin-help/:id/temporary-pin', requirePermission('users:manage'), async (req: PlatformRequest, res) => {
+  const id = uuidSchema.parse(req.params.id);
+  const { reason } = reasonSchema.parse(req.body);
+  const requests = AppDataSource.getRepository(PinHelpRequest);
+  const request = await requests.findOne({ where: { id } });
+  if (!request || request.status !== 'open') {
+    res.status(404).json({ error: 'This request is not open' });
+    return;
+  }
+  const users = AppDataSource.getRepository(User);
+  const user = request.user_id ? await users.findOne({ where: { id: request.user_id } }) : null;
+  if (!user) {
+    res.status(400).json({ error: 'No MIA account matches this request. Close it instead.' });
+    return;
+  }
+  if (!user.active) {
+    res.status(400).json({ error: 'Reactivate this user before issuing a temporary PIN.' });
+    return;
+  }
+  const pin = generateTemporaryPin();
+  const now = new Date();
+  await AppDataSource.transaction(async (manager) => {
+    await manager.update(User, { id: user.id }, {
+      password_hash: await hashPassword(pin),
+      failed_login_attempts: 0,
+      locked_until: null,
+      must_change_pin: true,
+      token_version: (user.token_version ?? 0) + 1,
+      updated_at: now,
+    });
+    await manager.delete('pin_reset_codes', { user_id: user.id });
+    await manager.update(PinHelpRequest, { id }, {
+      status: 'resolved',
+      resolved_by: req.admin!.id,
+      resolution_note: reason,
+      updated_at: now,
+    });
+  });
+  await recordPlatformAudit({ req, admin: req.admin, action: 'user.temporary_pin_issued', targetType: 'user', targetId: user.id, businessId: user.business_id, reason });
+  if (user.business_id && user.role !== 'OWNER') {
+    await notifyBusinessOwners({
+      businessId: user.business_id,
+      action: 'PLATFORM_TEMPORARY_PIN',
+      reason,
+      subject: 'MIA support reset a team member PIN',
+      message: `MIA support gave ${user.name} a temporary PIN after they asked for help. They must choose a new PIN when they sign in.`,
+    });
+  }
+  res.json({ ok: true, pin });
+});
+
+platformRouter.post('/pin-help/:id/close', requirePermission('users:manage'), async (req: PlatformRequest, res) => {
+  const id = uuidSchema.parse(req.params.id);
+  const { reason } = reasonSchema.parse(req.body);
+  const requests = AppDataSource.getRepository(PinHelpRequest);
+  const request = await requests.findOne({ where: { id } });
+  if (!request || request.status !== 'open') {
+    res.status(404).json({ error: 'This request is not open' });
+    return;
+  }
+  await requests.update(id, { status: 'rejected', resolved_by: req.admin!.id, resolution_note: reason, updated_at: new Date() });
+  await recordPlatformAudit({ req, admin: req.admin, action: 'pin_help.closed', targetType: 'pin_help_request', targetId: id, businessId: null, reason });
   res.json({ ok: true });
 });
 

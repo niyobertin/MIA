@@ -1970,6 +1970,7 @@ export function useIssueWaiterTab() {
       waiterUserId: string;
       lines: Array<{ productId: string; quantity: number; sellingPrice?: number }>;
       notes?: string;
+      clientLabel?: string;
     }) => {
       const { userId, deviceId } = requireAuthContext();
       const { issueWaiterTab } = await import('@/services/books/waiterTabs');
@@ -1981,6 +1982,7 @@ export function useIssueWaiterTab() {
         waiterUserId: data.waiterUserId,
         lines: data.lines,
         notes: data.notes,
+        clientLabel: data.clientLabel,
       });
     },
     onSuccess: () => invalidateWaiterQueries(queryClient, businessId),
@@ -2066,6 +2068,7 @@ export function useRecordWaiterPayment() {
       amount: number;
       paymentMethod: 'cash' | 'mobile_money' | 'bank';
       notes?: string | null;
+      itemIds?: string[];
     }) => {
       const { userId, deviceId } = requireAuthContext();
       const { recordWaiterPayment } = await import('@/services/books/waiterTabs');
@@ -2078,6 +2081,7 @@ export function useRecordWaiterPayment() {
         amount: data.amount,
         paymentMethod: data.paymentMethod,
         notes: data.notes,
+        itemIds: data.itemIds,
       });
     },
     onSuccess: () => invalidateWaiterQueries(queryClient, businessId),

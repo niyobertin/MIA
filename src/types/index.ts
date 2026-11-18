@@ -13,7 +13,7 @@ export interface User {
   id: string;
   business_id: string | null;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   role: UserRole | null;
   active: boolean;
@@ -88,6 +88,8 @@ export interface WaiterTab {
   session_id: string;
   waiter_user_id: string;
   customer_id: string | null;
+  /** Optional free-text label for who the waiter serves (name or table). Does not change who owes. */
+  client_label?: string | null;
   sale_id: string | null;
   status: WaiterTabStatus;
   /** Cumulative amount recorded against this tab (manual / partial payments). */
@@ -115,6 +117,8 @@ export interface WaiterTabItem {
   unit_cost: number;
   /** Qty still outstanding (not returned). */
   quantity_outstanding: number;
+  /** Part of the tab's paid total assigned to this line (display only; books use the tab total). */
+  paid_amount?: number;
   created_at: string;
   updated_at: string;
   product_name?: string;

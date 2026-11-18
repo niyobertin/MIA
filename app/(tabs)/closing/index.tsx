@@ -28,7 +28,6 @@ import {
   useDailyClosingById,
   useRecordCount,
   useAdjustStock,
-  useDailyRecords,
 } from '@/hooks/useData';
 import { useAuthStore } from '@/stores/authStore';
 import { getTodayDateString } from '@/utils/formatters';

@@ -14,7 +14,7 @@ import { businessRepository } from '@/repositories/business/business';
 import { showToast } from '@/stores/toastStore';
 
 const businessSettingsSchema = z.object({
-  name: z.string().min(2, 'Business name must be at least 2 characters'),
+  name: z.string().min(2, 'validation.businessNameMin'),
   currency: z.string(),
   country: z.string(),
   timezone: z.string(),

@@ -16,7 +16,7 @@ type PullResponse = {
     id: string;
     business_id: string | null;
     name: string;
-    email: string;
+    email: string | null;
     phone: string | null;
     role: string | null;
     active: boolean;
@@ -172,7 +172,7 @@ export async function applyCloudPull(pull: PullResponse | null | undefined): Pro
     id: remoteUser.id,
     business_id: remoteUser.business_id ?? null,
     name: remoteUser.name ?? '',
-    email: remoteUser.email ?? '',
+    email: remoteUser.email ?? null,
     phone: remoteUser.phone ?? null,
     role: asRole(remoteUser.role),
     active: remoteUser.active !== false,
@@ -195,7 +195,7 @@ export async function pullCloudData(): Promise<{ user: User | null; business: Bu
 /** Upsert cloud user/business into local SQLite and cache password for offline login. */
 export async function hydrateLocalSession(input: {
   authUserId: string;
-  email: string;
+  email: string | null;
   name: string;
   phone?: string | null;
   password: string;
@@ -207,13 +207,12 @@ export async function hydrateLocalSession(input: {
   const db = await getDatabase();
   const now = new Date().toISOString();
   const passwordHash = await hashPassword(input.password);
-  const email = input.email.trim().toLowerCase();
-
   const pull = await apiFetch<PullResponse>('/sync/pull');
   const applied = await applyCloudPull(pull);
 
   const remoteUser = pull?.user;
   const name = remoteUser?.name || input.name;
+  const email = (remoteUser?.email ?? input.email)?.trim().toLowerCase() || null;
   const phone = remoteUser?.phone ?? (input.phone?.trim() || null);
   const role = asRole(remoteUser?.role);
   const businessId = remoteUser?.business_id ?? null;
@@ -248,10 +247,12 @@ export async function hydrateLocalSession(input: {
     ]
   );
 
-  await db.runAsync(`DELETE FROM users WHERE lower(email) = ? AND id != ? AND business_id IS NULL`, [
-    email,
-    input.authUserId,
-  ]);
+  if (email) {
+    await db.runAsync(`DELETE FROM users WHERE lower(email) = ? AND id != ? AND business_id IS NULL`, [
+      email,
+      input.authUserId,
+    ]);
+  }
 
   return {
     user: {

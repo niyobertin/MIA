@@ -29,7 +29,7 @@ const JWT_REFRESH_EXPIRES = process.env.JWT_REFRESH_EXPIRES ?? '30d';
 
 export type AuthTokenPayload = {
   sub: string;
-  email: string;
+  email: string | null;
   business_id: string | null;
   ver?: number;
   typ?: 'access' | 'refresh';

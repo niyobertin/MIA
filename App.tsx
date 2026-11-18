@@ -12,7 +12,7 @@ export default function App() {
       <SafeAreaProvider>
         <Providers>
           <Slot />
-          <StatusBar style="dark" backgroundColor="#f1f5f9" />
+          <StatusBar style="dark" />
         </Providers>
       </SafeAreaProvider>
     </GestureHandlerRootView>

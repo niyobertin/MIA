@@ -44,6 +44,7 @@ export default function IssueWaiterTabScreen() {
   const [search, setSearch] = React.useState('');
   const [lines, setLines] = React.useState<Line[]>([]);
   const [notes, setNotes] = React.useState('');
+  const [clientLabel, setClientLabel] = React.useState('');
   const [confirm, setConfirm] = React.useState(false);
 
   const filtered = React.useMemo(() => {
@@ -105,9 +106,13 @@ export default function IssueWaiterTabScreen() {
           sellingPrice: l.sellingPrice,
         })),
         notes: notes.trim() || undefined,
+        clientLabel: clientLabel.trim() || undefined,
       });
       setConfirm(false);
-      showToast(t('waiterTabs.issued'), 'success');
+      showToast(
+        tab.joinedExisting ? t('waiterTabs.addedToOpenTab', { name: waiter.name }) : t('waiterTabs.issued'),
+        'success'
+      );
       router.replace(`/waiter-tabs/${tab.id}`);
     } catch {
       setConfirm(false);
@@ -131,6 +136,19 @@ export default function IssueWaiterTabScreen() {
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.faint} />
       </TouchableOpacity>
+
+      <View style={styles.clientWrap}>
+        <Text style={styles.clientLabel}>{t('waiterTabs.clientLabel')}</Text>
+        <TextInput
+          style={styles.clientInput}
+          placeholder={t('waiterTabs.clientLabelPlaceholder')}
+          placeholderTextColor={colors.faint}
+          value={clientLabel}
+          onChangeText={setClientLabel}
+          maxLength={60}
+          accessibilityLabel={t('waiterTabs.clientLabel')}
+        />
+      </View>
 
       <View style={styles.searchWrap}>
         <SearchBar value={search} onChangeText={setSearch} placeholder={t('common.search')} />
@@ -223,7 +241,7 @@ export default function IssueWaiterTabScreen() {
         onClose={() => setConfirm(false)}
         onConfirm={() => void doIssue()}
         title={t('waiterTabs.issue')}
-        message={`${waiter?.name ?? ''} · ${lines.length} ${t('waiterTabs.product').toLowerCase()}`}
+        message={`${waiter?.name ?? ''}${clientLabel.trim() ? ` → ${clientLabel.trim()}` : ''} · ${lines.length} ${t('waiterTabs.product').toLowerCase()}`}
         confirmText={t('common.confirm')}
         variant="primary"
         loading={issueMutation.isPending}
@@ -248,6 +266,18 @@ const styles = StyleSheet.create({
   waiterLabel: { fontSize: 10, fontWeight: '600', color: colors.faint },
   waiterName: { fontSize: 14, fontWeight: '700', color: colors.ink },
   searchWrap: { paddingHorizontal: spacing.md, marginBottom: spacing.sm },
+  clientWrap: { paddingHorizontal: spacing.md, marginBottom: spacing.sm, gap: 6 },
+  clientLabel: { fontSize: 14, fontWeight: '600', color: colors.muted },
+  clientInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    minHeight: 48,
+    fontSize: 16,
+    color: colors.ink,
+    backgroundColor: colors.card,
+  },
   list: { paddingHorizontal: spacing.md, paddingBottom: 160 },
   productRow: {
     flexDirection: 'row',

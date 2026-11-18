@@ -37,8 +37,9 @@ export function rateLimit(options: {
 }
 
 export function emailAndIpKey(req: Request): string {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  return `${req.ip ?? 'unknown'}|${email}`;
+  const raw = typeof req.body?.identifier === 'string' ? req.body.identifier : req.body?.email;
+  const id = typeof raw === 'string' ? raw.replace(/[\s()-]/g, '').toLowerCase() : '';
+  return `${req.ip ?? 'unknown'}|${id}`;
 }
 
 export function securityHeaders(_req: Request, res: Response, next: NextFunction) {

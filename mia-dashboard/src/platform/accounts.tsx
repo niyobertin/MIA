@@ -46,14 +46,15 @@ function UserActions({ row }: { row: Row }) {
   const post = (action: string) => (reason: string) => platformApi.post(`/users/${row.id}/${action}`, { reason });
   const invalidate = ['platform-users', 'platform-business'];
   const locked = row.locked_until && new Date(row.locked_until) > new Date();
+  const who = row.email ?? row.phone ?? row.name;
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
-      {locked ? <ReasonAction label="Unlock" title={`Unlock ${row.email}`} invalidate={invalidate} run={post('unlock')} /> : null}
-      {row.active ? <ReasonAction label="Send PIN reset" title={`Send a PIN reset to ${row.email}`} description="They get a code by email. You never see it." invalidate={invalidate} run={post('send-pin-reset')} /> : null}
-      {row.active ? <ReasonAction label="Sign out" title={`Sign out ${row.email}`} description="Ends their sessions on every device." invalidate={invalidate} run={post('force-signout')} /> : null}
+      {locked ? <ReasonAction label="Unlock" title={`Unlock ${who}`} invalidate={invalidate} run={post('unlock')} /> : null}
+      {row.active && row.email ? <ReasonAction label="Send PIN reset" title={`Send a PIN reset to ${row.email}`} description="They get a code by email. You never see it." invalidate={invalidate} run={post('send-pin-reset')} /> : null}
+      {row.active ? <ReasonAction label="Sign out" title={`Sign out ${who}`} description="Ends their sessions on every device." invalidate={invalidate} run={post('force-signout')} /> : null}
       {row.active
-        ? <ReasonAction label="Deactivate" tone="danger" title={`Deactivate ${row.email}`} description="They lose access right away, including sync." invalidate={invalidate} run={post('deactivate')} />
-        : <ReasonAction label="Reactivate" title={`Reactivate ${row.email}`} invalidate={invalidate} run={post('reactivate')} />}
+        ? <ReasonAction label="Deactivate" tone="danger" title={`Deactivate ${who}`} description="They lose access right away, including sync." invalidate={invalidate} run={post('deactivate')} />
+        : <ReasonAction label="Reactivate" title={`Reactivate ${who}`} invalidate={invalidate} run={post('reactivate')} />}
     </div>
   );
 }
@@ -67,7 +68,7 @@ export function PlatformUsers() {
         client={platformApi} path="/users" queryKey="platform-users" rowKey={rowId}
         searchPlaceholder="Search name, email or phone" empty="No users match."
         columns={[
-          { header: 'User', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.email}</div></div> },
+          { header: 'User', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{[row.phone, row.email].filter(Boolean).join(' · ')}</div></div> },
           { header: 'Business', cell: (row) => row.business_id ? <Link to={`/platform/businesses/${row.business_id}`} className="hover:underline">{row.business_name}</Link> : '—' },
           { header: 'Role', cell: (row) => humanize(row.role) },
           { header: 'Status', cell: (row) => !row.active ? <Badge tone="bad">Deactivated</Badge> : row.locked_until && new Date(row.locked_until) > new Date() ? <Badge tone="warn">Locked</Badge> : <Badge tone="good">Active</Badge> },
@@ -199,7 +200,7 @@ export function BusinessDetail() {
                     rowKey={rowId}
                     empty="No users in this business."
                     columns={[
-                      { header: 'User', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.email}</div></div> },
+                      { header: 'User', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{[row.phone, row.email].filter(Boolean).join(' · ')}</div></div> },
                       { header: 'Role', cell: (row) => humanize(row.role) },
                       { header: 'Status', cell: (row) => row.active ? <Badge tone="good">Active</Badge> : <Badge tone="bad">Deactivated</Badge> },
                       ...(canManageUsers ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => <UserActions row={row} /> }] : []),

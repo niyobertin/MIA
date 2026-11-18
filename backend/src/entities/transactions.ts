@@ -527,6 +527,9 @@ export class WaiterTab {
   @Column({ type: 'uuid', nullable: true })
   customer_id!: string | null;
 
+  @Column({ type: 'text', nullable: true })
+  client_label!: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   sale_id!: string | null;
 
@@ -582,6 +585,9 @@ export class WaiterTabItem {
 
   @Column({ type: 'bigint', transformer: bigIntNumber })
   quantity_outstanding!: number;
+
+  @Column({ type: 'bigint', default: 0, transformer: bigIntNumber })
+  paid_amount!: number;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

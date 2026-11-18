@@ -26,7 +26,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
 
 const schema = z.object({
-  partyId: z.string().min(1, 'Select a party'),
+  partyId: z.string().min(1, 'validation.selectParty'),
   amount: z.number().int().positive('Amount must be positive'),
   paymentMethod: z.enum(PAYMENT_METHODS.filter((p) => p.value !== 'credit').map((p) => p.value) as [string, ...string[]]),
   notes: z.string().optional(),

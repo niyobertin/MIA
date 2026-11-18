@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ApiError } from '@/lib/api';
-import { cloudRequestPinReset, cloudResetPin } from '@/services/auth/cloudAuth';
+import { cloudRequestPinHelp, cloudRequestPinReset, cloudResetPin } from '@/services/auth/cloudAuth';
 import ForgotPinScreen from '../app/(auth)/forgot-pin';
 
 const mockReplace = jest.fn();
@@ -16,6 +16,7 @@ jest.mock('@/i18n', () => ({ __esModule: true, default: { t: (key: string) => ke
 jest.mock('@/stores/toastStore', () => ({ showToast: jest.fn() }));
 jest.mock('@/services/auth/cloudAuth', () => ({
   cloudRequestPinReset: jest.fn(),
+  cloudRequestPinHelp: jest.fn(),
   cloudResetPin: jest.fn(),
 }));
 jest.mock('@/repositories/settings', () => ({
@@ -29,10 +30,11 @@ jest.mock('@/repositories/users/users', () => ({ PinValidationError: class exten
 
 const requestReset = cloudRequestPinReset as jest.Mock;
 const resetPin = cloudResetPin as jest.Mock;
+const requestHelp = cloudRequestPinHelp as jest.Mock;
 
 async function reachResetStep() {
   const screen = render(<ForgotPinScreen />);
-  fireEvent.changeText(screen.getByPlaceholderText('name@example.com'), 'owner@example.test');
+  fireEvent.changeText(screen.getByTestId('reset-identifier'), 'owner@example.test');
   fireEvent.press(screen.getByText('auth.sendResetCode'));
   await screen.findByTestId('reset-code');
   return screen;
@@ -43,13 +45,14 @@ describe('forgot PIN screen', () => {
     jest.clearAllMocks();
     requestReset.mockResolvedValue(undefined);
     resetPin.mockResolvedValue(undefined);
+    requestHelp.mockResolvedValue(undefined);
   });
 
-  it('rejects an invalid email without calling the API', async () => {
+  it('rejects an invalid email or phone without calling the API', async () => {
     const screen = render(<ForgotPinScreen />);
-    fireEvent.changeText(screen.getByPlaceholderText('name@example.com'), 'not-an-email');
+    fireEvent.changeText(screen.getByTestId('reset-identifier'), 'not an email');
     fireEvent.press(screen.getByText('auth.sendResetCode'));
-    await screen.findByText('auth.invalidEmail');
+    await screen.findByText('auth.invalidIdentifier');
     expect(requestReset).not.toHaveBeenCalled();
   });
 
@@ -87,8 +90,43 @@ describe('forgot PIN screen', () => {
   it('asks for internet when offline', async () => {
     requestReset.mockRejectedValue(new Error('OFFLINE'));
     const screen = render(<ForgotPinScreen />);
-    fireEvent.changeText(screen.getByPlaceholderText('name@example.com'), 'owner@example.test');
+    fireEvent.changeText(screen.getByTestId('reset-identifier'), 'owner@example.test');
     fireEvent.press(screen.getByText('auth.sendResetCode'));
     await screen.findByText('auth.resetNeedsInternet');
+  });
+
+  it('sends a code request for a phone number', async () => {
+    const screen = render(<ForgotPinScreen />);
+    fireEvent.changeText(screen.getByTestId('reset-identifier'), '0788 123 456');
+    fireEvent.press(screen.getByText('auth.sendResetCode'));
+    await screen.findByTestId('reset-code');
+    expect(requestReset).toHaveBeenCalledWith('0788 123 456');
+  });
+
+  it('sends a help request to MIA support with a phone to call', async () => {
+    const screen = render(<ForgotPinScreen />);
+    fireEvent.changeText(screen.getByTestId('reset-identifier'), '0788123456');
+    fireEvent.press(screen.getByText('auth.askSupport'));
+    await screen.findByTestId('help-name');
+    fireEvent.changeText(screen.getByTestId('help-name'), 'Aline Uwase');
+    fireEvent.press(screen.getByText('auth.pinHelpSubmit'));
+    await screen.findByText('auth.pinHelpSentTitle');
+    expect(requestHelp).toHaveBeenCalledWith({
+      identifier: '0788123456',
+      name: 'Aline Uwase',
+      contactPhone: '0788123456',
+      message: '',
+    });
+  });
+
+  it('asks for a phone support can call', async () => {
+    const screen = render(<ForgotPinScreen />);
+    fireEvent.changeText(screen.getByTestId('reset-identifier'), 'owner@example.test');
+    fireEvent.press(screen.getByText('auth.askSupport'));
+    await screen.findByTestId('help-name');
+    fireEvent.changeText(screen.getByTestId('help-name'), 'Aline Uwase');
+    fireEvent.press(screen.getByText('auth.pinHelpSubmit'));
+    await screen.findByText('auth.helpPhoneRequired');
+    expect(requestHelp).not.toHaveBeenCalled();
   });
 });

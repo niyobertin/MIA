@@ -15,12 +15,14 @@ import { hydrateLocalSession } from '@/services/auth/hydrateSession';
 import {
   assertNotLockedLocally,
   clearLocalFailures,
+  describeAccountError,
   describePinError,
   recordLocalFailure,
   rememberAccount,
 } from '@/services/auth/pinAuth';
 import { getPinProblem, isPinFormat } from '@/utils/pin';
 import i18n from '@/i18n';
+import { accountIdentifier, parseIdentifier } from '@/utils/identity';
 
 interface AuthState {
   user: User | null;
@@ -38,7 +40,7 @@ interface AuthState {
   setError: (error: string | null) => void;
   setHasHydrated: () => void;
 
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   createBusiness: (data: CreateBusinessData) => Promise<void>;
   joinBusiness: (businessCode: string, role?: UserRole) => Promise<void>;
@@ -48,7 +50,7 @@ interface AuthState {
 }
 
 interface RegisterData {
-  email: string;
+  email?: string;
   password: string;
   name: string;
   phone?: string;
@@ -79,13 +81,18 @@ export const useAuthStore = create<AuthState>()(
       setError: (error) => set({ error }),
       setHasHydrated: () => set({ hasHydrated: true }),
 
-      login: async (email: string, password: string) => {
+      login: async (identifier: string, password: string) => {
         set({ error: null });
         try {
           if (DEMO_ENABLED) await ensureDemoUsers();
           else await disableDemoUsers();
 
-          const normalized = email.trim().toLowerCase();
+          const parsed = parseIdentifier(identifier);
+          if (!parsed) {
+            set({ error: i18n.t('auth.invalidIdentifier') });
+            return;
+          }
+          const normalized = parsed.value;
           const online = await isOnline();
           const legacySecret = !isPinFormat(password);
 
@@ -96,6 +103,7 @@ export const useAuthStore = create<AuthState>()(
               const { user, business } = await hydrateLocalSession({
                 authUserId: cloudUser.id,
                 email: cloudUser.email,
+                phone: cloudUser.phone,
                 name: cloudUser.name,
                 password,
               });
@@ -108,7 +116,7 @@ export const useAuthStore = create<AuthState>()(
               }
 
               await clearLocalFailures(normalized);
-              await rememberAccount({ email: user.email, name: user.name });
+              await rememberAccount({ identifier: normalized, name: user.name });
               const needsPin = Boolean(cloudUser.pinSetupRequired) || legacySecret;
               set({
                 user,
@@ -148,7 +156,7 @@ export const useAuthStore = create<AuthState>()(
 
           // 2) Offline only → use locally cached account
           await assertNotLockedLocally(normalized);
-          const credential = await userRepository.findCredentialByEmail(normalized);
+          const credential = await userRepository.findCredentialByIdentifier(normalized);
           if (!credential || !credential.user.active) {
             set({
               error: online
@@ -176,7 +184,7 @@ export const useAuthStore = create<AuthState>()(
             return;
           }
 
-          await rememberAccount({ email: user.email, name: user.name });
+          await rememberAccount({ identifier: normalized, name: user.name });
           set({
             user,
             business,
@@ -197,15 +205,16 @@ export const useAuthStore = create<AuthState>()(
         set({ error: null });
         try {
           const name = data.name.trim();
-          const email = data.email.trim().toLowerCase();
+          const email = data.email?.trim().toLowerCase() || null;
+          const phone = data.phone?.trim() || null;
           if (name.length < 2) {
-            const message = 'Enter your full name (at least 2 characters).';
+            const message = i18n.t('auth.nameRequired');
             set({ error: message });
             showToast(message, 'error');
             return;
           }
-          if (!email.includes('@')) {
-            const message = 'Enter a valid email address.';
+          if (!email && !phone) {
+            const message = i18n.t('auth.identifierRequired');
             set({ error: message });
             showToast(message, 'error');
             return;
@@ -227,7 +236,7 @@ export const useAuthStore = create<AuthState>()(
               email,
               password: data.password,
               name,
-              phone: data.phone,
+              phone,
             });
             accountId = cloudUser.id;
           }
@@ -237,10 +246,10 @@ export const useAuthStore = create<AuthState>()(
             name,
             email,
             password: data.password,
-            phone: data.phone,
+            phone,
           });
 
-          await rememberAccount({ email: user.email, name: user.name });
+          await rememberAccount({ identifier: accountIdentifier(user), name: user.name });
           set({
             user,
             business: null,
@@ -258,7 +267,7 @@ export const useAuthStore = create<AuthState>()(
           );
         } catch (error) {
           const message =
-            describePinError(error) ??
+            describeAccountError(error) ??
             formatAuthError(error, 'Could not create your account. Please try again.');
           set({ error: message });
           showToast(message, 'error');
@@ -438,14 +447,14 @@ export const useAuthStore = create<AuthState>()(
             }
             await cloudChangePin(secret, pin);
           } else {
-            const credential = await userRepository.findCredentialByEmail(user.email);
+            const credential = await userRepository.findCredentialByIdentifier(accountIdentifier(user));
             if (!credential || !(await verifyPassword(secret, credential.password_hash))) {
-              showToast(await recordLocalFailure(user.email), 'error');
+              showToast(await recordLocalFailure(accountIdentifier(user)), 'error');
               return false;
             }
           }
           await userRepository.setPin(user.id, pin);
-          await clearLocalFailures(user.email);
+          await clearLocalFailures(accountIdentifier(user));
           set({ pinSetupRequired: false, pendingLegacySecret: null });
           showToast(i18n.t('auth.pinChanged'), 'success');
           return true;
@@ -482,6 +491,7 @@ export const useAuthStore = create<AuthState>()(
             }
             if (
               !freshUser &&
+              state.user.email &&
               DEMO_USERS.some((u) => u.email === state.user?.email?.toLowerCase())
             ) {
               freshUser = await userRepository.findByEmail(state.user.email);

@@ -16,6 +16,7 @@ export interface ReceiptData {
   date: string;
   reference?: string;
   customerName?: string;
+  extraLines?: Array<{ label: string; value: string }>;
   paymentMethod?: string;
   lines: ReceiptLine[];
   subtotal: number;
@@ -62,6 +63,7 @@ export function buildReceiptText(data: ReceiptData): string {
     data.tax ? line('TAX', money(data.tax, currency)) : null,
     line('TOTAL', money(data.total, currency)),
     data.customerName ? `Customer: ${data.customerName}` : null,
+    ...(data.extraLines ?? []).map((l) => `${l.label}: ${l.value}`),
     data.paymentMethod ? `Paid: ${data.paymentMethod}` : null,
     '--------------------------------',
     '80mm receipt',
@@ -132,6 +134,7 @@ export function buildReceiptHtml(data: ReceiptData): string {
       <tr class="total"><td>TOTAL</td><td class="amount">${escapeHtml(money(data.total, currency))}</td></tr>
     </table>
     ${data.customerName ? `<div class="muted" style="margin-top:8px">Customer: ${escapeHtml(data.customerName)}</div>` : ''}
+    ${(data.extraLines ?? []).map((l) => `<div class="muted">${escapeHtml(l.label)}: ${escapeHtml(l.value)}</div>`).join('')}
     ${data.paymentMethod ? `<div class="muted">Paid: ${escapeHtml(data.paymentMethod)}</div>` : ''}
     <div class="rule"></div>
     <div class="footer">80mm receipt<br/>Thank you!</div>

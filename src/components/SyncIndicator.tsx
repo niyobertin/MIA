@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 import { useTranslation } from 'react-i18next';
 import { useSyncStore } from '@/stores/syncStore';
 import { Easing } from 'react-native';
@@ -24,7 +26,7 @@ export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false
     }
   }, [syncStatus]);
 
-  const getStatusConfig = () => {
+  const getStatusConfig = (): { icon: IoniconName; color: string; label: string; animate: boolean } => {
     switch (syncStatus) {
       case 'syncing':
         return {
@@ -49,7 +51,7 @@ export const SyncIndicator: React.FC<{ compact?: boolean }> = ({ compact = false
         };
       case 'offline':
         return {
-          icon: 'wifi-off',
+          icon: 'cloud-offline',
           color: '#f59e0b',
           label: t('common.offline'),
           animate: false,

@@ -1,3 +1,4 @@
+import { translateFormError } from '@/utils/formError';
 import React from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -165,13 +166,14 @@ export function FormPinInput<T extends FieldValues, N extends FieldPath<T>>({
   ...props
 }: FormPinInputProps<T, N>) {
   const { field, fieldState } = useController({ control, name });
+  const { t } = useTranslation();
 
   return (
     <PinInput
       {...props}
       value={String(field.value ?? '')}
       onChangeText={field.onChange}
-      error={error ?? fieldState.error?.message}
+      error={error ?? translateFormError(t, fieldState.error?.message)}
     />
   );
 }

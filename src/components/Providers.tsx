@@ -46,7 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
     <SafeAreaProvider>
-      <StatusBar style="dark" backgroundColor={colors.background} translucent={false} />
+      <StatusBar style="dark" />
       <QueryClientProvider client={queryClient}>
         <I18nextProvider i18n={i18n}>
           <ZustandProviders>

@@ -1,3 +1,5 @@
+import { translateFormError } from '@/utils/formError';
+import { useTranslation } from 'react-i18next';
 import React from 'react';
 import { Control, FieldPath, FieldPathValue, FieldValues, useController } from 'react-hook-form';
 import { Input, InputProps } from './Input';
@@ -18,6 +20,7 @@ export function FormInput<T extends FieldValues, N extends FieldPath<T>>({
   ...props
 }: FormInputProps<T, N>) {
   const { field, fieldState } = useController({ control, name });
+  const { t } = useTranslation();
 
   return (
     <Input
@@ -26,7 +29,7 @@ export function FormInput<T extends FieldValues, N extends FieldPath<T>>({
       value={displayValue ?? String(field.value ?? '')}
       onChangeText={(value) => field.onChange(parseValue ? parseValue(value) : value)}
       onBlur={field.onBlur}
-      error={error ?? fieldState.error?.message}
+      error={error ?? translateFormError(t, fieldState.error?.message)}
     />
   );
 }

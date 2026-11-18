@@ -95,13 +95,13 @@ const TABLE_COLUMNS: Record<string, Set<string>> = {
     'created_at', 'updated_at',
   ]),
   waiter_tabs: new Set([
-    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'sale_id',
+    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'client_label', 'sale_id',
     'status', 'paid_amount', 'notes', 'issued_by', 'device_id', 'sync_status',
     'created_at', 'updated_at',
   ]),
   waiter_tab_items: new Set([
     'id', 'business_id', 'tab_id', 'product_id', 'quantity', 'selling_price',
-    'unit_cost', 'quantity_outstanding', 'created_at', 'updated_at',
+    'unit_cost', 'quantity_outstanding', 'paid_amount', 'created_at', 'updated_at',
   ]),
   audit_logs: new Set([
     'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',
@@ -297,7 +297,7 @@ export class SyncEngine {
       try {
         const { ensureCloudSession } = await import('@/services/auth/cloudAuth');
         const auth = useAuthStore.getState();
-        await ensureCloudSession({ email: auth.user?.email });
+        await ensureCloudSession();
       } catch (error) {
         const message = formatCloudError(error);
         this.notify({
@@ -598,7 +598,7 @@ export class SyncEngine {
       try {
         const { ensureCloudSession } = await import('@/services/auth/cloudAuth');
         const auth = useAuthStore.getState();
-        await ensureCloudSession({ email: auth.user?.email });
+        await ensureCloudSession();
       } catch (error) {
         return { success: false, synced: 0, failed: 1, errors: [formatCloudError(error)] };
       }

@@ -5,7 +5,7 @@ import { getDatabase } from '@/db/database';
 export class WaiterTabRepository extends BaseRepository<WaiterTab> {
   protected tableName = 'waiter_tabs';
   protected columns = [
-    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'sale_id',
+    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'client_label', 'sale_id',
     'status', 'paid_amount', 'notes', 'issued_by', 'device_id', 'sync_status', 'created_at', 'updated_at',
   ];
 
@@ -41,6 +41,20 @@ export class WaiterTabRepository extends BaseRepository<WaiterTab> {
        WHERE t.business_id = ? AND t.session_id = ? AND t.status IN ('draft', 'partial')
        ORDER BY t.created_at ASC`,
       [businessId, sessionId]
+    );
+    return rows.map((row) => this.mapRow(row));
+  }
+
+  /** Open (unpaid or part-paid) tabs for one waiter in one session, newest first. */
+  async findOpenForWaiter(businessId: string, sessionId: string, waiterUserId: string): Promise<WaiterTab[]> {
+    const db = await this.getDb();
+    const rows = await db.getAllAsync<Record<string, unknown>>(
+      `SELECT t.*
+       FROM ${this.tableName} t
+       WHERE t.business_id = ? AND t.session_id = ? AND t.waiter_user_id = ?
+         AND t.status IN ('draft', 'partial')
+       ORDER BY t.created_at DESC`,
+      [businessId, sessionId, waiterUserId]
     );
     return rows.map((row) => this.mapRow(row));
   }
@@ -115,8 +129,15 @@ export class WaiterTabItemRepository extends BaseRepository<WaiterTabItem> {
   protected tableName = 'waiter_tab_items';
   protected columns = [
     'id', 'business_id', 'tab_id', 'product_id', 'quantity', 'selling_price',
-    'unit_cost', 'quantity_outstanding', 'created_at', 'updated_at',
+    'unit_cost', 'quantity_outstanding', 'paid_amount', 'created_at', 'updated_at',
   ];
+
+  protected mapRow(row: Record<string, unknown>): WaiterTabItem {
+    return {
+      ...(row as unknown as WaiterTabItem),
+      paid_amount: Number(row.paid_amount ?? 0),
+    };
+  }
 
   async findByTab(tabId: string, businessId: string): Promise<WaiterTabItem[]> {
     const db = await this.getDb();

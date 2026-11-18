@@ -1,3 +1,5 @@
+import { translateFormError } from '@/utils/formError';
+import { useTranslation } from 'react-i18next';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
@@ -15,6 +17,7 @@ export function FormPicker<T extends FieldValues>({
   children: React.ReactNode;
 }) {
   const { field, fieldState } = useController({ control, name });
+  const { t } = useTranslation();
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
@@ -29,7 +32,7 @@ export function FormPicker<T extends FieldValues>({
           {children}
         </Picker>
       </View>
-      {fieldState.error && <Text style={styles.error}>{fieldState.error.message}</Text>}
+      {fieldState.error && <Text style={styles.error}>{translateFormError(t, fieldState.error.message)}</Text>}
     </View>
   );
 }

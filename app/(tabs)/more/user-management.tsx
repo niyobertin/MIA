@@ -24,22 +24,35 @@ import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
 import { getPinProblem } from '@/utils/pin';
 import { colors } from '@/theme/tokens';
+import { TFunction } from 'i18next';
+import { formatPhone, normalizeEmail, normalizePhone } from '@/utils/identity';
+import { describeAccountError } from '@/services/auth/pinAuth';
 
-const userFormSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email address'),
-  phone: z.string().optional(),
-  password: z.string().optional(),
-  role: z.enum(['MANAGER', 'CASHIER', 'STAFF']),
-});
+function buildUserFormSchema(t: TFunction) {
+  return z.object({
+    name: z.string().trim().min(2, t('auth.nameRequired')),
+    email: z.string().trim().refine((value) => !value || normalizeEmail(value) !== null, t('auth.invalidEmail')),
+    phone: z.string().trim().refine((value) => !value || normalizePhone(value) !== null, t('auth.invalidPhone')),
+    password: z.string().optional(),
+    role: z.enum(['MANAGER', 'CASHIER', 'STAFF']),
+  }).refine((data) => Boolean(data.email || data.phone), {
+    message: t('auth.identifierRequired'),
+    path: ['phone'],
+  });
+}
 
-type UserFormValues = z.infer<typeof userFormSchema>;
+type UserFormValues = z.infer<ReturnType<typeof buildUserFormSchema>>;
+type AssignableRole = UserFormValues['role'];
 
-const ROLES: { value: UserRole; label: string }[] = [
-  { value: 'MANAGER', label: 'Manager' },
-  { value: 'CASHIER', label: 'Cashier' },
-  { value: 'STAFF', label: 'Staff' },
+const ROLES: { value: AssignableRole; labelKey: string }[] = [
+  { value: 'MANAGER', labelKey: 'users.manager' },
+  { value: 'CASHIER', labelKey: 'users.cashier' },
+  { value: 'STAFF', labelKey: 'users.staff' },
 ];
+
+function isAssignableRole(role: UserRole | null | undefined): role is AssignableRole {
+  return role === 'MANAGER' || role === 'CASHIER' || role === 'STAFF';
+}
 
 export default function UserManagementScreen() {
   const { t } = useTranslation();
@@ -202,7 +215,7 @@ function UserRow({
       </View>
       <View style={styles.userInfo}>
         <Text style={styles.userName}>{user.name}</Text>
-        <Text style={styles.userEmail}>{user.email}</Text>
+        <Text style={styles.userEmail}>{[user.phone ? formatPhone(user.phone) : null, user.email].filter(Boolean).join(' · ')}</Text>
         <View style={[styles.roleBadge, { backgroundColor: getRoleColor(role) }]}>
           <Text style={styles.roleBadgeText}>{t(`users.${role.toLowerCase()}` as 'users.owner')}</Text>
         </View>
@@ -242,6 +255,7 @@ function UserFormModal({
   const { t } = useTranslation();
   const { business } = useAuthStore();
   const isEdit = !!user;
+  const userFormSchema = React.useMemo(() => buildUserFormSchema(t), [t]);
   const { control, handleSubmit, reset, setError, formState: { isSubmitting } } = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
     defaultValues: { name: '', email: '', phone: '', password: '', role: 'STAFF' },
@@ -254,7 +268,7 @@ function UserFormModal({
       email: user?.email ?? '',
       phone: user?.phone ?? '',
       password: '',
-      role: user?.role && user.role !== 'OWNER' ? user.role : 'STAFF',
+      role: isAssignableRole(user?.role) ? user.role : 'STAFF',
     });
   }, [visible, user, reset]);
 
@@ -272,20 +286,20 @@ function UserFormModal({
       if (isEdit && user) {
         const updated = await userRepository.updateBusinessUser(user.id, business.id, {
           name: data.name,
-          email: data.email,
-          phone: data.phone,
+          email: data.email || null,
+          phone: data.phone || null,
           role: user.role === 'OWNER' ? 'OWNER' : data.role,
           password: password || undefined,
           active: user.active,
         });
-        const creds = await userRepository.findCredentialByEmail(updated.email);
+        const passwordHash = await userRepository.getPasswordHash(updated.id);
         await queueSync(
           'users',
           updated.id,
           'update',
           {
             ...(updated as unknown as Record<string, unknown>),
-            ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
+            ...(passwordHash ? { password_hash: passwordHash } : {}),
           },
           business.id
         );
@@ -293,20 +307,20 @@ function UserFormModal({
       } else {
         const created = await userRepository.createBusinessUser({
           name: data.name,
-          email: data.email,
-          phone: data.phone,
+          email: data.email || null,
+          phone: data.phone || null,
           password,
           role: data.role,
           businessId: business.id,
         });
-        const creds = await userRepository.findCredentialByEmail(created.email);
+        const passwordHash = await userRepository.getPasswordHash(created.id);
         await queueSync(
           'users',
           created.id,
           'insert',
           {
             ...(created as unknown as Record<string, unknown>),
-            ...(creds?.password_hash ? { password_hash: creds.password_hash } : {}),
+            ...(passwordHash ? { password_hash: passwordHash } : {}),
           },
           business.id
         );
@@ -314,8 +328,9 @@ function UserFormModal({
       }
       await onSaved();
     } catch (error) {
-      const message = error instanceof Error ? error.message : t('users.userFailed');
-      showToast(message === 'OWNER_LOCKED' ? t('users.userFailed') : message, 'error');
+      const known = describeAccountError(error);
+      const message = known ?? (error instanceof Error && error.message !== 'OWNER_LOCKED' ? error.message : t('users.userFailed'));
+      showToast(message, 'error');
     }
   };
 
@@ -336,15 +351,22 @@ function UserFormModal({
             keyboardShouldPersistTaps="handled"
           >
             <FormInput control={control} name="name" label={t('auth.name')} required />
+            <Text style={styles.contactHint}>{t('users.contactHint')}</Text>
+            <FormInput
+              control={control}
+              name="phone"
+              label={t('auth.phone')}
+              placeholder="0788 123 456"
+              keyboardType="phone-pad"
+            />
             <FormInput
               control={control}
               name="email"
-              label={t('auth.email')}
+              label={t('auth.emailOptional')}
+              placeholder="name@example.com"
               keyboardType="email-address"
               autoCapitalize="none"
-              required
             />
-            <FormInput control={control} name="phone" label={t('auth.phone')} />
             <FormPinInput
               control={control}
               name="password"
@@ -356,7 +378,7 @@ function UserFormModal({
                 {ROLES.map((r) => (
                   <Picker.Item
                     key={r.value}
-                    label={t(`users.${r.value.toLowerCase()}` as 'users.staff')}
+                    label={t(r.labelKey)}
                     value={r.value}
                   />
                 ))}
@@ -407,6 +429,12 @@ function getInitials(name: string) {
 }
 
 const styles = StyleSheet.create({
+  contactHint: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.muted,
+    marginBottom: 12,
+  },
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',

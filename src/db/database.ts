@@ -103,7 +103,7 @@ async function runMigrations(database: SQLite.SQLiteDatabase, fromVersion: numbe
     if (fromVersion < 13) {
       await migrateSessionIds(database);
     }
-    if (fromVersion < 14) {
+    if (fromVersion < 16) {
       await migrateWaiterTabs(database);
     }
     await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION};`);
@@ -137,12 +137,14 @@ async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promi
   const byName = new Map(columns.map((c) => [c.name, c]));
   const businessCol = byName.get('business_id');
   const roleCol = byName.get('role');
+  const emailCol = byName.get('email');
   const hasPasswordHash = byName.has('password_hash');
 
   const needsRebuild =
     !hasPasswordHash ||
     (businessCol?.notnull ?? 0) === 1 ||
-    (roleCol?.notnull ?? 0) === 1;
+    (roleCol?.notnull ?? 0) === 1 ||
+    (emailCol?.notnull ?? 0) === 1;
 
   if (!needsRebuild) return;
 
@@ -151,10 +153,10 @@ async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promi
       id TEXT PRIMARY KEY,
       business_id TEXT REFERENCES businesses(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
+      email TEXT UNIQUE,
       phone TEXT,
       password_hash TEXT NOT NULL,
-      role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF')),
+      role TEXT CHECK (role IS NULL OR role IN ('OWNER', 'MANAGER', 'CASHIER', 'STAFF', 'SUPER_ADMIN')),
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -191,7 +193,7 @@ async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promi
         String(user.id),
         user.business_id == null || user.business_id === '' ? null : String(user.business_id),
         String(user.name ?? ''),
-        email,
+        email || null,
         user.phone == null || user.phone === '' ? null : String(user.phone),
         passwordHash,
         role,
@@ -208,6 +210,7 @@ async function ensureUsersIdentitySchema(database: SQLite.SQLiteDatabase): Promi
     ALTER TABLE users_identity RENAME TO users;
     CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
   `);
   await database.execAsync('PRAGMA foreign_keys = ON;');
 }
@@ -650,6 +653,15 @@ async function migrateWaiterTabs(database: SQLite.SQLiteDatabase): Promise<void>
   if (tabCols.length > 0 && !tabCols.some((c) => c.name === 'paid_amount')) {
     await database.execAsync(
       `ALTER TABLE waiter_tabs ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0`
+    );
+  }
+  if (tabCols.length > 0 && !tabCols.some((c) => c.name === 'client_label')) {
+    await database.execAsync(`ALTER TABLE waiter_tabs ADD COLUMN client_label TEXT`);
+  }
+  const itemCols = await database.getAllAsync<ColumnInfo>('PRAGMA table_info(waiter_tab_items)');
+  if (itemCols.length > 0 && !itemCols.some((c) => c.name === 'paid_amount')) {
+    await database.execAsync(
+      `ALTER TABLE waiter_tab_items ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0`
     );
   }
 

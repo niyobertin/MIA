@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
-import { Activity, BellRing, Building2, CreditCard, Database, Headset, LayoutDashboard, ScrollText, ShieldAlert, UserCog, Users } from 'lucide-react';
+import { Activity, BellRing, Building2, CreditCard, Database, Headset, KeyRound, LayoutDashboard, ScrollText, ShieldAlert, UserCog, Users } from 'lucide-react';
 import { getErrorMessage } from '../lib/format';
 import { platformApi, setPlatformToken, signOutPlatform, usePlatformToken, type PlatformAdmin } from '../lib/platformAuth';
 import { Shell, type NavGroup } from '../ui/Shell';
@@ -10,6 +10,7 @@ import PlatformLogin, { PasswordField, PlatformFrame } from './PlatformLogin';
 import { PlatformOverview, SyncHealth, Alerts } from './insights';
 import { BusinessDetail, Businesses, PlatformUsers } from './accounts';
 import { Billing } from './billing';
+import { PinHelpRequests } from './pinHelp';
 import { Admins, Announcements, AuditLog, DataRecords, SupportAccess } from './operations';
 
 const AdminContext = createContext<PlatformAdmin | null>(null);
@@ -26,6 +27,7 @@ const NAV: (NavGroup['items'][number] & { group: string; permission: string })[]
   { group: 'Platform', to: '/platform', label: 'Overview', icon: LayoutDashboard, permission: 'metrics:read', end: true },
   { group: 'Platform', to: '/platform/businesses', label: 'Businesses', icon: Building2, permission: 'businesses:read' },
   { group: 'Platform', to: '/platform/users', label: 'User accounts', icon: Users, permission: 'users:read' },
+  { group: 'Platform', to: '/platform/pin-help', label: 'PIN help', icon: KeyRound, permission: 'users:read' },
   { group: 'Platform', to: '/platform/billing', label: 'Subscriptions', icon: CreditCard, permission: 'billing:read' },
   { group: 'Operations', to: '/platform/support', label: 'Support access', icon: Headset, permission: 'support:access' },
   { group: 'Operations', to: '/platform/sync', label: 'Sync health', icon: Activity, permission: 'sync:read' },
@@ -127,7 +129,7 @@ function PlatformApp({ token }: { token: string }) {
             <Route path="businesses" element={<Businesses />} />
             <Route path="businesses/:id" element={<BusinessDetail />} />
           </Route>
-          <Route element={<Guard permission="users:read" />}><Route path="users" element={<PlatformUsers />} /></Route>
+          <Route element={<Guard permission="users:read" />}><Route path="users" element={<PlatformUsers />} /><Route path="pin-help" element={<PinHelpRequests />} /></Route>
           <Route element={<Guard permission="billing:read" />}><Route path="billing" element={<Billing />} /></Route>
           <Route element={<Guard permission="support:access" />}><Route path="support" element={<SupportAccess />} /></Route>
           <Route element={<Guard permission="sync:read" />}><Route path="sync" element={<SyncHealth />} /></Route>

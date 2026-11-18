@@ -58,6 +58,7 @@ export async function notifyBusinessOwners(input: {
     where: { business_id: input.businessId, role: 'OWNER', active: true },
   });
   for (const owner of owners) {
+    if (!owner.email) continue;
     sendMail({ to: owner.email, subject: input.subject, text: `Hello ${owner.name},\n\n${input.message}\n\nReason: ${input.reason}` }).catch((error) => {
       console.error('Could not email business owner', error);
     });

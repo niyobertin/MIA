@@ -15,7 +15,8 @@ export async function isOnline(): Promise<boolean> {
 
 export type CloudAuthUser = {
   id: string;
-  email: string;
+  email: string | null;
+  phone: string | null;
   name: string;
   pinSetupRequired?: boolean;
 };
@@ -25,7 +26,7 @@ type AuthResponse = {
   refresh_token?: string;
   user: {
     id: string;
-    email: string;
+    email: string | null;
     name: string;
     phone?: string | null;
     business_id?: string | null;
@@ -46,7 +47,7 @@ async function persistTokens(data: AuthResponse): Promise<void> {
 }
 
 export async function cloudSignUp(input: {
-  email: string;
+  email?: string | null;
   password: string;
   name: string;
   phone?: string | null;
@@ -63,7 +64,7 @@ export async function cloudSignUp(input: {
     auth: false,
     body: JSON.stringify({
       name: input.name.trim(),
-      email: input.email.trim().toLowerCase(),
+      email: input.email?.trim().toLowerCase() || null,
       password: input.password,
       phone: input.phone?.trim() || null,
     }),
@@ -72,13 +73,14 @@ export async function cloudSignUp(input: {
   await persistTokens(data);
   return {
     id: data.user.id,
-    email: data.user.email,
+    email: data.user.email ?? null,
+    phone: data.user.phone ?? null,
     name: data.user.name,
   };
 }
 
 /** Always hits the API. Throws OFFLINE when there is no network. */
-export async function cloudSignIn(email: string, password: string): Promise<CloudAuthUser> {
+export async function cloudSignIn(identifier: string, password: string): Promise<CloudAuthUser> {
   if (!isApiConfigured) {
     throw new Error('Cloud login is not configured on this build.');
   }
@@ -90,7 +92,7 @@ export async function cloudSignIn(email: string, password: string): Promise<Clou
     method: 'POST',
     auth: false,
     body: JSON.stringify({
-      email: email.trim().toLowerCase(),
+      identifier: identifier.trim(),
       password,
     }),
   });
@@ -98,7 +100,8 @@ export async function cloudSignIn(email: string, password: string): Promise<Clou
   await persistTokens(data);
   return {
     id: data.user.id,
-    email: data.user.email,
+    email: data.user.email ?? null,
+    phone: data.user.phone ?? null,
     name: data.user.name,
     pinSetupRequired: Boolean(data.pin_setup_required),
   };
@@ -111,25 +114,46 @@ export async function cloudChangePin(current: string, pin: string): Promise<void
   });
 }
 
-export async function cloudRequestPinReset(email: string): Promise<void> {
+export async function cloudRequestPinReset(identifier: string): Promise<void> {
   if (!isApiConfigured || !(await isOnline())) {
     throw new Error('OFFLINE');
   }
   await apiFetch<{ ok: boolean }>('/auth/forgot-pin', {
     method: 'POST',
     auth: false,
-    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    body: JSON.stringify({ identifier: identifier.trim() }),
   });
 }
 
-export async function cloudResetPin(email: string, code: string, pin: string): Promise<void> {
+export async function cloudResetPin(identifier: string, code: string, pin: string): Promise<void> {
   if (!isApiConfigured || !(await isOnline())) {
     throw new Error('OFFLINE');
   }
   await apiFetch<{ ok: boolean }>('/auth/reset-pin', {
     method: 'POST',
     auth: false,
-    body: JSON.stringify({ email: email.trim().toLowerCase(), code, pin }),
+    body: JSON.stringify({ identifier: identifier.trim(), code, pin }),
+  });
+}
+
+export async function cloudRequestPinHelp(input: {
+  identifier: string;
+  name: string;
+  contactPhone?: string | null;
+  message?: string | null;
+}): Promise<void> {
+  if (!isApiConfigured || !(await isOnline())) {
+    throw new Error('OFFLINE');
+  }
+  await apiFetch<{ ok: boolean }>('/auth/pin-help', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({
+      identifier: input.identifier.trim(),
+      name: input.name.trim(),
+      contact_phone: input.contactPhone?.trim() || null,
+      message: input.message?.trim() || null,
+    }),
   });
 }
 
@@ -140,11 +164,12 @@ export async function cloudSignOut(): Promise<void> {
 export async function getCloudSessionUser(): Promise<CloudAuthUser | null> {
   if (!isApiConfigured) return null;
   try {
-    const data = await apiFetch<{ user: { id: string; email: string; name: string } }>('/auth/me');
+    const data = await apiFetch<{ user: { id: string; email: string | null; phone?: string | null; name: string } }>('/auth/me');
     if (!data.user?.id) return null;
     return {
       id: data.user.id,
-      email: data.user.email,
+      email: data.user.email ?? null,
+      phone: data.user.phone ?? null,
       name: data.user.name,
     };
   } catch {
@@ -192,7 +217,7 @@ export async function cloudRefreshSession(): Promise<AuthResponse | null> {
  * 3) Else password login when provided
  */
 export async function ensureCloudSession(options?: {
-  email?: string | null;
+  identifier?: string | null;
   password?: string | null;
 }): Promise<void> {
   if (!isApiConfigured) {
@@ -214,10 +239,10 @@ export async function ensureCloudSession(options?: {
 
   if (await hasValidCloudSession()) return;
 
-  const email = options?.email?.trim().toLowerCase();
+  const identifier = options?.identifier?.trim();
   const password = options?.password;
-  if (email && password) {
-    await cloudSignIn(email, password);
+  if (identifier && password) {
+    await cloudSignIn(identifier, password);
     return;
   }
 

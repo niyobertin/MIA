@@ -11,7 +11,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { Picker } from '@react-native-picker/picker';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
 import { MoneyText } from '@/components/MoneyText';
@@ -32,7 +31,14 @@ import {
 } from '@/hooks/useData';
 import { PAYMENT_METHODS } from '@/constants';
 import { WaiterTabStatus } from '@/types';
-import { formatRecordDateTime } from '@/utils/formatters';
+import { formatRecordDateTime, formatTime } from '@/utils/formatters';
+import {
+  itemPayState,
+  rebalanceItemPayments,
+  unpaidForItems,
+} from '@/services/books/waiterAllocation';
+import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
+import { useAuthStore } from '@/stores/authStore';
 
 const PAY_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -54,6 +60,7 @@ export default function WaiterTabDetailScreen() {
   const adjustMutation = useAdjustWaiterTabItem();
   const returnMutation = useReturnWaiterTabItems();
   const returnPaidMutation = useReturnPaidWaiterTab();
+  const business = useAuthStore((s) => s.business);
 
   const [amountText, setAmountText] = React.useState('');
   const [payNotes, setPayNotes] = React.useState('');
@@ -72,6 +79,7 @@ export default function WaiterTabDetailScreen() {
   const [adjustingId, setAdjustingId] = React.useState<string | null>(null);
   const [highlightIds, setHighlightIds] = React.useState<Set<string>>(new Set());
   const amountTouched = React.useRef(false);
+  const [payItemIds, setPayItemIds] = React.useState<string[]>([]);
 
   const balanceDue = tab?.balance_due ?? 0;
   const canPay =
@@ -146,9 +154,11 @@ export default function WaiterTabDetailScreen() {
         amount: payAmount,
         paymentMethod,
         notes: payNotes.trim() || undefined,
+        itemIds: payItemIds,
       });
       setShowPayConfirm(false);
       setPayNotes('');
+      setPayItemIds([]);
       amountTouched.current = false;
       showToast(t('waiterTabs.paymentRecorded'), 'success');
       refetch();
@@ -292,6 +302,43 @@ export default function WaiterTabDetailScreen() {
   }
 
   const items = (tab.items ?? []).filter((i) => i.quantity_outstanding > 0);
+  const allocItems = items.map((i) => ({
+    id: i.id,
+    value: i.quantity_outstanding * i.selling_price,
+    paid: i.paid_amount ?? 0,
+    issuedAt: i.created_at,
+  }));
+  const linePaid = rebalanceItemPayments(allocItems, tab.paid_amount ?? 0);
+  const allocNow = allocItems.map((i) => ({ ...i, paid: linePaid[i.id] ?? 0 }));
+
+  const togglePayItem = (itemId: string) => {
+    const next = payItemIds.includes(itemId)
+      ? payItemIds.filter((id) => id !== itemId)
+      : [...payItemIds, itemId];
+    setPayItemIds(next);
+    amountTouched.current = true;
+    setAmountText(String(next.length ? unpaidForItems(allocNow, next) : balanceDue));
+  };
+
+  const shareReceipt = async () => {
+    try {
+      const extraLines = [{ label: t('waiterTabs.waiter'), value: tab.waiter_name ?? '—' }];
+      if (tab.client_label) extraLines.push({ label: t('waiterTabs.client'), value: tab.client_label });
+      await shareReceiptPdf(
+        receiptFromBusiness(business, {
+          date: formatRecordDateTime(tab.created_at),
+          reference: tab.id.slice(0, 8).toUpperCase(),
+          lines: items.map((i) => ({ name: i.product_name ?? '—', qty: i.quantity_outstanding, price: i.selling_price })),
+          subtotal: tab.total_amount ?? 0,
+          total: tab.total_amount ?? 0,
+          extraLines,
+        })
+      );
+      showToast(t('sales.receiptShared'), 'success');
+    } catch {
+      showToast(t('sales.saleFailed'), 'error');
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -306,6 +353,11 @@ export default function WaiterTabDetailScreen() {
           <View style={styles.summaryTop}>
             <View style={{ flex: 1 }}>
               <Text style={styles.waiterName}>{tab.waiter_name ?? '—'}</Text>
+              {tab.client_label ? (
+                <Text style={styles.clientText}>
+                  {t('waiterTabs.client')}: {tab.client_label}
+                </Text>
+              ) : null}
               <Text style={styles.tabDate}>{formatRecordDateTime(tab.created_at)}</Text>
               {tab.notes ? (
                 <Text style={styles.tabNotes}>📝 {tab.notes}</Text>
@@ -327,6 +379,12 @@ export default function WaiterTabDetailScreen() {
               <MoneyText amount={balanceDue} size={15} weight="800" color={colors.primary} />
             </View>
           </View>
+          {items.length > 0 ? (
+            <TouchableOpacity style={styles.shareRow} onPress={() => void shareReceipt()} accessibilityRole="button">
+              <Ionicons name="share-outline" size={18} color={colors.primary} />
+              <Text style={styles.shareText}>{t('waiterTabs.shareReceipt')}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <View style={styles.sectionRow}>
@@ -354,6 +412,8 @@ export default function WaiterTabDetailScreen() {
             const highlighted = highlightIds.has(item.id);
             const busy = adjustingId === item.id && adjustMutation.isPending;
             const retQty = returnQtys[item.id] ?? 0;
+            const payState = itemPayState(item.quantity_outstanding * item.selling_price, linePaid[item.id] ?? 0);
+            const picked = payItemIds.includes(item.id);
             return (
               <View
                 key={item.id}
@@ -361,15 +421,47 @@ export default function WaiterTabDetailScreen() {
                   styles.itemCard,
                   highlighted ? styles.itemCardHighlight : null,
                   returnMode && retQty > 0 ? styles.itemCardReturn : null,
+                  picked ? styles.itemCardPicked : null,
                 ]}
               >
-                <View style={styles.itemMain}>
-                  <Text style={styles.itemName}>{item.product_name ?? '—'}</Text>
+                <TouchableOpacity
+                  style={styles.itemMain}
+                  disabled={!canPay || returnMode || payState === 'paid'}
+                  onPress={() => togglePayItem(item.id)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: picked }}
+                >
+                  <View style={styles.itemNameRow}>
+                    {canPay && !returnMode && payState !== 'paid' ? (
+                      <Ionicons
+                        name={picked ? 'checkbox' : 'square-outline'}
+                        size={20}
+                        color={picked ? colors.primary : colors.faint}
+                      />
+                    ) : null}
+                    <Text style={styles.itemName}>{item.product_name ?? '—'}</Text>
+                  </View>
                   <Text style={styles.itemMeta}>
-                    {item.selling_price.toLocaleString()} RWF · {t('waiterTabs.qty')}{' '}
+                    {formatTime(item.created_at)} · {item.selling_price.toLocaleString()} RWF ×{' '}
                     {item.quantity_outstanding}
                   </Text>
-                </View>
+                  <Text
+                    style={[
+                      styles.payState,
+                      payState === 'paid'
+                        ? styles.payStatePaid
+                        : payState === 'part'
+                          ? styles.payStatePart
+                          : styles.payStateUnpaid,
+                    ]}
+                  >
+                    {payState === 'paid'
+                      ? t('waiterTabs.linePaid')
+                      : payState === 'part'
+                        ? t('waiterTabs.linePartPaid', { amount: (linePaid[item.id] ?? 0).toLocaleString() })
+                        : t('waiterTabs.lineUnpaid')}
+                  </Text>
+                </TouchableOpacity>
                 <MoneyText
                   amount={item.quantity_outstanding * item.selling_price}
                   size={13}
@@ -452,7 +544,7 @@ export default function WaiterTabDetailScreen() {
         {canPay ? (
           <View style={styles.payCard}>
             <Text style={styles.section}>{t('waiterTabs.recordPayment')}</Text>
-            <Text style={styles.partialHint}>{t('waiterTabs.partialPayHint')}</Text>
+            <Text style={styles.partialHint}>{t('waiterTabs.pickItemsHint')}</Text>
             {tab.status === 'debt' ? (
               <Text style={styles.partialHint}>{t('waiterTabs.debtPayAnytime')}</Text>
             ) : null}
@@ -488,19 +580,23 @@ export default function WaiterTabDetailScreen() {
                 />
               </View>
             </View>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={paymentMethod}
-                onValueChange={(v) => setPaymentMethod(v as typeof paymentMethod)}
-              >
-                {PAY_METHODS.map((m) => (
-                  <Picker.Item
+            <View style={styles.methodRow}>
+              {PAY_METHODS.map((m) => {
+                const active = paymentMethod === m.value;
+                return (
+                  <TouchableOpacity
                     key={m.value}
-                    label={t(`common.${m.value === 'mobile_money' ? 'mobileMoney' : m.value}` as any)}
-                    value={m.value}
-                  />
-                ))}
-              </Picker>
+                    style={[styles.methodChip, active && styles.methodChipActive]}
+                    onPress={() => setPaymentMethod(m.value as typeof paymentMethod)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.methodText, active && styles.methodTextActive]}>
+                      {t(`common.${m.value === 'mobile_money' ? 'mobileMoney' : m.value}` as 'common.cash')}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
             <TextInput
               style={styles.payNotesInput}
@@ -703,6 +799,39 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   waiterName: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  itemNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  itemCardPicked: { borderColor: colors.primary, borderWidth: 2 },
+  payState: { fontSize: 13, fontWeight: '700', marginTop: 2 },
+  payStatePaid: { color: colors.successText },
+  payStatePart: { color: colors.warningText },
+  payStateUnpaid: { color: colors.muted },
+  methodRow: { flexDirection: 'row', gap: spacing.sm, marginVertical: spacing.sm },
+  methodChip: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    backgroundColor: colors.card,
+  },
+  methodChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  methodText: { fontSize: 14, fontWeight: '600', color: colors.body, textAlign: 'center' },
+  methodTextActive: { color: colors.primaryText, fontWeight: '700' },
+  clientText: { fontSize: 15, fontWeight: '600', color: colors.primary, marginTop: 2 },
+  shareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    marginTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
+  shareText: { fontSize: 15, fontWeight: '700', color: colors.primary },
   tabDate: { fontSize: 11, color: colors.muted, marginTop: 2 },
   tabNotes: { fontSize: 12, color: colors.body, fontStyle: 'italic', marginTop: 4 },
   moneyRow: { flexDirection: 'row', gap: spacing.sm },

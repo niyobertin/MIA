@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { EntityTarget, ObjectLiteral } from 'typeorm';
 import { AppDataSource } from '../data-source';
+import { findUserByIdentifier, findUsersByPhone, normalizeEmail, normalizePhone } from '../lib/identity';
 import {
   Business,
   User,
@@ -105,13 +106,13 @@ const TABLE_COLUMNS: Record<string, string[]> = {
     'created_at', 'updated_at',
   ],
   waiter_tabs: [
-    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'sale_id',
+    'id', 'business_id', 'session_id', 'waiter_user_id', 'customer_id', 'client_label', 'sale_id',
     'status', 'paid_amount', 'notes', 'issued_by', 'device_id', 'sync_status',
     'created_at', 'updated_at',
   ],
   waiter_tab_items: [
     'id', 'business_id', 'tab_id', 'product_id', 'quantity', 'selling_price',
-    'unit_cost', 'quantity_outstanding', 'created_at', 'updated_at',
+    'unit_cost', 'quantity_outstanding', 'paid_amount', 'created_at', 'updated_at',
   ],
   audit_logs: [
     'id', 'business_id', 'user_id', 'role', 'action', 'entity', 'entity_id',
@@ -238,7 +239,7 @@ const NON_NEGATIVE_MONEY: Record<string, string[]> = {
   customers: ['credit_limit'],
   daily_stock_lines: ['opening_qty', 'opening_unit_cost', 'closing_qty', 'closing_unit_cost', 'counted_qty'],
   waiter_tabs: ['paid_amount'],
-  waiter_tab_items: ['quantity', 'selling_price', 'unit_cost', 'quantity_outstanding'],
+  waiter_tab_items: ['quantity', 'selling_price', 'unit_cost', 'quantity_outstanding', 'paid_amount'],
 };
 
 const POSITIVE_REQUIRED: Record<string, string[]> = {
@@ -519,9 +520,37 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
         }
       }
 
-      if (typeof payload.email === 'string') {
-        payload.email = payload.email.trim().toLowerCase();
+      const rawEmail = typeof payload.email === 'string' ? payload.email.trim() : '';
+      const rawPhone = typeof payload.phone === 'string' ? payload.phone.trim() : '';
+      const email = rawEmail ? normalizeEmail(rawEmail) : null;
+      const phone = rawPhone ? normalizePhone(rawPhone) : null;
+      if (rawEmail && !email) {
+        res.status(400).json({ error: 'Enter a valid email address', code: 'EMAIL_INVALID' });
+        return;
       }
+      if (rawPhone && !phone) {
+        res.status(400).json({ error: 'Enter a valid phone number', code: 'PHONE_INVALID' });
+        return;
+      }
+      if (!email && !phone) {
+        res.status(400).json({ error: 'Each team member needs an email or a phone number', code: 'IDENTIFIER_REQUIRED' });
+        return;
+      }
+      if (email) {
+        const emailOwner = (await findUserByIdentifier({ kind: 'email', value: email })).user;
+        if (emailOwner && emailOwner.id !== targetId) {
+          res.status(409).json({ error: 'An account with this email already exists', code: 'EMAIL_TAKEN' });
+          return;
+        }
+      }
+      const currentRow = await AppDataSource.getRepository(User).findOne({ where: { id: targetId } });
+      const phoneChanged = phone !== null && normalizePhone(currentRow?.phone) !== phone;
+      if (phoneChanged && phone && (await findUsersByPhone(phone, targetId)).length > 0) {
+        res.status(409).json({ error: 'An account with this phone number already exists', code: 'PHONE_TAKEN' });
+        return;
+      }
+      payload.email = email;
+      payload.phone = phone;
     } else if (table === 'businesses') {
       const businessId = String(payload.id);
       if (actor.business_id && actor.business_id !== businessId) {

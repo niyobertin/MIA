@@ -42,9 +42,9 @@ function Notice({ tone, children }: { tone: 'error' | 'success'; children: React
 }
 
 const HEADINGS: Record<Step, { title: string; subtitle: string; submit: string; busy: string }> = {
-  signIn: { title: 'Sign in', subtitle: 'Use the email and PIN from your MIA app.', submit: 'Sign in', busy: 'Signing in…' },
-  forgot: { title: 'Reset your PIN', subtitle: 'Enter your account email and we will send you a 6-digit code.', submit: 'Send code', busy: 'Sending…' },
-  reset: { title: 'Choose a new PIN', subtitle: 'If that email has a MIA account, a code is on its way. It expires in 15 minutes.', submit: 'Reset PIN', busy: 'Resetting…' },
+  signIn: { title: 'Sign in', subtitle: 'Use the email or phone number and PIN from your MIA app.', submit: 'Sign in', busy: 'Signing in…' },
+  forgot: { title: 'Reset your PIN', subtitle: 'Enter your email or phone number. If the account has an email, we will send a 6-digit code there. No email? Use "Forgot your PIN?" in the MIA app to ask MIA support.', submit: 'Send code', busy: 'Sending…' },
+  reset: { title: 'Choose a new PIN', subtitle: 'If this account has an email address, a code is on its way. It expires in 15 minutes.', submit: 'Reset PIN', busy: 'Resetting…' },
 };
 
 export default function Login() {
@@ -94,7 +94,7 @@ export default function Login() {
     setSuccess(null);
     try {
       await requestPinReset(email);
-      setSuccess('If that email has a MIA account, a new code will arrive shortly. Codes can be sent once a minute.');
+      setSuccess('If this account has an email address, a new code will arrive shortly. Codes can be sent once a minute.');
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'Something went wrong. Please try again.');
     }
@@ -124,8 +124,8 @@ export default function Login() {
 
           {step !== 'reset' ? (
             <div>
-              <label htmlFor="email" className={labelClass}>Email</label>
-              <input id="email" type="email" autoComplete="username" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
+              <label htmlFor="email" className={labelClass}>Email or phone number</label>
+              <input id="email" type="text" inputMode="email" placeholder="0788 123 456 or name@example.com" autoComplete="username" autoFocus required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
             </div>
           ) : (
             <div>
