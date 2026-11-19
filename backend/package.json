@@ -2,7 +2,7 @@
   "name": "mia-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "MIA API \u2014 Express + TypeORM + PostgreSQL",
+  "description": "MIA API — Express + TypeORM + PostgreSQL",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -32,6 +32,7 @@
     "nodemailer": "^7.0.13",
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
+    "socket.io": "^4.8.1",
     "typeorm": "^0.3.26",
     "zod": "^4.6.5"
   },

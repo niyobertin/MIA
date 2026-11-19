@@ -83,6 +83,7 @@ const SUPER_ADMIN_PERMISSIONS = [
   'audit:read',
   'data:manage',
   'announcements:manage',
+  'communications:manage',
   'flags:manage',
   'admins:manage',
 ] as const;

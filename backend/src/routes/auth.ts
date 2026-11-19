@@ -1,8 +1,8 @@
 import { randomInt, randomUUID } from 'crypto';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { AppDataSource } from '../data-source';
-import { Business, PinHelpRequest, PinResetCode, User } from '../entities';
+import { Business, PinHelpRequest, PinResetCode, User, UserLoginEvent } from '../entities';
 import {
   hashPassword,
   issueTokenPair,
@@ -13,7 +13,7 @@ import {
 import { emailAndIpKey, rateLimit } from '../middleware/security';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 import { isBusinessSuspended, SUSPENDED_RESPONSE } from '../lib/businessState';
-import { sendMail } from '../lib/mailer';
+import { formatEventTime, queueTemplateEmail, sendSensitiveTemplateEmail } from '../lib/email';
 import { getPinProblem, isPinFormat, pinLockDurationMs, PIN_ATTEMPTS_BEFORE_LOCK } from '../lib/pin';
 import {
   findUserByIdentifier,
@@ -107,6 +107,9 @@ async function checkSecret(user: User, secret: string): Promise<
     const lockedUntil = lockMs > 0 ? new Date(now.getTime() + lockMs) : null;
     await users.update(user.id, { failed_login_attempts: attempts, locked_until: lockedUntil });
     if (lockedUntil) {
+      if (user.email) {
+        void queueTemplateEmail({ template: 'auth.suspicious_login', to: user.email, businessId: user.business_id, idempotencyKey: `locked:${user.id}:${lockedUntil.toISOString()}`, variables: { recipient_name: user.name, event_time: formatEventTime(now) } });
+      }
       return { ok: false, status: 423, body: lockedResponse(lockedUntil) };
     }
     return {
@@ -246,15 +249,18 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
 
     const check = await checkSecret(user, body.password);
     if (!check.ok) {
+      await recordLoginEvent(req, user, false);
       res.status(check.status).json(check.body);
       return;
     }
 
     if (await isBusinessSuspended(user.business_id)) {
+      await recordLoginEvent(req, user, false);
       res.status(403).json(SUSPENDED_RESPONSE);
       return;
     }
 
+    await recordLoginEvent(req, user, true);
     const business = user.business_id
       ? await businesses.findOne({ where: { id: user.business_id } })
       : null;
@@ -275,6 +281,34 @@ authRouter.post('/login', loginIpLimiter, loginLimiter, async (req, res) => {
   }
 });
 
+async function recordLoginEvent(req: Request, user: User, success: boolean) {
+  try {
+    const now = new Date();
+    await AppDataSource.getRepository(UserLoginEvent).insert({
+      id: randomUUID(),
+      user_id: user.id,
+      business_id: user.business_id,
+      success,
+      ip: req.ip ?? null,
+      user_agent: String(req.headers['user-agent'] ?? '').slice(0, 200) || null,
+      created_at: now,
+    });
+    if (success) {
+      const [seen] = await AppDataSource.query(
+        `SELECT EXISTS (SELECT 1 FROM user_login_events WHERE user_id = $1 AND success AND ip IS NOT DISTINCT FROM $2 AND created_at < $3) AS same_ip,
+                EXISTS (SELECT 1 FROM user_login_events WHERE user_id = $1 AND success AND created_at < $3) AS any_before`,
+        [user.id, req.ip ?? null, now],
+      );
+      await AppDataSource.getRepository(User).update(user.id, { last_login_at: now });
+      if (user.email && seen?.any_before && !seen?.same_ip) {
+        void queueTemplateEmail({ template: 'auth.new_login', to: user.email, businessId: user.business_id, variables: { recipient_name: user.name, event_time: formatEventTime(now), ip_address: req.ip ?? 'unknown', device: String(req.headers['user-agent'] ?? 'Unknown device').slice(0, 80) } });
+      }
+    }
+  } catch (error) {
+    console.error('Could not record sign-in', error);
+  }
+}
+
 export async function issuePinResetCode(user: User) {
   if (!user.active || !user.email) return;
 
@@ -294,16 +328,11 @@ export async function issuePinResetCode(user: User) {
     }),
   );
 
-  await sendMail({
+  await sendSensitiveTemplateEmail({
+    template: 'auth.password_reset',
     to: user.email,
-    subject: 'Your MIA PIN reset code',
-    text: [
-      `Hello ${user.name},`,
-      '',
-      `Your MIA PIN reset code is ${code}. It expires in 15 minutes.`,
-      '',
-      'If you did not ask to reset your PIN, you can ignore this email. Your PIN has not changed.',
-    ].join('\n'),
+    businessId: user.business_id,
+    variables: { recipient_name: user.name, verification_code: code, expiration_time: '15 minutes' },
   });
 }
 
@@ -455,6 +484,7 @@ authRouter.post('/change-pin', loginLimiter, requireAuth, async (req: AuthedRequ
       must_change_pin: false,
       updated_at: new Date(),
     });
+    if (user.email) void queueTemplateEmail({ template: 'auth.password_changed', to: user.email, businessId: user.business_id, variables: { recipient_name: user.name, event_time: formatEventTime(new Date()) } });
     res.json({ ok: true });
   } catch (error) {
     if (error instanceof z.ZodError) {

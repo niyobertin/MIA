@@ -1,57 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { formatDate, formatDateTime, formatDay, formatMoney, formatNumber, humanize } from '../lib/format';
+import { formatDate, formatDateTime, formatMoney, humanize } from '../lib/format';
 import { platformApi } from '../lib/platformAuth';
-import { BarList, TrendChart } from '../ui/charts';
 import { Badge, Card, DataTable, EmptyNotice, PageHeader, QueryBoundary, Stat } from '../ui/kit';
 
 type Row = Record<string, any>;
-
-type Overview = {
-  totals: Record<string, number>;
-  retention: { eligible: number; retained: number };
-  volume_30d: { currency: string; sales: number; total: number }[];
-  roles: { role: string; count: number }[];
-  signups: { day: string; count: number }[];
-  plans: { plan: string; count: number }[];
-};
-
-export function PlatformOverview() {
-  const query = useQuery({ queryKey: ['platform-overview'], queryFn: async () => (await platformApi.get<Overview>('/overview')).data, refetchInterval: 60000 });
-  return (
-    <>
-      <PageHeader title="Platform overview" subtitle="Across all businesses on MIA." />
-      <QueryBoundary query={query}>
-        {(data) => {
-          const retention = data.retention.eligible ? `${Math.round((data.retention.retained / data.retention.eligible) * 100)}%` : '—';
-          return (
-            <div className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <Stat label="Businesses" value={formatNumber(data.totals.businesses)} hint={`${formatNumber(data.totals.new_businesses_30d)} new in 30 days`} />
-                <Stat label="Active in 7 days" value={formatNumber(data.totals.active_7d)} hint={`${formatNumber(data.totals.active_30d)} active in 30 days`} />
-                <Stat label="30-day retention" value={retention} hint={`${data.retention.retained} of ${data.retention.eligible} businesses older than 30 days`} />
-                <Stat label="Suspended" value={formatNumber(data.totals.suspended)} />
-                <Stat label="Users" value={formatNumber(data.totals.users)} hint={`${formatNumber(data.totals.active_users)} active`} />
-                {data.volume_30d.length === 0 ? <Stat label="Sales volume (30 days)" value={formatNumber(0)} /> : data.volume_30d.map((row) => (
-                  <Stat key={row.currency} label="Sales volume (30 days)" value={formatMoney(row.total, row.currency)} hint={`${formatNumber(row.sales)} sales`} />
-                ))}
-              </div>
-              <div className="grid gap-6 lg:grid-cols-3">
-                <Card title="New businesses by day" className="lg:col-span-2">
-                  <div className="p-5"><TrendChart name="New businesses" format={formatNumber} points={data.signups.map((row) => ({ label: formatDay(row.day), value: row.count }))} /></div>
-                </Card>
-                <div className="space-y-6">
-                  <Card title="Users by role"><div className="p-5"><BarList format={formatNumber} empty="No users yet." items={data.roles.map((row) => ({ label: humanize(row.role), value: row.count }))} /></div></Card>
-                  <Card title="Businesses by plan"><div className="p-5"><BarList format={formatNumber} empty="No businesses yet." items={data.plans.map((row) => ({ label: humanize(row.plan), value: row.count }))} /></div></Card>
-                </div>
-              </div>
-            </div>
-          );
-        }}
-      </QueryBoundary>
-    </>
-  );
-}
 
 export function SyncHealth() {
   const query = useQuery({

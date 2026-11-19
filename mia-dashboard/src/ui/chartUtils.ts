@@ -6,6 +6,7 @@ export function compactNumber(value: number) {
   for (const [size, suffix] of units) {
     if (abs >= size) return `${Number((value / size).toFixed(abs / size >= 100 ? 0 : 1))}${suffix}`;
   }
+  if (!Number.isInteger(value) && abs < 10) return String(Number(value.toFixed(abs < 1 ? 2 : 1)));
   return String(Math.round(value));
 }
 

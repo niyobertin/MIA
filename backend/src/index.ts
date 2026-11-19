@@ -1,6 +1,11 @@
 import 'reflect-metadata';
 import dotenv from 'dotenv';
 import express from 'express';
+import { createServer } from 'http';
+import { attachRealtime } from './lib/realtime';
+import { startLifecycleJobs } from './lib/lifecycle';
+import { startEmailWorker } from './lib/email';
+import { emailWebhookRouter } from './routes/platformComms';
 import cors from 'cors';
 import { initDatabase } from './data-source';
 import { authRouter } from './routes/auth';
@@ -53,10 +58,15 @@ async function main() {
   app.use('/dashboard/reports', reportsRouter);
   app.use('/dashboard', dashboardRouter);
   app.use('/platform', platformRouter);
+  app.use('/webhooks', emailWebhookRouter);
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = createServer(app);
+  attachRealtime(server, CORS_ORIGIN);
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`MIA API listening on http://0.0.0.0:${PORT}`);
   });
+  startLifecycleJobs();
+  void startEmailWorker();
 }
 
 main().catch((error) => {

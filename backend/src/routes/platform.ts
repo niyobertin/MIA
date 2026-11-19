@@ -2,25 +2,20 @@ import { randomBytes, randomInt, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Router, type NextFunction, type Response } from 'express';
-import { ILike, IsNull, MoreThan } from 'typeorm';
+import { ILike } from 'typeorm';
 import { z } from 'zod';
 import { AppDataSource } from '../data-source';
 import {
-  Announcement,
   Business,
-  BusinessPlatformState,
   DataRequest,
   PinHelpRequest,
   PlatformAdmin,
-  PlatformAuditLog,
   PlatformLoginCode,
   SubscriptionInvoice,
-  SupportAccessGrant,
   User,
   type PlatformRole,
 } from '../entities';
 import { hashPassword, verifyPassword } from '../lib/auth';
-import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
 import { getBusinessState, upsertBusinessState } from '../lib/businessState';
 import { notifyBusinessOwners, recordPlatformAudit } from '../lib/platformAudit';
 import {
@@ -31,7 +26,6 @@ import {
   verifyPlatformToken,
 } from '../lib/platformAuth';
 import { FEATURE_FLAGS, platformPermissionsFor, resolveFlags } from '../lib/rbac';
-import { sendMail } from '../lib/mailer';
 import { emailAndIpKey, rateLimit } from '../middleware/security';
 import {
   requirePasswordCurrent,
@@ -40,6 +34,12 @@ import {
   type PlatformRequest,
 } from '../middleware/platform';
 import { issuePinResetCode } from './auth';
+import { platformAdminRouter } from './platformAdmin';
+import { platformSupportRouter } from './platformSupport';
+import { platformNotificationsRouter } from './platformNotifications';
+import { platformCommsRouter } from './platformComms';
+import { formatEventTime, queueTemplateEmail, sendSensitiveTemplateEmail } from '../lib/email';
+import { notifyAdmins } from '../lib/notifications';
 import { listWindow, windowWhere } from './dashboardShared';
 import { generateTemporaryPin } from '../lib/pin';
 
@@ -87,6 +87,10 @@ async function recordFailure(admin: PlatformAdmin) {
     failed_attempts: locked ? 0 : attempts,
     locked_until: locked ? new Date(Date.now() + FIFTEEN_MINUTES) : admin.locked_until,
   });
+  if (locked) {
+    void queueTemplateEmail({ template: 'auth.suspicious_login', to: admin.email, variables: { recipient_name: admin.name, event_time: formatEventTime(new Date()) } });
+    void notifyAdmins({ permission: 'admins:manage', exceptAdminId: admin.id, category: 'security', priority: 'high', title: `${admin.name}'s platform account was locked`, message: 'Five failed sign-in attempts in a row.', actionUrl: '/platform/audit', dedupeKey: `admin-locked:${admin.id}:${new Date().toISOString().slice(0, 13)}` });
+  }
 }
 
 function isLocked(admin: PlatformAdmin) {
@@ -94,6 +98,14 @@ function isLocked(admin: PlatformAdmin) {
 }
 
 async function completeLogin(req: PlatformRequest, res: Response, admin: PlatformAdmin) {
+  const [seen] = await AppDataSource.query(
+    `SELECT EXISTS (SELECT 1 FROM platform_audit_logs WHERE admin_id = $1 AND action = 'admin.login' AND ip IS NOT DISTINCT FROM $2) AS same_ip,
+            EXISTS (SELECT 1 FROM platform_audit_logs WHERE admin_id = $1 AND action = 'admin.login') AS any_before`,
+    [admin.id, req.ip ?? null],
+  );
+  if (seen?.any_before && !seen?.same_ip) {
+    void queueTemplateEmail({ template: 'auth.new_login', to: admin.email, variables: { recipient_name: admin.name, event_time: formatEventTime(new Date()), ip_address: req.ip ?? 'unknown', device: String(req.headers['user-agent'] ?? 'Unknown device').slice(0, 80) } });
+  }
   await AppDataSource.getRepository(PlatformAdmin).update(admin.id, {
     failed_attempts: 0,
     locked_until: null,
@@ -131,16 +143,10 @@ async function sendLoginCode(admin: PlatformAdmin, force = false): Promise<'sent
       created_at: new Date(now),
     }),
   );
-  await sendMail({
+  await sendSensitiveTemplateEmail({
+    template: 'auth.sign_in_code',
     to: admin.email,
-    subject: `Your MIA Platform sign-in code: ${code}`,
-    text: [
-      `Hello ${admin.name},`,
-      '',
-      `Your MIA Platform sign-in code is ${code}. It expires in 10 minutes.`,
-      '',
-      'If you did not try to sign in, someone may know your password. Change it and tell your team lead.',
-    ].join('\n'),
+    variables: { recipient_name: admin.name, verification_code: code, expiration_time: '10 minutes' },
   });
   return 'sent';
 }
@@ -277,114 +283,15 @@ platformRouter.post('/auth/change-password', async (req: PlatformRequest, res) =
     updated_at: new Date(),
   });
   await recordPlatformAudit({ req, admin, action: 'admin.password_changed', targetType: 'admin', targetId: admin.id });
+  void queueTemplateEmail({ template: 'auth.password_changed', to: admin.email, variables: { recipient_name: admin.name, event_time: formatEventTime(new Date()) } });
   res.json({ token: signPlatformSession(admin.id, version) });
 });
 
 platformRouter.use(requirePasswordCurrent);
-
-platformRouter.get('/overview', requirePermission('metrics:read'), async (_req, res) => {
-  const [totals] = await q(`
-    SELECT
-      (SELECT COUNT(*) FROM businesses) AS businesses,
-      (SELECT COUNT(*) FROM businesses WHERE created_at >= now() - interval '30 days') AS new_businesses_30d,
-      (SELECT COUNT(*) FROM business_platform_states WHERE status = 'suspended') AS suspended,
-      (SELECT COUNT(*) FROM users) AS users,
-      (SELECT COUNT(*) FROM users WHERE active) AS active_users,
-      (SELECT COUNT(DISTINCT business_id) FROM sales WHERE sale_date >= now() - interval '7 days' AND voided = false) AS active_7d,
-      (SELECT COUNT(DISTINCT business_id) FROM sales WHERE sale_date >= now() - interval '30 days' AND voided = false) AS active_30d`);
-  const [retention] = await q(`
-    SELECT COUNT(*) AS eligible,
-           COUNT(*) FILTER (WHERE EXISTS (
-             SELECT 1 FROM sales s WHERE s.business_id = b.id AND s.voided = false AND s.sale_date >= now() - interval '30 days'
-           )) AS retained
-    FROM businesses b WHERE b.created_at < now() - interval '30 days'`);
-  const [volume, roles, signups, plans] = await Promise.all([
-    q(`SELECT b.currency, COUNT(*) AS sales, COALESCE(SUM(s.total_amount), 0) AS total
-       FROM sales s JOIN businesses b ON b.id = s.business_id
-       WHERE s.voided = false AND s.sale_date >= now() - interval '30 days'
-       GROUP BY b.currency ORDER BY total DESC`),
-    q(`SELECT COALESCE(role, 'NONE') AS role, COUNT(*) AS count FROM users GROUP BY 1 ORDER BY 2 DESC`),
-    q(`SELECT to_char(d, 'YYYY-MM-DD') AS day, COUNT(b.id) AS count
-       FROM generate_series(date_trunc('day', now()) - interval '29 days', date_trunc('day', now()), interval '1 day') d
-       LEFT JOIN businesses b ON date_trunc('day', b.created_at) = d
-       GROUP BY d ORDER BY d`),
-    q(`SELECT COALESCE(s.plan, 'free') AS plan, COUNT(*) AS count
-       FROM businesses b LEFT JOIN business_platform_states s ON s.business_id = b.id GROUP BY 1 ORDER BY 2 DESC`),
-  ]);
-  res.json({
-    totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, num(value)])),
-    retention: { eligible: num(retention.eligible), retained: num(retention.retained) },
-    volume_30d: volume.map((row) => ({ currency: row.currency, sales: num(row.sales), total: num(row.total) })),
-    roles: roles.map((row) => ({ role: row.role, count: num(row.count) })),
-    signups: signups.map((row) => ({ day: row.day, count: num(row.count) })),
-    plans: plans.map((row) => ({ plan: row.plan, count: num(row.count) })),
-  });
-});
-
-platformRouter.get('/businesses', requirePermission('businesses:read'), async (req, res) => {
-  const page = pageSchema.parse(req.query);
-  const status = z.enum(['all', 'active', 'suspended']).default('all').parse(req.query.status);
-  const win = await listWindow(req, { date: 'b.created_at', name: 'b.name', users: 'users' }, 'date');
-  if ('error' in win) {
-    res.status(400).json({ error: win.error });
-    return;
-  }
-  const params = [searchTerm(page.q), status, win.from, win.to];
-  const where = `($1::text IS NULL OR b.name ILIKE $1 OR b.business_code ILIKE $1)
-    AND ($2 = 'all' OR COALESCE(st.status, 'active') = $2) AND ${windowWhere('b.created_at', 3)}`;
-  const from = `FROM businesses b LEFT JOIN business_platform_states st ON st.business_id = b.id`;
-  const [rows, [count]] = await Promise.all([
-    q(
-      `SELECT b.id, b.name, b.business_code, b.currency, b.country, b.created_at,
-              COALESCE(st.status, 'active') AS status, COALESCE(st.plan, 'free') AS plan,
-              COALESCE(st.subscription_status, 'trial') AS subscription_status,
-              (SELECT COUNT(*) FROM users u WHERE u.business_id = b.id) AS users,
-              (SELECT u.email FROM users u WHERE u.business_id = b.id AND u.role = 'OWNER' ORDER BY u.created_at LIMIT 1) AS owner_email,
-              (SELECT MAX(s.updated_at) FROM sales s WHERE s.business_id = b.id) AS last_sale_sync
-       ${from} WHERE ${where} ORDER BY ${win.orderBy}, b.created_at DESC LIMIT $5 OFFSET $6`,
-      [...params, page.limit, page.offset],
-    ),
-    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
-  ]);
-  res.json({ total: num(count.total), rows: rows.map((row) => ({ ...row, users: num(row.users) })) });
-});
-
-platformRouter.get('/businesses/:id', requirePermission('businesses:read'), async (req: PlatformRequest, res) => {
-  const id = uuidSchema.parse(req.params.id);
-  const business = await AppDataSource.getRepository(Business).findOne({ where: { id } });
-  if (!business) {
-    res.status(404).json({ error: 'Business not found' });
-    return;
-  }
-  const [state, users, [counts]] = await Promise.all([
-    getBusinessState(id),
-    AppDataSource.getRepository(User).find({ where: { business_id: id }, order: { name: 'ASC' } }),
-    q(
-      `SELECT (SELECT COUNT(*) FROM products WHERE business_id = $1) AS products,
-              (SELECT COUNT(*) FROM customers WHERE business_id = $1) AS customers,
-              (SELECT COUNT(*) FROM sales WHERE business_id = $1) AS sales`,
-      [id],
-    ),
-  ]);
-  res.json({
-    business,
-    state: {
-      status: state?.status ?? 'active',
-      suspended_reason: state?.suspended_reason ?? null,
-      suspended_at: state?.suspended_at ?? null,
-      plan: state?.plan ?? 'free',
-      subscription_status: state?.subscription_status ?? 'trial',
-      trial_ends_at: state?.trial_ends_at ?? null,
-      current_period_end: state?.current_period_end ?? null,
-    },
-    flags: resolveFlags(state?.feature_flags),
-    flag_definitions: FEATURE_FLAGS,
-    counts: Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, num(value)])),
-    users: users.map(({ id: userId, name, email, role, active, locked_until, failed_login_attempts }) => ({
-      id: userId, name, email, role, active, locked_until, failed_login_attempts,
-    })),
-  });
-});
+platformRouter.use(platformAdminRouter);
+platformRouter.use(platformSupportRouter);
+platformRouter.use(platformNotificationsRouter);
+platformRouter.use(platformCommsRouter);
 
 async function requireBusiness(id: string, res: Response) {
   const business = await AppDataSource.getRepository(Business).findOne({ where: { id } });
@@ -399,12 +306,14 @@ platformRouter.post('/businesses/:id/suspend', requirePermission('businesses:sus
   if (!business) return;
   await upsertBusinessState(id, { status: 'suspended', suspended_reason: reason, suspended_at: new Date() });
   await recordPlatformAudit({ req, admin: req.admin, action: 'business.suspended', targetType: 'business', targetId: id, businessId: id, reason });
+  await notifyAdmins({ permission: 'businesses:read', exceptAdminId: req.admin!.id, category: 'businesses', priority: 'high', title: `${business.name} was suspended`, message: `${req.admin!.name}: ${reason}`, actionUrl: `/platform/businesses/${id}`, businessId: id, resourceType: 'business', resourceId: id });
   await notifyBusinessOwners({
     businessId: id,
     action: 'PLATFORM_SUSPENDED',
     reason,
     subject: 'Your MIA business has been suspended',
     message: `MIA has suspended ${business.name}. Sign-in and sync are paused until this is resolved. Contact MIA support for help.`,
+    template: 'businesses.suspended',
   });
   res.json({ ok: true });
 });
@@ -416,12 +325,14 @@ platformRouter.post('/businesses/:id/reactivate', requirePermission('businesses:
   if (!business) return;
   await upsertBusinessState(id, { status: 'active', suspended_reason: null, suspended_at: null });
   await recordPlatformAudit({ req, admin: req.admin, action: 'business.reactivated', targetType: 'business', targetId: id, businessId: id, reason });
+  await notifyAdmins({ permission: 'businesses:read', exceptAdminId: req.admin!.id, category: 'businesses', title: `${business.name} was reactivated`, message: `${req.admin!.name}: ${reason}`, actionUrl: `/platform/businesses/${id}`, businessId: id, resourceType: 'business', resourceId: id });
   await notifyBusinessOwners({
     businessId: id,
     action: 'PLATFORM_REACTIVATED',
     reason,
     subject: 'Your MIA business is active again',
     message: `MIA has reactivated ${business.name}. Sign-in and sync work again.`,
+    template: 'businesses.reactivated',
   });
   res.json({ ok: true });
 });
@@ -468,28 +379,6 @@ platformRouter.get('/businesses/:id/export', requirePermission('data:manage'), a
   res.json({ exported_at: new Date(), business, tables: data });
 });
 
-platformRouter.get('/users', requirePermission('users:read'), async (req, res) => {
-  const page = pageSchema.parse(req.query);
-  const win = await listWindow(req, { date: 'u.created_at', name: 'u.name', business: 'b.name' }, 'date');
-  if ('error' in win) {
-    res.status(400).json({ error: win.error });
-    return;
-  }
-  const params = [searchTerm(page.q), win.from, win.to];
-  const where = `($1::text IS NULL OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone ILIKE $1) AND ${windowWhere('u.created_at', 2)}`;
-  const [rows, [count]] = await Promise.all([
-    q(
-      `SELECT u.id, u.name, u.email, u.phone, u.role, u.active, u.locked_until, u.failed_login_attempts,
-              u.business_id, u.created_at, b.name AS business_name
-       FROM users u LEFT JOIN businesses b ON b.id = u.business_id
-       WHERE ${where} ORDER BY ${win.orderBy}, u.created_at DESC LIMIT $4 OFFSET $5`,
-      [...params, page.limit, page.offset],
-    ),
-    q(`SELECT COUNT(*) AS total FROM users u LEFT JOIN businesses b ON b.id = u.business_id WHERE ${where}`, params),
-  ]);
-  res.json({ total: num(count.total), rows });
-});
-
 const userActions = {
   unlock: { action: 'user.unlocked', changes: () => ({ locked_until: null, failed_login_attempts: 0 }) },
   'force-signout': { action: 'user.signed_out', changes: (u: User) => ({ token_version: (u.token_version ?? 0) + 1 }) },
@@ -528,7 +417,11 @@ platformRouter.post('/users/:id/:action', requirePermission('users:manage'), asy
     return;
   }
   await users.update(id, { ...definition.changes(user), updated_at: new Date() });
-  await recordPlatformAudit({ req, admin: req.admin, action: definition.action, targetType: 'user', targetId: id, businessId: user.business_id, reason });
+  await recordPlatformAudit({ req, admin: req.admin, action: definition.action, targetType: 'user', targetId: id, businessId: user.business_id, reason, metadata: { before: { active: user.active, locked_until: user.locked_until }, after: definition.changes(user) } });
+  if (user.email && (actionName === 'deactivate' || actionName === 'reactivate')) {
+    const business = user.business_id ? await AppDataSource.getRepository(Business).findOne({ where: { id: user.business_id } }) : null;
+    void queueTemplateEmail({ template: actionName === 'deactivate' ? 'users.account_deactivated' : 'users.account_activated', to: user.email, businessId: user.business_id, variables: { recipient_name: user.name, organization_name: business?.name ?? 'MIA', reason } });
+  }
   res.json({ ok: true });
 });
 
@@ -621,18 +514,21 @@ platformRouter.post('/pin-help/:id/close', requirePermission('users:manage'), as
 
 platformRouter.get('/audit', requirePermission('audit:read'), async (req, res) => {
   const page = pageSchema.parse(req.query);
-  const win = await listWindow(req, { date: 'a.created_at', action: 'a.action', admin: 'a.admin_email' }, 'date');
+  const win = await listWindow(req, { date: 'a.created_at', action: 'a.action', admin: 'a.admin_email', business: 'b.name', result: 'a.result' }, 'date');
   if ('error' in win) {
     res.status(400).json({ error: win.error });
     return;
   }
-  const params = [searchTerm(page.q), win.from, win.to];
-  const where = `($1::text IS NULL OR a.action ILIKE $1 OR a.admin_email ILIKE $1 OR a.target_id ILIKE $1 OR b.name ILIKE $1) AND ${windowWhere('a.created_at', 2)}`;
+  const businessId = typeof req.query.business_id === 'string' && req.query.business_id ? uuidSchema.parse(req.query.business_id) : null;
+  const result = z.enum(['all', 'success', 'failed', 'denied']).default('all').parse(req.query.result);
+  const params = [searchTerm(page.q), win.from, win.to, businessId, result];
+  const where = `($1::text IS NULL OR a.action ILIKE $1 OR a.admin_email ILIKE $1 OR a.target_id ILIKE $1 OR b.name ILIKE $1) AND ${windowWhere('a.created_at', 2)}
+    AND ($4::uuid IS NULL OR a.business_id = $4) AND ($5 = 'all' OR a.result = $5)`;
   const from = `FROM platform_audit_logs a LEFT JOIN businesses b ON b.id = a.business_id`;
   const [rows, [count]] = await Promise.all([
     q(
-      `SELECT a.id, a.admin_email, a.action, a.target_type, a.target_id, a.reason, a.metadata, a.ip, a.created_at, b.name AS business_name
-       ${from} WHERE ${where} ORDER BY ${win.orderBy}, a.created_at DESC LIMIT $4 OFFSET $5`,
+      `SELECT a.id, a.admin_email, a.action, a.target_type, a.target_id, a.business_id, a.reason, a.metadata, a.ip, a.result, a.hash IS NOT NULL AS sealed, a.created_at, b.name AS business_name
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, a.created_at DESC LIMIT $6 OFFSET $7`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
@@ -695,36 +591,6 @@ platformRouter.get('/alerts', requirePermission('alerts:read'), async (_req, res
     high_void_rates: voids.map((row) => ({ ...row, sales: num(row.sales), voided: num(row.voided) })),
     large_cash_variances: variance.map((row) => ({ ...row, cash_variance: num(row.cash_variance) })),
     gone_quiet: stale,
-  });
-});
-
-platformRouter.get('/billing', requirePermission('billing:read'), async (req, res) => {
-  const page = pageSchema.parse(req.query);
-  const win = await listWindow(req, { name: 'b.name', paid_until: 's.current_period_end', balance: 'open_balance', date: 'b.created_at' }, 'name', 'asc');
-  if ('error' in win) {
-    res.status(400).json({ error: win.error });
-    return;
-  }
-  const params = [searchTerm(page.q), win.from, win.to];
-  const where = `($1::text IS NULL OR b.name ILIKE $1 OR b.business_code ILIKE $1) AND ${windowWhere('b.created_at', 2)}`;
-  const [rows, [count], [summary]] = await Promise.all([
-    q(
-      `SELECT b.id, b.name, b.business_code, b.currency, COALESCE(s.plan, 'free') AS plan,
-              COALESCE(s.subscription_status, 'trial') AS subscription_status, s.trial_ends_at, s.current_period_end,
-              (SELECT COALESCE(SUM(amount), 0) FROM subscription_invoices i WHERE i.business_id = b.id AND i.status = 'open') AS open_balance
-       FROM businesses b LEFT JOIN business_platform_states s ON s.business_id = b.id
-       WHERE ${where} ORDER BY ${win.orderBy}, b.name LIMIT $4 OFFSET $5`,
-      [...params, page.limit, page.offset],
-    ),
-    q(`SELECT COUNT(*) AS total FROM businesses b WHERE ${where}`, params),
-    q(`SELECT COUNT(*) FILTER (WHERE status = 'open') AS open_invoices,
-              COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND paid_at >= now() - interval '30 days'), 0) AS paid_30d
-       FROM subscription_invoices`),
-  ]);
-  res.json({
-    total: num(count.total),
-    summary: { open_invoices: num(summary.open_invoices), paid_30d: num(summary.paid_30d) },
-    rows: rows.map((row) => ({ ...row, open_balance: num(row.open_balance) })),
   });
 });
 
@@ -799,99 +665,12 @@ platformRouter.post('/billing/invoices/:id/status', requirePermission('billing:w
     payment_reference: body.payment_reference ?? null,
   });
   await recordPlatformAudit({ req, admin: req.admin, action: `billing.invoice_${body.status}`, targetType: 'invoice', targetId: id, businessId: invoice.business_id, metadata: { amount: invoice.amount } });
+  if (body.status === 'paid') {
+    const { emailOwners } = await import('../lib/email');
+    await emailOwners(invoice.business_id, 'subscription.payment_received', { amount: `${new Intl.NumberFormat('en-US').format(invoice.amount)} ${invoice.currency}` }, `invoice-paid:${id}`);
+    await notifyAdmins({ permission: 'billing:read', exceptAdminId: req.admin!.id, category: 'payments', title: 'Subscription payment recorded', message: `${new Intl.NumberFormat('en-US').format(invoice.amount)} ${invoice.currency}`, actionUrl: `/platform/businesses/${invoice.business_id}/subscriptions`, businessId: invoice.business_id });
+  }
   res.json({ ok: true });
-});
-
-const grantSchema = z.object({
-  business_id: uuidSchema,
-  minutes: z.number().int().min(5).max(60).default(30),
-  reason: reasonSchema.shape.reason,
-});
-
-platformRouter.post('/support/grants', requirePermission('support:access'), async (req: PlatformRequest, res) => {
-  const body = grantSchema.parse(req.body);
-  const business = await requireBusiness(body.business_id, res);
-  if (!business) return;
-  const repo = AppDataSource.getRepository(SupportAccessGrant);
-  const now = new Date();
-  const grant = await repo.save(repo.create({
-    id: randomUUID(),
-    admin_id: req.admin!.id,
-    admin_name: req.admin!.name,
-    business_id: body.business_id,
-    reason: body.reason,
-    expires_at: new Date(now.getTime() + body.minutes * 60 * 1000),
-    revoked_at: null,
-    created_at: now,
-  }));
-  await recordPlatformAudit({ req, admin: req.admin, action: 'support.access_started', targetType: 'grant', targetId: grant.id, businessId: body.business_id, reason: body.reason, metadata: { minutes: body.minutes } });
-  await notifyBusinessOwners({
-    businessId: body.business_id,
-    action: 'PLATFORM_SUPPORT_ACCESS',
-    entityId: grant.id,
-    reason: body.reason,
-    subject: 'MIA support is viewing your business',
-    message: `${req.admin!.name} from MIA support has read-only access to ${business.name} for up to ${body.minutes} minutes. They cannot change your records.`,
-  });
-  res.status(201).json({ grant });
-});
-
-platformRouter.get('/support/grants', requirePermission('support:access'), async (_req, res) => {
-  const rows = await q(
-    `SELECT g.id, g.admin_name, g.admin_id, g.business_id, g.reason, g.expires_at, g.revoked_at, g.created_at, b.name AS business_name
-     FROM support_access_grants g JOIN businesses b ON b.id = g.business_id
-     ORDER BY g.created_at DESC LIMIT 100`,
-  );
-  res.json({ rows });
-});
-
-platformRouter.post('/support/grants/:id/revoke', requirePermission('support:access'), async (req: PlatformRequest, res) => {
-  const id = uuidSchema.parse(req.params.id);
-  const repo = AppDataSource.getRepository(SupportAccessGrant);
-  const grant = await repo.findOne({ where: { id } });
-  if (!grant) {
-    res.status(404).json({ error: 'Grant not found' });
-    return;
-  }
-  if (grant.admin_id !== req.admin!.id && req.admin!.role !== 'SUPER_ADMIN') {
-    res.status(403).json({ error: 'You can only end your own access', code: 'FORBIDDEN' });
-    return;
-  }
-  await repo.update(id, { revoked_at: new Date() });
-  await recordPlatformAudit({ req, admin: req.admin, action: 'support.access_ended', targetType: 'grant', targetId: id, businessId: grant.business_id });
-  res.json({ ok: true });
-});
-
-async function requireActiveGrant(req: PlatformRequest, res: Response, next: NextFunction) {
-  const businessId = uuidSchema.parse(req.params.businessId);
-  const grant = await AppDataSource.getRepository(SupportAccessGrant).findOne({
-    where: { admin_id: req.admin!.id, business_id: businessId, revoked_at: IsNull(), expires_at: MoreThan(new Date()) },
-    order: { expires_at: 'DESC' },
-  });
-  if (!grant) {
-    res.status(403).json({ error: 'Start a support session for this business first', code: 'NO_ACTIVE_GRANT' });
-    return;
-  }
-  next();
-}
-
-platformRouter.get('/support/:businessId/overview', requirePermission('support:access'), requireActiveGrant, async (req: PlatformRequest, res) => {
-  const id = uuidSchema.parse(req.params.businessId);
-  const business = await requireBusiness(id, res);
-  if (!business) return;
-  const parsed = parsePeriodQuery(req.query);
-  if ('error' in parsed) {
-    res.status(400).json({ error: parsed.error });
-    return;
-  }
-  await recordPlatformAudit({ req, admin: req.admin, action: 'support.viewed_overview', targetType: 'business', targetId: id, businessId: id });
-  res.json({ business, overview: await buildOverview(id, business.timezone, parsed.period, parsed.custom) });
-});
-
-platformRouter.get('/support/:businessId/products', requirePermission('support:access'), requireActiveGrant, async (req: PlatformRequest, res) => {
-  const id = uuidSchema.parse(req.params.businessId);
-  await recordPlatformAudit({ req, admin: req.admin, action: 'support.viewed_products', targetType: 'business', targetId: id, businessId: id });
-  res.json({ rows: await stockLevels(id) });
 });
 
 platformRouter.get('/data-requests', requirePermission('data:manage'), async (_req, res) => {
@@ -960,48 +739,6 @@ platformRouter.get('/backups', requirePermission('data:manage'), async (_req, re
   } catch {
     res.json({ configured: false, files: [] });
   }
-});
-
-platformRouter.get('/announcements', requirePermission('announcements:manage'), async (_req, res) => {
-  const rows = await q(
-    `SELECT a.id, a.title, a.body, a.severity, a.business_id, a.starts_at, a.ends_at, a.active, a.created_at, b.name AS business_name
-     FROM announcements a LEFT JOIN businesses b ON b.id = a.business_id ORDER BY a.created_at DESC LIMIT 100`,
-  );
-  res.json({ rows });
-});
-
-platformRouter.post('/announcements', requirePermission('announcements:manage'), async (req: PlatformRequest, res) => {
-  const body = z.object({
-    title: z.string().trim().min(3).max(120),
-    body: z.string().trim().min(3).max(1000),
-    severity: z.enum(['info', 'warning', 'critical']).default('info'),
-    business_id: uuidSchema.nullable().optional(),
-    ends_at: z.coerce.date().nullable().optional(),
-  }).parse(req.body);
-  const repo = AppDataSource.getRepository(Announcement);
-  const now = new Date();
-  const announcement = await repo.save(repo.create({
-    id: randomUUID(),
-    title: body.title,
-    body: body.body,
-    severity: body.severity,
-    business_id: body.business_id ?? null,
-    starts_at: now,
-    ends_at: body.ends_at ?? null,
-    active: true,
-    created_by: req.admin!.id,
-    created_at: now,
-  }));
-  await recordPlatformAudit({ req, admin: req.admin, action: 'announcement.created', targetType: 'announcement', targetId: announcement.id, businessId: body.business_id ?? null, metadata: { title: body.title } });
-  res.status(201).json({ announcement });
-});
-
-platformRouter.patch('/announcements/:id', requirePermission('announcements:manage'), async (req: PlatformRequest, res) => {
-  const id = uuidSchema.parse(req.params.id);
-  const body = z.object({ active: z.boolean() }).parse(req.body);
-  await AppDataSource.getRepository(Announcement).update(id, { active: body.active });
-  await recordPlatformAudit({ req, admin: req.admin, action: body.active ? 'announcement.activated' : 'announcement.ended', targetType: 'announcement', targetId: id });
-  res.json({ ok: true });
 });
 
 platformRouter.get('/admins', requirePermission('admins:manage'), async (_req, res) => {

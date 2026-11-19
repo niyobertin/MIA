@@ -1,78 +1,87 @@
-import { createContext, useContext, useEffect, useState, type FormEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
-import { Activity, BellRing, Building2, CreditCard, Database, Headset, KeyRound, LayoutDashboard, ScrollText, ShieldAlert, UserCog, Users } from 'lucide-react';
+import {
+  BarChart3, Bell, Building2, CreditCard, Database, FileText, Headset, History, KeyRound, LayoutDashboard, Megaphone, RefreshCw, ScrollText, Send, ShieldAlert, ShieldCheck, Users,
+} from 'lucide-react';
 import { getErrorMessage } from '../lib/format';
 import { platformApi, setPlatformToken, signOutPlatform, usePlatformToken, type PlatformAdmin } from '../lib/platformAuth';
-import { Shell, type NavGroup } from '../ui/Shell';
-import { Button, ErrorNotice, Skeleton } from '../ui/kit';
+import { Button, ErrorNotice } from '../ui/kit';
 import PlatformLogin, { PasswordField, PlatformFrame } from './PlatformLogin';
-import { PlatformOverview, SyncHealth, Alerts } from './insights';
-import { BusinessDetail, Businesses, PlatformUsers } from './accounts';
-import { Billing } from './billing';
+import { AdminContext, useAdmin, useCan } from './context';
+import { PlatformShell, type PlatformNavGroup, type PlatformNavItem } from './ui/layout';
+import { Modal } from './ui/admin';
+import { PlatformOverview, PlatformOverviewSkeleton } from './overview';
+import { BusinessesManagement } from './businesses';
+import { UsersManagement } from './users';
+import { SubscriptionsManagement } from './subscriptions';
+import { OrganizationDetails } from './organization';
+import { AuditLogPage } from './audit';
+import { SupportAccessPage } from './support';
+import { NotificationsPage } from './notifications';
+import { AnnouncementsPage, ComposeEmail, DeliveryAnalytics, EmailHistory, EmailTemplates } from './comms';
+import { Alerts, SyncHealth } from './insights';
 import { PinHelpRequests } from './pinHelp';
-import { Admins, Announcements, AuditLog, DataRecords, SupportAccess } from './operations';
+import { Admins, DataRecords } from './operations';
+import { PageHeaderSkeleton } from './ui/skeleton';
 
-const AdminContext = createContext<PlatformAdmin | null>(null);
+export { useAdmin, useCan };
 
-export function useAdmin() {
-  return useContext(AdminContext) as PlatformAdmin;
-}
-
-export function useCan(permission: string) {
-  return useAdmin().permissions.includes(permission);
-}
-
-const NAV: (NavGroup['items'][number] & { group: string; permission: string })[] = [
-  { group: 'Platform', to: '/platform', label: 'Overview', icon: LayoutDashboard, permission: 'metrics:read', end: true },
-  { group: 'Platform', to: '/platform/businesses', label: 'Businesses', icon: Building2, permission: 'businesses:read' },
-  { group: 'Platform', to: '/platform/users', label: 'User accounts', icon: Users, permission: 'users:read' },
-  { group: 'Platform', to: '/platform/pin-help', label: 'PIN help', icon: KeyRound, permission: 'users:read' },
-  { group: 'Platform', to: '/platform/billing', label: 'Subscriptions', icon: CreditCard, permission: 'billing:read' },
+const NAV: (PlatformNavItem & { group: string; permission: string })[] = [
+  { group: 'Overview', to: '/platform', label: 'Dashboard', icon: LayoutDashboard, permission: 'metrics:read', end: true },
+  { group: 'Overview', to: '/platform/businesses', label: 'Businesses', icon: Building2, permission: 'businesses:read' },
+  { group: 'Overview', to: '/platform/users', label: 'User management', icon: Users, permission: 'users:read' },
+  { group: 'Overview', to: '/platform/billing', label: 'Subscriptions & plans', icon: CreditCard, permission: 'billing:read' },
+  { group: 'Overview', to: '/platform/pin-help', label: 'PIN assistance', icon: KeyRound, permission: 'users:read' },
   { group: 'Operations', to: '/platform/support', label: 'Support access', icon: Headset, permission: 'support:access' },
-  { group: 'Operations', to: '/platform/sync', label: 'Sync health', icon: Activity, permission: 'sync:read' },
-  { group: 'Operations', to: '/platform/alerts', label: 'Alerts', icon: ShieldAlert, permission: 'alerts:read' },
+  { group: 'Operations', to: '/platform/sync', label: 'Sync monitoring', icon: RefreshCw, permission: 'sync:read' },
+  { group: 'Operations', to: '/platform/alerts', label: 'Alerts & incidents', icon: ShieldAlert, permission: 'alerts:read', badge: 'alerts' },
   { group: 'Operations', to: '/platform/data', label: 'Data & backups', icon: Database, permission: 'data:manage' },
-  { group: 'Operations', to: '/platform/announcements', label: 'Announcements', icon: BellRing, permission: 'announcements:manage' },
-  { group: 'Governance', to: '/platform/audit', label: 'Audit log', icon: ScrollText, permission: 'audit:read' },
-  { group: 'Governance', to: '/platform/admins', label: 'Platform admins', icon: UserCog, permission: 'admins:manage' },
+  { group: 'Communications', to: '/platform/comms/compose', label: 'Compose email', icon: Send, permission: 'communications:manage' },
+  { group: 'Communications', to: '/platform/announcements', label: 'Announcements', icon: Megaphone, permission: 'announcements:manage' },
+  { group: 'Communications', to: '/platform/comms/templates', label: 'Email templates', icon: FileText, permission: 'communications:manage' },
+  { group: 'Communications', to: '/platform/comms/history', label: 'Email history', icon: History, permission: 'communications:manage' },
+  { group: 'Communications', to: '/platform/comms/analytics', label: 'Delivery analytics', icon: BarChart3, permission: 'communications:manage' },
+  { group: 'Administration', to: '/platform/notifications', label: 'Notifications', icon: Bell, permission: '' },
+  { group: 'Administration', to: '/platform/audit', label: 'Audit logs', icon: ScrollText, permission: 'audit:read' },
+  { group: 'Administration', to: '/platform/admins', label: 'Platform administrators', icon: ShieldCheck, permission: 'admins:manage' },
 ];
 
-const ROLE_LABELS = { SUPER_ADMIN: 'Super admin', SUPPORT: 'Support', FINANCE: 'Finance' };
+const GROUPS = ['Overview', 'Operations', 'Communications', 'Administration'];
 
 function Guard({ permission }: { permission: string }) {
   return useCan(permission) ? <Outlet /> : <Navigate to="/platform" replace />;
 }
 
-function ChangePassword({ admin }: { admin: PlatformAdmin }) {
+function ChangePasswordForm({ onDone }: { onDone?: () => void }) {
   const client = useQueryClient();
   const [current, setCurrent] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const { data } = await platformApi.post('/auth/change-password', { current, password });
+  const mutation = useMutation({
+    mutationFn: async () => (await platformApi.post<{ token: string }>('/auth/change-password', { current, password })).data,
+    onSuccess: async (data) => {
       setPlatformToken(data.token);
       await client.invalidateQueries({ queryKey: ['platform-me'] });
-    } catch (problem) {
-      setError(getErrorMessage(problem, 'Could not change your password.'));
-    } finally {
-      setBusy(false);
-    }
-  };
+      onDone?.();
+    },
+  });
+  const submit = (event: FormEvent) => { event.preventDefault(); if (!mutation.isPending) mutation.mutate(); };
   return (
-    <PlatformFrame title="Choose a new password" subtitle={`${admin.email} is using a temporary password. Use at least 12 characters with upper and lower case letters and a number.`}>
-      <form onSubmit={submit} className="space-y-4">
-        {error ? <div role="alert" className="rounded-xl bg-rose-50 border border-rose-100 px-3 py-2.5 text-sm text-rose-700">{error}</div> : null}
-        <PasswordField id="current-password" label="Temporary password" value={current} onChange={setCurrent} autoComplete="current-password" autoFocus />
-        <PasswordField id="new-password" label="New password" value={password} onChange={setPassword} autoComplete="new-password" />
-        <Button type="submit" tone="primary" disabled={busy} className="w-full !bg-slate-900 hover:!bg-slate-800">{busy ? 'Saving…' : 'Save password'}</Button>
-        <button type="button" onClick={signOutPlatform} className="text-sm font-medium text-slate-600 hover:underline">Sign out</button>
-      </form>
+    <form onSubmit={submit} className="space-y-4">
+      {mutation.isError ? <div role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{getErrorMessage(mutation.error, 'Could not change your password.')}</div> : null}
+      <PasswordField id="current-password" label="Current password" value={current} onChange={setCurrent} autoComplete="current-password" autoFocus />
+      <PasswordField id="new-password" label="New password" value={password} onChange={setPassword} autoComplete="new-password" />
+      <p className="text-xs text-slate-500">At least 12 characters with upper and lower case letters and a number. Other sessions are signed out.</p>
+      <Button type="submit" tone="primary" disabled={mutation.isPending} className="w-full !bg-[#159b69] hover:!bg-[#0f7d54]">{mutation.isPending ? 'Saving…' : 'Save password'}</Button>
+    </form>
+  );
+}
+
+function ForcedPasswordChange({ admin }: { admin: PlatformAdmin }) {
+  return (
+    <PlatformFrame title="Choose a new password" subtitle={`${admin.email} is using a temporary password.`}>
+      <ChangePasswordForm />
+      <button type="button" onClick={signOutPlatform} className="text-sm font-medium text-slate-600 hover:underline">Sign out</button>
     </PlatformFrame>
   );
 }
@@ -84,12 +93,21 @@ function Home() {
 }
 
 function PlatformApp({ token }: { token: string }) {
+  const [changingPassword, setChangingPassword] = useState(false);
   const me = useQuery({
     queryKey: ['platform-me', token],
     queryFn: async () => (await platformApi.get<{ admin: PlatformAdmin }>('/auth/me')).data.admin,
   });
 
-  if (me.isLoading) return <div className="p-8"><Skeleton className="h-96" /></div>;
+  if (me.isPending) {
+    return (
+      <div className="min-h-screen bg-canvas lg:pl-[260px]">
+        <div aria-hidden="true" className="fixed inset-y-0 left-0 hidden w-[260px] bg-navy lg:block" />
+        <div className="h-[68px] border-b border-line bg-white" />
+        <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8"><PageHeaderSkeleton /><PlatformOverviewSkeleton /></div>
+      </div>
+    );
+  }
   if (me.isError || !me.data) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
@@ -101,46 +119,41 @@ function PlatformApp({ token }: { token: string }) {
     );
   }
   const admin = me.data;
-  if (admin.must_change_password) return <ChangePassword admin={admin} />;
+  if (admin.must_change_password) return <ForcedPasswordChange admin={admin} />;
 
-  const items = NAV.filter((item) => admin.permissions.includes(item.permission));
-  const groups: NavGroup[] = ['Platform', 'Operations', 'Governance']
-    .map((label) => ({ label, items: items.filter((item) => item.group === label) }))
-    .filter((group) => group.items.length > 0);
+  const items = NAV.filter((item) => !item.permission || admin.permissions.includes(item.permission));
+  const groups: PlatformNavGroup[] = GROUPS.map((label) => ({ label, items: items.filter((item) => item.group === label) })).filter((group) => group.items.length > 0);
 
   return (
     <AdminContext.Provider value={admin}>
       <Routes>
-        <Route element={(
-          <Shell
-            brand="MIA Platform"
-            brandSub="Staff only"
-            groups={groups}
-            userName={admin.name}
-            userSub={ROLE_LABELS[admin.role]}
-            onSignOut={signOutPlatform}
-            sidebarClass="bg-slate-900 text-slate-100"
-            activeClass="bg-white/15 text-white"
-            inactiveClass="text-slate-300 hover:bg-white/5 hover:text-white"
-          />
-        )}>
+        <Route element={<PlatformShell groups={groups} onChangePassword={() => setChangingPassword(true)} />}>
           <Route index element={<Home />} />
+          <Route path="notifications" element={<NotificationsPage />} />
           <Route element={<Guard permission="businesses:read" />}>
-            <Route path="businesses" element={<Businesses />} />
-            <Route path="businesses/:id" element={<BusinessDetail />} />
+            <Route path="businesses" element={<BusinessesManagement />} />
+            <Route path="businesses/:id" element={<OrganizationDetails />} />
+            <Route path="businesses/:id/:tab" element={<OrganizationDetails />} />
           </Route>
-          <Route element={<Guard permission="users:read" />}><Route path="users" element={<PlatformUsers />} /><Route path="pin-help" element={<PinHelpRequests />} /></Route>
-          <Route element={<Guard permission="billing:read" />}><Route path="billing" element={<Billing />} /></Route>
-          <Route element={<Guard permission="support:access" />}><Route path="support" element={<SupportAccess />} /></Route>
+          <Route element={<Guard permission="users:read" />}><Route path="users" element={<UsersManagement />} /><Route path="pin-help" element={<PinHelpRequests />} /></Route>
+          <Route element={<Guard permission="billing:read" />}><Route path="billing" element={<SubscriptionsManagement />} /></Route>
+          <Route element={<Guard permission="support:access" />}><Route path="support" element={<SupportAccessPage />} /></Route>
           <Route element={<Guard permission="sync:read" />}><Route path="sync" element={<SyncHealth />} /></Route>
           <Route element={<Guard permission="alerts:read" />}><Route path="alerts" element={<Alerts />} /></Route>
           <Route element={<Guard permission="data:manage" />}><Route path="data" element={<DataRecords />} /></Route>
-          <Route element={<Guard permission="announcements:manage" />}><Route path="announcements" element={<Announcements />} /></Route>
-          <Route element={<Guard permission="audit:read" />}><Route path="audit" element={<AuditLog />} /></Route>
+          <Route element={<Guard permission="announcements:manage" />}><Route path="announcements" element={<AnnouncementsPage />} /></Route>
+          <Route element={<Guard permission="communications:manage" />}>
+            <Route path="comms/compose" element={<ComposeEmail />} />
+            <Route path="comms/templates" element={<EmailTemplates />} />
+            <Route path="comms/history" element={<EmailHistory />} />
+            <Route path="comms/analytics" element={<DeliveryAnalytics />} />
+          </Route>
+          <Route element={<Guard permission="audit:read" />}><Route path="audit" element={<AuditLogPage />} /></Route>
           <Route element={<Guard permission="admins:manage" />}><Route path="admins" element={<Admins />} /></Route>
           <Route path="*" element={<Navigate to="/platform" replace />} />
         </Route>
       </Routes>
+      {changingPassword ? <Modal title="Change password" onClose={() => setChangingPassword(false)}><ChangePasswordForm onDone={() => setChangingPassword(false)} /></Modal> : null}
     </AdminContext.Provider>
   );
 }
@@ -159,3 +172,4 @@ export default function PlatformGate() {
   }, [token, client]);
   return token ? <PlatformApp token={token} /> : <PlatformLogin />;
 }
+

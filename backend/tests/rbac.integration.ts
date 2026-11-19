@@ -648,6 +648,200 @@ async function main() {
   const pinAudit = await repo(PlatformAuditLog).findOneBy({ action: 'user.temporary_pin_issued', target_id: phoneUserId });
   check('temporary PINs are in the audit log', Boolean(pinAudit));
 
+  // Super admin console: dashboards, organizations, subscriptions, support levels, audit chain, notifications, email
+  const newMatrix: [string, string, { super: number; support: number; finance: number }, unknown?][] = [
+    ['GET', '/platform/overview?range=12m', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/health', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/activity', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/alerts/summary', { super: 200, support: 200, finance: 200 }],
+    ['GET', `/platform/businesses/${ids.bizA}/stats?range=90d`, { super: 200, support: 200, finance: 200 }],
+    ['GET', `/platform/businesses/${ids.bizA}/subscription`, { super: 200, support: 403, finance: 200 }],
+    ['GET', '/platform/plans', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/billing/trend?range=6m', { super: 200, support: 403, finance: 200 }],
+    ['GET', `/platform/users/${ids.staffA}`, { super: 200, support: 200, finance: 403 }],
+    ['GET', '/platform/email/templates', { super: 200, support: 403, finance: 403 }],
+    ['GET', '/platform/email/messages', { super: 200, support: 403, finance: 403 }],
+    ['GET', '/platform/notifications', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/search?q=Shop', { super: 200, support: 200, finance: 200 }],
+    ['GET', '/platform/audit/verify', { super: 200, support: 403, finance: 403 }],
+  ];
+  for (const [method, path, expected, body] of newMatrix) {
+    for (const [who, token] of [['super', superToken], ['support', supportToken], ['finance', financeToken]] as const) {
+      res = await call(method, path, { token, body });
+      check(`${who} ${method} ${path} -> ${expected[who]}`, res.status === expected[who], res.status);
+    }
+  }
+  res = await call('GET', '/platform/search?q=Shop', { token: financeToken });
+  check('finance search shows no user results', !res.body.results.some((row: any) => row.type === 'user'), res.body.results);
+
+  const statsA = (await call('GET', `/platform/businesses/${ids.bizA}/stats?range=30d`, { token: superToken })).body;
+  const statsB = (await call('GET', `/platform/businesses/${ids.bizB}/stats?range=30d`, { token: superToken })).body;
+  const [{ a: usersInA, b: usersInB }] = await AppDataSource.query(`SELECT (SELECT COUNT(*)::int FROM users WHERE business_id = $1) AS a, (SELECT COUNT(*)::int FROM users WHERE business_id = $2) AS b`, [ids.bizA, ids.bizB]);
+  check('organization stats are scoped to one business', statsA.kpis.users === usersInA && statsB.kpis.users === usersInB && usersInA !== usersInB && statsA.kpis.range_total !== statsB.kpis.range_total, { a: statsA.kpis.users, b: statsB.kpis.users, usersInA, usersInB });
+  res = await call('GET', `/platform/users?business_id=${ids.bizA}&limit=50`, { token: superToken });
+  check('organization user list never includes other businesses', res.status === 200 && res.body.rows.length === usersInA && res.body.rows.every((row: any) => row.business_id === ids.bizA), res.body.rows?.length);
+  res = await call('GET', `/platform/activity?business_id=${ids.bizB}`, { token: superToken });
+  check('organization activity is scoped', res.status === 200 && res.body.rows.every((row: any) => row.business_id === ids.bizB), res.body.rows);
+
+  res = await call('POST', '/platform/plans', { token: supportToken, body: { code: 'essential', name: 'Essential', monthly_price: 40000, reason: reason.reason } });
+  check('support cannot create plans', res.status === 403, res.status);
+  res = await call('POST', '/platform/plans', { token: financeToken, body: { code: 'essential', name: 'Essential', monthly_price: 40000, reason: reason.reason } });
+  check('finance creates a plan', res.status === 201, res.body);
+  res = await call('POST', '/platform/plans', { token: financeToken, body: { code: 'essential2', name: 'essential', monthly_price: 1, reason: reason.reason } });
+  check('duplicate plan names are refused', res.status === 409, res.status);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: supportToken, body: { action: 'extend', days: 5, reason: reason.reason } });
+  check('support cannot change subscriptions', res.status === 403, res.status);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: superToken, body: { action: 'change-plan', plan: 'ghost', months: 1, reason: reason.reason } });
+  check('unknown plans are refused', res.status === 400, res.status);
+  const beforeChange = Date.now();
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken, body: { action: 'change-plan', plan: 'essential', months: 1, reason: reason.reason } });
+  const firstEnd = new Date(res.body?.subscription?.ends_at ?? 0);
+  const monthLater = new Date(beforeChange); monthLater.setUTCMonth(monthLater.getUTCMonth() + 1);
+  check('a paid plan runs for the chosen months', res.status === 200 && res.body.subscription.status === 'active' && Math.abs(firstEnd.getTime() - monthLater.getTime()) < 86_400_000 * 2, res.body);
+  const subA = (await call('GET', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken })).body;
+  check('starting a paid plan creates one unpaid invoice at list price', subA.invoices.length === 1 && subA.invoices[0].amount === 40000 && subA.invoices[0].status === 'open', subA.invoices);
+  check('subscription history records before and after', subA.history.some((row: any) => row.action === 'subscription.started' && row.metadata?.before?.plan === 'free' && row.metadata?.after?.plan === 'essential'), subA.history);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken, body: { action: 'renew', months: 3, reason: reason.reason } });
+  const renewedEnd = new Date(res.body?.subscription?.ends_at ?? 0);
+  const expectedRenew = new Date(firstEnd); expectedRenew.setUTCMonth(expectedRenew.getUTCMonth() + 3);
+  check('renewing extends from the current expiry', res.status === 200 && Math.abs(renewedEnd.getTime() - expectedRenew.getTime()) < 86_400_000, { renewedEnd, expectedRenew });
+  const { BusinessPlatformState } = entities;
+  await repo(BusinessPlatformState).update({ business_id: ids.bizA }, { current_period_end: new Date(Date.now() - 86_400_000) });
+  let subNow = (await call('GET', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken })).body.subscription;
+  check('one day after expiry is the grace period', subNow.status === 'grace' && subNow.grace_days_remaining === 2 && subNow.grace_period_days === 3, subNow);
+  let orgA = (await call('GET', `/platform/businesses/${ids.bizA}`, { token: superToken })).body;
+  check('grace keeps the organization active', orgA.org_status === 'active', orgA.org_status);
+  await repo(BusinessPlatformState).update({ business_id: ids.bizA }, { current_period_end: new Date(Date.now() - 4 * 86_400_000) });
+  subNow = (await call('GET', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken })).body.subscription;
+  orgA = (await call('GET', `/platform/businesses/${ids.bizA}`, { token: superToken })).body;
+  check('after the 3-day grace period the subscription is expired', subNow.status === 'expired' && orgA.org_status === 'expired', { subNow, org: orgA.org_status });
+  res = await call('GET', '/platform/billing?status=expired', { token: financeToken });
+  check('billing list filters expired subscriptions', res.status === 200 && res.body.rows.length === 1 && res.body.rows[0].id === ids.bizA, res.body.rows);
+  const { runSubscriptionLifecycle } = await import('../src/lib/lifecycle');
+  await runSubscriptionLifecycle();
+  await runSubscriptionLifecycle();
+  const expiryNotes = await AppDataSource.query(`SELECT recipient_admin_id FROM notifications WHERE dedupe_key LIKE 'expired:${ids.bizA}:%'`);
+  const billingAdmins = (await repo(entities.PlatformAdmin).find({ where: { active: true } })).filter((admin) => ['SUPER_ADMIN', 'FINANCE'].includes(admin.role)).length;
+  check('expiry notifies billing admins once each, even when the job reruns', expiryNotes.length === billingAdmins && new Set(expiryNotes.map((row: any) => row.recipient_admin_id)).size === billingAdmins, { notes: expiryNotes.length, billingAdmins });
+  const expiryEmails = await AppDataSource.query(`SELECT COUNT(*)::int AS n FROM email_messages WHERE template_key = 'subscription.expired' AND to_email = 'owner-a@example.test'`);
+  check('expiry emails the owner once', expiryEmails[0].n === 1, expiryEmails[0]);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken, body: { action: 'suspend', reason: reason.reason } });
+  check('subscriptions can be suspended', res.status === 200 && res.body.subscription.status === 'suspended', res.body);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken, body: { action: 'suspend', reason: reason.reason } });
+  check('suspending twice is refused', res.status === 409, res.status);
+  res = await call('POST', `/platform/businesses/${ids.bizA}/subscription`, { token: financeToken, body: { action: 'reactivate', reason: reason.reason } });
+  check('suspended subscriptions can be reactivated', res.status === 200 && res.body.subscription.stored_status === 'active', res.body);
+
+  res = await call('POST', '/platform/support/grants', { token: supportToken, body: { business_id: ids.bizA, level: 3, minutes: 15, reason: reason.reason } });
+  check('support staff cannot start level 3 access', res.status === 403, res.status);
+  res = await call('POST', '/platform/support/grants', { token: supportToken, body: { business_id: ids.bizA, level: 2, minutes: 15, reason: reason.reason } });
+  check('support starts level 2 access', res.status === 201 && res.body.grant.level === 2, res.body);
+  res = await call('GET', `/platform/support/${ids.bizA}/sales`, { token: supportToken });
+  const maskedNames = (res.body.rows ?? []).map((row: any) => row.customer_name).filter(Boolean);
+  check('level 2 masks customer names', res.status === 200 && res.body.masked === true && maskedNames.length > 0 && maskedNames.every((name: string) => name !== 'Grace' && name.startsWith('G')), maskedNames);
+  res = await call('GET', `/platform/support/${ids.bizB}/sales`, { token: supportToken });
+  check('a grant for one business does not open another', res.status === 403, res.status);
+  res = await call('PATCH', `/platform/businesses/${ids.bizA}/profile`, { token: superToken, body: { address: 'Kigali, Rwanda', reason: reason.reason } });
+  check('profile edits need a level 3 session', res.status === 403 && res.body.code === 'NO_ACTIVE_GRANT', res.body);
+  res = await call('POST', '/platform/support/grants', { token: superToken, body: { business_id: ids.bizA, level: 4, minutes: 15, reason: reason.reason } });
+  check('emergency access needs the admin password', res.status === 401, res.status);
+  res = await call('POST', '/platform/support/grants', { token: superToken, body: { business_id: ids.bizA, level: 4, minutes: 30, password: 'SuperAdmin#2026', reason: reason.reason } });
+  check('emergency access is capped at 15 minutes', res.status === 400, res.status);
+  res = await call('POST', '/platform/support/grants', { token: superToken, body: { business_id: ids.bizA, level: 4, minutes: 15, password: 'SuperAdmin#2026', reason: reason.reason } });
+  const emergencyId = res.body?.grant?.id;
+  check('super admin starts emergency access with password', res.status === 201, res.body);
+  res = await call('GET', `/platform/support/${ids.bizA}/sales`, { token: superToken });
+  check('emergency access unmasks customers and is logged', res.status === 200 && res.body.masked === false && res.body.rows.some((row: any) => row.customer_name === 'Grace'), res.body.masked);
+  res = await call('PATCH', `/platform/businesses/${ids.bizA}/profile`, { token: superToken, body: { address: 'Kigali, Rwanda', contact_email: 'hello@shop-a.test', reason: reason.reason } });
+  check('profile edits work inside an elevated session', res.status === 200, res.body);
+  const profileAudit = await repo(PlatformAuditLog).findOneBy({ action: 'business.profile_changed', business_id: ids.bizA });
+  check('profile edits record previous and new values and the grant', (profileAudit?.metadata as any)?.before?.address === null && (profileAudit?.metadata as any)?.after?.address === 'Kigali, Rwanda' && (profileAudit?.metadata as any)?.grant_id === emergencyId, profileAudit?.metadata);
+  const supportNotes = (await call('GET', '/platform/notifications', { token: superToken })).body;
+  check('elevated access does not notify the admin who started it', !supportNotes.rows.some((row: any) => row.category === 'support' && row.resource_id === emergencyId), supportNotes.rows.length);
+  res = await call('GET', '/platform/support/grants', { token: superToken });
+  check('grants count logged actions', res.body.rows.find((row: any) => row.id === emergencyId)?.actions >= 2, res.body.rows[0]);
+  res = await call('POST', `/platform/support/grants/${emergencyId}/revoke`, { token: superToken });
+  res = await call('GET', `/platform/support/${ids.bizA}/sales`, { token: superToken });
+  check('ending access closes it immediately', res.status === 403, res.status);
+
+  res = await call('POST', `/platform/users/${ids.ownerA}/role`, { token: supportToken, body: { role: 'MANAGER', reason: reason.reason } });
+  check('owner roles cannot be changed by MIA', res.status === 400, res.status);
+  res = await call('POST', `/platform/users/${ids.managerA}/role`, { token: financeToken, body: { role: 'CASHIER', reason: reason.reason } });
+  check('finance cannot change roles', res.status === 403, res.status);
+  res = await call('POST', `/platform/users/${ids.managerA}/role`, { token: supportToken, body: { role: 'CASHIER', reason: reason.reason } });
+  const roleAudit = await repo(PlatformAuditLog).findOneBy({ action: 'user.role_changed', target_id: ids.managerA });
+  check('role changes are audited with before and after', res.status === 200 && (roleAudit?.metadata as any)?.before?.role === 'MANAGER' && (roleAudit?.metadata as any)?.after?.role === 'CASHIER', roleAudit?.metadata);
+  await call('POST', `/platform/users/${ids.managerA}/role`, { token: supportToken, body: { role: 'MANAGER', reason: reason.reason } });
+  res = await call('POST', '/platform/users', { token: supportToken, body: { business_id: ids.bizB, name: 'New Cashier', email: 'new-cashier@example.test', role: 'CASHIER', reason: reason.reason } });
+  check('support adds a user with a one-time temporary PIN', res.status === 201 && /^\d{4}$/.test(res.body.temporary_pin), res.body);
+  res = await call('POST', '/platform/users', { token: supportToken, body: { business_id: ids.bizB, name: 'Bad Owner', email: 'bad-owner@example.test', role: 'OWNER', reason: reason.reason } });
+  check('MIA cannot create owners', res.status === 400, res.status);
+  res = await call('GET', `/platform/users/${ids.staffA}`, { token: supportToken });
+  check('user details never include secrets', res.status === 200 && !res.text.includes('password_hash') && Array.isArray(res.body.logins) && Array.isArray(res.body.permissions), Object.keys(res.body ?? {}));
+
+  res = await call('POST', `/platform/businesses/${ids.bizB}/suspend`, { token: superToken, body: reason });
+  const supportInbox = (await call('GET', '/platform/notifications', { token: supportToken })).body;
+  const suspendNote = supportInbox.rows.find((row: any) => row.category === 'businesses' && row.business_id === ids.bizB);
+  check('suspending notifies other admins in-app', Boolean(suspendNote) && supportInbox.unread >= 1, supportInbox.rows.map((row: any) => row.title));
+  res = await call('POST', `/platform/notifications/${suspendNote?.id}/read`, { token: financeToken });
+  check('admins cannot touch another admin’s notifications', res.status === 404, res.status);
+  res = await call('POST', `/platform/notifications/${suspendNote?.id}/read`, { token: supportToken });
+  check('marking read lowers the unread count', res.status === 200 && res.body.unread === supportInbox.unread - 1, res.body);
+  res = await call('POST', '/platform/notifications/read-all', { token: supportToken });
+  check('mark all as read clears the count', res.status === 200 && (await call('GET', '/platform/notifications/unread-count', { token: supportToken })).body.unread === 0, res.body);
+  await call('POST', `/platform/businesses/${ids.bizB}/reactivate`, { token: superToken, body: reason });
+
+  res = await call('GET', '/platform/audit/verify', { token: superToken });
+  check('the audit chain verifies', res.status === 200 && res.body.ok === true && res.body.checked > 20, res.body);
+  let tamperBlocked = false;
+  try {
+    await AppDataSource.query(`UPDATE platform_audit_logs SET reason = 'tampered' WHERE id = (SELECT id FROM platform_audit_logs LIMIT 1)`);
+  } catch {
+    tamperBlocked = true;
+  }
+  check('the database refuses to edit audit entries', tamperBlocked);
+  let deleteBlocked = false;
+  try {
+    await AppDataSource.query(`DELETE FROM platform_audit_logs WHERE id = (SELECT id FROM platform_audit_logs LIMIT 1)`);
+  } catch {
+    deleteBlocked = true;
+  }
+  check('the database refuses to delete audit entries', deleteBlocked);
+  res = await call('GET', `/platform/audit?business_id=${ids.bizB}&limit=200`, { token: superToken });
+  check('audit can be filtered to one organization', res.status === 200 && res.body.rows.length > 0 && res.body.rows.every((row: any) => row.business_name === 'Shop B'), res.body.rows?.length);
+  res = await call('GET', '/platform/audit?result=denied', { token: superToken });
+  check('denied attempts are recorded as denied', res.status === 200 && res.body.rows.some((row: any) => row.action === 'business.profile_change_denied'), res.body.rows?.map((row: any) => row.action));
+
+  res = await call('GET', '/platform/email/templates', { token: superToken });
+  check('every required email template exists', res.status === 200 && res.body.rows.length >= 35 && ['auth.sign_in_code', 'subscription.grace', 'businesses.suspended', 'users.invitation', 'platform.maintenance'].every((key) => res.body.rows.some((row: any) => row.key === key)), res.body.rows?.length);
+  res = await call('PUT', '/platform/email/templates/subscription.grace', { token: superToken, body: { locale: 'en', subject: 'Grace {{secret_token}}', heading: 'x', body: 'y', active: true, reason: reason.reason } });
+  check('unknown template variables are refused', res.status === 400, res.body);
+  res = await call('PUT', '/platform/email/templates/auth.sign_in_code', { token: superToken, body: { locale: 'en', subject: 'Code', heading: 'Code', body: 'Here: {{verification_code}} for {{expiration_time}}', active: false, reason: reason.reason } });
+  check('security code emails cannot be turned off', res.status === 400, res.body);
+  const loginMail = await AppDataSource.query(`SELECT html, text, sensitive FROM email_messages WHERE template_key = 'auth.sign_in_code' LIMIT 1`);
+  check('sign-in code emails are logged without their body', loginMail.length === 1 && loginMail[0].sensitive === true && loginMail[0].html === null && loginMail[0].text === null, loginMail[0]);
+  res = await call('POST', '/platform/email/audience/preview', { token: superToken, body: { audience: { type: 'organizations', business_ids: [ids.bizA], recipients: 'owners' } } });
+  check('audience preview counts real owners', res.status === 200 && res.body.recipients === 1 && res.body.organizations === 1, res.body);
+  res = await call('POST', '/platform/email/campaigns', { token: superToken, body: { audience: { type: 'all', recipients: 'owners' }, subject: 'Hello all', heading: 'Hello', body: 'Body text here', reason: reason.reason } });
+  check('emailing every organization needs confirmation', res.status === 400 && res.body.code === 'CONFIRM_ALL_REQUIRED', res.body);
+  res = await call('POST', '/platform/email/campaigns', { token: superToken, body: { audience: { type: 'organizations', business_ids: [ids.bizA, ids.bizB], recipients: 'all_users' }, subject: 'Maintenance tonight', heading: 'Maintenance', body: 'Hello {{recipient_name}} at {{organization_name}}', reason: reason.reason } });
+  const campaignId = res.body?.id;
+  check('campaigns resolve real recipients', res.status === 201 && res.body.recipients >= 5 && res.body.organizations === 2, res.body);
+  const { dispatchCampaign } = await import('../src/lib/campaigns');
+  for (let i = 0; i < 50; i += 1) {
+    const [state] = await AppDataSource.query(`SELECT status FROM email_campaigns WHERE id = $1`, [campaignId]);
+    if (state?.status === 'completed') break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  check('dispatching an already-sent campaign again does nothing', (await dispatchCampaign(campaignId)) === 0);
+  const campaignRows = await AppDataSource.query(`SELECT to_email, html FROM email_messages WHERE campaign_id = $1`, [campaignId]);
+  check('campaigns queue one email per person and never twice', campaignRows.length === res.body.recipients && new Set(campaignRows.map((row: any) => row.to_email)).size === campaignRows.length, campaignRows.length);
+  check('campaign emails are personalised and escaped', campaignRows.some((row: any) => row.to_email === 'owner-b@example.test' && row.html.includes('Shop B')), campaignRows.length);
+  res = await call('POST', '/platform/email/campaigns', { token: supportToken, body: { audience: { type: 'organizations', business_ids: [ids.bizA], recipients: 'owners' }, subject: 'Nope', heading: 'Nope', body: 'Nope body', reason: reason.reason } });
+  check('support cannot send campaigns', res.status === 403, res.status);
+  res = await call('POST', '/webhooks/email', { body: { message_id: randomUUID(), event: 'delivered' } });
+  check('email webhooks are closed until a secret is configured', res.status === 404 || res.status === 503, res.status);
+
   server.close();
   await AppDataSource.destroy();
 

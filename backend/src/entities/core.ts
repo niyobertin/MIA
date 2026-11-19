@@ -27,6 +27,21 @@ export class Business {
   @Column({ type: 'text', default: 'Africa/Kigali' })
   timezone!: string;
 
+  @Column({ type: 'text', nullable: true })
+  description!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  address!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  contact_email!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  contact_phone!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  logo_url!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 
@@ -75,6 +90,9 @@ export class User {
 
   @Column({ type: 'boolean', default: true })
   active!: boolean;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  last_login_at!: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

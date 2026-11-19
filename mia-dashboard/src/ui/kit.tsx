@@ -68,7 +68,7 @@ export function Button({ tone = 'secondary', className = '', ...props }: ButtonH
 export const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200';
 
 export function Skeleton({ className = '' }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-slate-100 ${className}`} />;
+  return <div aria-hidden="true" className={`skeleton rounded-xl ${className}`} />;
 }
 
 export function ErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
@@ -116,33 +116,50 @@ function PageSizePicker({ pageSize, onPageSize }: { pageSize: number; onPageSize
   );
 }
 
-export function Pager({ page, pageSize, total, onPage, onPageSize }: { page: number; pageSize: number; total: number; onPage: (page: number) => void; onPageSize?: (size: number) => void }) {
+function pageList(current: number, last: number): (number | 'gap')[] {
+  const pages = new Set([0, last, current - 1, current, current + 1].filter((page) => page >= 0 && page <= last));
+  const sorted = [...pages].sort((a, b) => a - b);
+  const out: (number | 'gap')[] = [];
+  sorted.forEach((page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) out.push('gap');
+    out.push(page);
+  });
+  return out;
+}
+
+export function Pager({ page, pageSize, total, onPage, onPageSize, noun = 'rows', busy = false }: { page: number; pageSize: number; total: number; onPage: (page: number) => void; onPageSize?: (size: number) => void; noun?: string; busy?: boolean }) {
+  if (total === 0) return null;
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  const current = Math.min(page, lastPage);
   const showPicker = onPageSize && total > PAGE_SIZE_OPTIONS[0];
-  if (total <= pageSize) {
-    if (total === 0) return null;
-    return (
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 text-xs text-slate-500">
-        <span>{total} {total === 1 ? 'row' : 'rows'}</span>
-        {showPicker ? <PageSizePicker pageSize={pageSize} onPageSize={onPageSize} /> : null}
-      </div>
-    );
-  }
-  const navButton = 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40';
+  const navButton = 'inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40';
   return (
-    <nav aria-label="Pages" className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 text-sm text-slate-500">
-      <span>
-        <span className="font-semibold text-slate-700">{page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)}</span> of {total}
+    <nav aria-label="Pages" aria-busy={busy} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 text-sm text-slate-500">
+      <span aria-live="polite">
+        Showing <span className="font-semibold text-slate-700">{current * pageSize + 1}–{Math.min((current + 1) * pageSize, total)}</span> of <span className="font-semibold text-slate-700">{total}</span> {noun}
       </span>
       <div className="flex flex-wrap items-center gap-3">
         {showPicker ? <PageSizePicker pageSize={pageSize} onPageSize={onPageSize} /> : null}
-        <div className="flex items-center gap-1.5">
-          <button type="button" aria-label="First page" className={navButton} disabled={page === 0} onClick={() => onPage(0)}><ChevronsLeft size={16} /></button>
-          <button type="button" aria-label="Previous page" className={navButton} disabled={page === 0} onClick={() => onPage(page - 1)}><ChevronLeft size={16} /></button>
-          <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">Page {page + 1} of {lastPage + 1}</span>
-          <button type="button" aria-label="Next page" className={navButton} disabled={page >= lastPage} onClick={() => onPage(page + 1)}><ChevronRight size={16} /></button>
-          <button type="button" aria-label="Last page" className={navButton} disabled={page >= lastPage} onClick={() => onPage(lastPage)}><ChevronsRight size={16} /></button>
-        </div>
+        {lastPage > 0 ? (
+          <div className="flex items-center gap-1">
+            <button type="button" aria-label="First page" className={navButton} disabled={current === 0} onClick={() => onPage(0)}><ChevronsLeft size={15} /></button>
+            <button type="button" aria-label="Previous page" className={navButton} disabled={current === 0} onClick={() => onPage(current - 1)}><ChevronLeft size={15} /></button>
+            {pageList(current, lastPage).map((item, index) => item === 'gap'
+              ? <span key={`gap-${index}`} className="px-1 text-xs text-slate-400">…</span>
+              : (
+                <button
+                  key={item}
+                  type="button"
+                  aria-label={`Page ${item + 1}`}
+                  aria-current={item === current ? 'page' : undefined}
+                  onClick={() => onPage(item)}
+                  className={`${navButton} ${item === current ? '!bg-brand !text-white hover:!bg-brand-dark' : ''}`}
+                >{item + 1}</button>
+              ))}
+            <button type="button" aria-label="Next page" className={navButton} disabled={current >= lastPage} onClick={() => onPage(current + 1)}><ChevronRight size={15} /></button>
+            <button type="button" aria-label="Last page" className={navButton} disabled={current >= lastPage} onClick={() => onPage(lastPage)}><ChevronsRight size={15} /></button>
+          </div>
+        ) : null}
       </div>
     </nav>
   );

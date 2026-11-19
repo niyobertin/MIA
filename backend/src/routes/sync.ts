@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { EntityTarget, ObjectLiteral } from 'typeorm';
 import { AppDataSource } from '../data-source';
+import { notifyAdmins } from '../lib/notifications';
+import { queueTemplateEmail } from '../lib/email';
 import { findUserByIdentifier, findUsersByPhone, normalizeEmail, normalizePhone } from '../lib/identity';
 import {
   Business,
@@ -710,6 +712,21 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
     }
 
     if (table === 'businesses' && !actor.business_id) {
+      void notifyAdmins({
+        permission: 'businesses:read',
+        category: 'businesses',
+        title: 'New business registered',
+        message: `${String(payload.name ?? 'A new business')} joined MIA.`,
+        actionUrl: `/platform/businesses/${String(payload.id)}`,
+        businessId: String(payload.id),
+        resourceType: 'business',
+        resourceId: String(payload.id),
+        dedupeKey: `business-registered:${String(payload.id)}`,
+      });
+      const owner = await AppDataSource.getRepository(User).findOne({ where: { id: userId } });
+      if (owner?.email) {
+        void queueTemplateEmail({ template: 'businesses.registration_successful', to: owner.email, businessId: String(payload.id), idempotencyKey: `registered:${String(payload.id)}`, variables: { recipient_name: owner.name, organization_name: String(payload.name ?? 'your business') } });
+      }
       await usersRepo.update(userId, {
         business_id: String(payload.id),
         role: (actor.role as User['role']) ?? 'OWNER',
@@ -727,6 +744,19 @@ syncRouter.post('/:table', async (req: AuthedRequest, res) => {
   } catch (error) {
     console.error(error);
     const message = error instanceof Error ? error.message : 'Sync failed';
+    if (req.auth?.business_id) {
+      const hour = new Date().toISOString().slice(0, 13);
+      void notifyAdmins({
+        permission: 'sync:read',
+        category: 'sync',
+        priority: 'high',
+        title: 'A sync upload failed',
+        message: `Table ${String(req.params.table ?? '')}: ${message.slice(0, 160)}`,
+        actionUrl: '/platform/sync',
+        businessId: req.auth.business_id,
+        dedupeKey: `sync-failed:${req.auth.business_id}:${hour}`,
+      });
+    }
     res.status(500).json({ error: message });
   }
 });

@@ -2,11 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDate, formatDateTime, humanize } from '../lib/format';
 import { platformApi } from '../lib/platformAuth';
-import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
-import { OverviewContent, type OverviewData } from '../business/Overview';
-import { useAdmin } from './PlatformGate';
+import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
+import { useAdmin } from './context';
 import { Select } from '../ui/Select';
-import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -32,84 +30,6 @@ function BusinessSelect({ id, value, onChange, allowAll }: { id: string; value: 
         ...(options.data ?? []).map((row) => ({ value: row.id, label: row.name, hint: row.business_code })),
       ]}
     />
-  );
-}
-
-function grantActive(row: Row) {
-  return !row.revoked_at && new Date(row.expires_at) > new Date();
-}
-
-function SupportViewer({ grant, onClose }: { grant: Row; onClose: () => void }) {
-  const query = useQuery({
-    queryKey: ['support-view', grant.business_id],
-    queryFn: async () => (await platformApi.get<{ business: Row; overview: OverviewData }>(`/support/${grant.business_id}/overview`, { params: { period: '30d' } })).data,
-  });
-  return (
-    <div className="space-y-4">
-      <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <span><strong>Read-only support session:</strong> {grant.business_name}, last 30 days. Ends {formatDateTime(grant.expires_at)}. Each view is logged.</span>
-        <Button onClick={onClose}>Close view</Button>
-      </div>
-      <QueryBoundary query={query}>{(data) => <OverviewContent data={data.overview} currency={data.business.currency} />}</QueryBoundary>
-    </div>
-  );
-}
-
-export function SupportAccess() {
-  const admin = useAdmin();
-  const client = useQueryClient();
-  const [businessId, setBusinessId] = useState('');
-  const [minutes, setMinutes] = useState(30);
-  const [reason, setReason] = useState('');
-  const [viewing, setViewing] = useState<Row | null>(null);
-  const grants = useQuery({ queryKey: ['support-grants'], queryFn: async () => (await platformApi.get<{ rows: Row[] }>('/support/grants')).data });
-  const start = useMutation({
-    mutationFn: () => platformApi.post('/support/grants', { business_id: businessId, minutes, reason }),
-    onSuccess: async () => {
-      setReason('');
-      setBusinessId('');
-      await client.invalidateQueries({ queryKey: ['support-grants'] });
-    },
-  });
-  if (viewing) return <SupportViewer grant={viewing} onClose={() => setViewing(null)} />;
-  return (
-    <>
-      <PageHeader title="Support access" subtitle="Time-limited, read-only access to one business. The owner is told, and it appears in their activity log." />
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Start a session">
-          <form onSubmit={(event) => { event.preventDefault(); start.mutate(); }} className="space-y-3 p-5">
-            <div><label htmlFor="grant-business" className="block text-sm font-medium text-slate-700 mb-1.5">Business</label><BusinessSelect id="grant-business" value={businessId} onChange={setBusinessId} /></div>
-            <div>
-              <label htmlFor="grant-minutes" className="block text-sm font-medium text-slate-700 mb-1.5">Length</label>
-              <Select id="grant-minutes" value={String(minutes)} onChange={(v) => setMinutes(Number(v))} options={[{ value: '15', label: '15 minutes' }, { value: '30', label: '30 minutes' }, { value: '60', label: '60 minutes' }]} />
-            </div>
-            <div><label htmlFor="grant-reason" className="block text-sm font-medium text-slate-700 mb-1.5">Reason (the owner sees this)</label><textarea id="grant-reason" required minLength={5} rows={3} value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass} /></div>
-            {start.isError ? <ErrorNotice error={start.error} /> : null}
-            <Button type="submit" tone="primary" disabled={start.isPending}>Start session</Button>
-          </form>
-        </Card>
-        <Card title="Sessions" className="lg:col-span-2">
-          <div className={grants.isError ? 'p-4' : ''}>
-            <QueryBoundary query={grants}>
-              {(data) => (
-                <DataTable rows={data.rows} rowKey={rowId} empty="No support sessions yet." columns={[
-                  { header: 'Business', cell: (row) => <div><div className="font-semibold text-slate-900">{row.business_name}</div><div className="text-xs text-slate-500">{row.admin_name}</div></div> },
-                  { header: 'Reason', cell: (row) => <span className="text-xs">{row.reason}</span> },
-                  { header: 'Status', cell: (row) => grantActive(row) ? <Badge tone="info">Active</Badge> : <Badge>Ended</Badge> },
-                  { header: 'Started', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(row.created_at)}</span> },
-                  { header: '', align: 'right', cell: (row) => grantActive(row) ? (
-                    <div className="flex justify-end gap-1.5">
-                      {row.admin_id === admin.id ? <Button className="!px-2.5 !py-1.5 !text-xs" onClick={() => setViewing(row)}>View</Button> : null}
-                      {row.admin_id === admin.id || admin.role === 'SUPER_ADMIN' ? <ReasonAction label="End" needsReason={false} title="End this support session" invalidate={['support-grants']} run={() => platformApi.post(`/support/grants/${row.id}/revoke`)} /> : null}
-                    </div>
-                  ) : null },
-                ]} />
-              )}
-            </QueryBoundary>
-          </div>
-        </Card>
-      </div>
-    </>
   );
 }
 
@@ -180,83 +100,6 @@ export function DataRecords() {
           </QueryBoundary>
         </div>
       </Card>
-    </>
-  );
-}
-
-export function Announcements() {
-  const client = useQueryClient();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [severity, setSeverity] = useState('info');
-  const [businessId, setBusinessId] = useState('');
-  const query = useQuery({ queryKey: ['announcements'], queryFn: async () => (await platformApi.get<{ rows: Row[] }>('/announcements')).data });
-  const create = useMutation({
-    mutationFn: () => platformApi.post('/announcements', { title, body, severity, business_id: businessId || null }),
-    onSuccess: async () => {
-      setTitle('');
-      setBody('');
-      setBusinessId('');
-      await client.invalidateQueries({ queryKey: ['announcements'] });
-    },
-  });
-  return (
-    <>
-      <PageHeader title="Announcements" subtitle="Shown at the top of the web dashboard. The mobile app doesn't show them yet." />
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="New announcement">
-          <form onSubmit={(event) => { event.preventDefault(); create.mutate(); }} className="space-y-3 p-5">
-            <div><label htmlFor="an-title" className="block text-sm font-medium text-slate-700 mb-1.5">Title</label><input id="an-title" required minLength={3} maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} /></div>
-            <div><label htmlFor="an-body" className="block text-sm font-medium text-slate-700 mb-1.5">Message</label><textarea id="an-body" required minLength={3} maxLength={1000} rows={3} value={body} onChange={(e) => setBody(e.target.value)} className={inputClass} /></div>
-            <div>
-              <label htmlFor="an-severity" className="block text-sm font-medium text-slate-700 mb-1.5">Type</label>
-              <Select id="an-severity" value={severity} onChange={setSeverity} options={[{ value: 'info', label: 'Information' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]} />
-            </div>
-            <div><label htmlFor="an-business" className="block text-sm font-medium text-slate-700 mb-1.5">Show to</label><BusinessSelect id="an-business" value={businessId} onChange={setBusinessId} allowAll /></div>
-            {create.isError ? <ErrorNotice error={create.error} /> : null}
-            <Button type="submit" tone="primary" disabled={create.isPending}>Publish</Button>
-          </form>
-        </Card>
-        <Card title="Published" className="lg:col-span-2">
-          <div className={query.isError ? 'p-4' : ''}>
-            <QueryBoundary query={query}>
-              {(data) => (
-                <DataTable rows={data.rows} rowKey={rowId} empty="No announcements yet." columns={[
-                  { header: 'Announcement', cell: (row) => <div className="min-w-[12rem]"><div className="font-semibold text-slate-900">{row.title}</div><div className="text-xs text-slate-500">{row.body}</div></div> },
-                  { header: 'Show to', cell: (row) => row.business_name ?? 'All businesses' },
-                  { header: 'Status', cell: (row) => row.active ? <Badge tone="good">Live</Badge> : <Badge>Ended</Badge> },
-                  { header: '', align: 'right', cell: (row) => row.active ? <ReasonAction label="End" needsReason={false} title={`End "${row.title}"`} invalidate={['announcements']} run={() => platformApi.patch(`/announcements/${row.id}`, { active: false })} /> : null },
-                ]} />
-              )}
-            </QueryBoundary>
-          </div>
-        </Card>
-      </div>
-    </>
-  );
-}
-
-export function AuditLog() {
-  const filters = useListFilters({ sortOptions: [
-    { value: 'date', label: 'When', kind: 'date' },
-    { value: 'action', label: 'Action', kind: 'text' },
-    { value: 'admin', label: 'Admin', kind: 'text' },
-  ] });
-  return (
-    <>
-      <PageHeader title="Audit log" subtitle="Every platform action and sign-in. Entries can't be edited or deleted here." />
-      <PagedTable<Row>
-        client={platformApi} path="/audit" queryKey="platform-audit" rowKey={rowId} searchPlaceholder="Search action, admin or business" empty="No entries match."
-        params={filters.params} toolbar={filters.controls}
-        columns={[
-          { header: 'When', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(row.created_at)}</span> },
-          { header: 'Admin', cell: (row) => row.admin_email ?? 'Unknown' },
-          { header: 'Action', cell: (row) => <span className="font-medium text-slate-900">{humanize(row.action)}</span> },
-          { header: 'Business', cell: (row) => row.business_name ?? '—' },
-          { header: 'Reason', cell: (row) => <span className="text-xs">{row.reason ?? '—'}</span> },
-          { header: 'IP address', cell: (row) => <code className="text-xs">{row.ip ?? '—'}</code> },
-        ]}
-      />
     </>
   );
 }

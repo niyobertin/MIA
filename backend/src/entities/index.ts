@@ -32,5 +32,12 @@ export {
   DataRequest,
   Announcement,
   PinHelpRequest,
+  SubscriptionPlan,
+  UserLoginEvent,
+  Notification,
+  EmailTemplate,
+  EmailMessage,
+  EmailCampaign,
+  EmailSuppression,
 } from './platform';
-export type { PlatformRole } from './platform';
+export type { PlatformRole, SubscriptionStatus, SupportLevel, NotificationCategory, NotificationPriority } from './platform';

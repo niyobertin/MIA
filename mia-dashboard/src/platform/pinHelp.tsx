@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { formatDateTime, humanize } from '../lib/format';
 import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, Card, DataTable, Dialog, PageHeader, QueryBoundary, ReasonAction } from '../ui/kit';
-import { useCan } from './PlatformGate';
+import { useCan } from './context';
 import { Select } from '../ui/Select';
 
 type HelpRequest = {

@@ -14,6 +14,13 @@ import {
   DataRequest,
   Announcement,
   PinHelpRequest,
+  SubscriptionPlan,
+  UserLoginEvent,
+  Notification,
+  EmailTemplate,
+  EmailMessage,
+  EmailCampaign,
+  EmailSuppression,
   Category,
   Product,
   Supplier,
@@ -53,6 +60,13 @@ export const AppDataSource = new DataSource({
     DataRequest,
     Announcement,
     PinHelpRequest,
+    SubscriptionPlan,
+    UserLoginEvent,
+    Notification,
+    EmailTemplate,
+    EmailMessage,
+    EmailCampaign,
+    EmailSuppression,
     Category,
     Product,
     Supplier,
@@ -127,7 +141,10 @@ export async function initDatabase(options?: {
   }
   if (options?.synchronize) {
     const queries = await planSchemaChanges();
-    if (queries.length === 0) return AppDataSource;
+    if (queries.length === 0) {
+      await installAuditGuards();
+      return AppDataSource;
+    }
     const allowDestructive =
       options.allowDestructive ?? process.env.ALLOW_DESTRUCTIVE_SCHEMA === 'true';
     const destructive = findDestructiveQueries(queries);
@@ -140,9 +157,31 @@ export async function initDatabase(options?: {
       } catch (error) {
         console.error('Safe schema changes failed and were rolled back. Starting with the current schema.', error);
       }
+      await installAuditGuards();
       return AppDataSource;
     }
     await AppDataSource.synchronize();
   }
+  await installAuditGuards();
   return AppDataSource;
+}
+
+const AUDIT_GUARD_SQL = `
+CREATE OR REPLACE FUNCTION mia_platform_audit_append_only() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'platform_audit_logs is append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS platform_audit_logs_append_only ON platform_audit_logs;
+CREATE TRIGGER platform_audit_logs_append_only BEFORE UPDATE OR DELETE ON platform_audit_logs
+  FOR EACH ROW EXECUTE FUNCTION mia_platform_audit_append_only();`;
+
+async function installAuditGuards() {
+  const [table] = await AppDataSource.query(`SELECT to_regclass('public.platform_audit_logs') AS name`);
+  if (!table?.name) return;
+  try {
+    await AppDataSource.query(AUDIT_GUARD_SQL);
+  } catch (error) {
+    console.error('Could not install the platform audit append-only guard', error);
+  }
 }

@@ -4,6 +4,8 @@ export type Mail = {
   to: string;
   subject: string;
   text: string;
+  html?: string;
+  headers?: Record<string, string>;
 };
 
 let transporter: Transporter | null = null;
@@ -27,14 +29,18 @@ function getTransporter(): Transporter | null {
   return transporter;
 }
 
-export async function sendMail(mail: Mail): Promise<void> {
+export function emailProviderConfigured() {
+  return Boolean(process.env.SMTP_HOST);
+}
+
+export async function sendMail(mail: Mail): Promise<{ messageId: string | null }> {
   const transport = getTransporter();
   if (transport) {
-    await transport.sendMail({
+    const info = await transport.sendMail({
       from: process.env.MAIL_FROM ?? 'MIA <no-reply@localhost>',
       ...mail,
     });
-    return;
+    return { messageId: info.messageId ?? null };
   }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SMTP_HOST is not set, so email cannot be sent');
@@ -42,4 +48,5 @@ export async function sendMail(mail: Mail): Promise<void> {
   devOutbox.push(mail);
   if (devOutbox.length > 50) devOutbox.shift();
   console.log(`[dev email, SMTP_HOST not set]\nTo: ${mail.to}\nSubject: ${mail.subject}\n\n${mail.text}\n`);
+  return { messageId: `dev-${Date.now()}-${devOutbox.length}` };
 }
