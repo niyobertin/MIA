@@ -3,7 +3,7 @@ import { CalendarRange } from 'lucide-react';
 import { Select } from './Select';
 import { Button, inputClass } from './kit';
 
-export type PresetPeriod = 'today' | 'yesterday' | '7d' | '30d' | '90d';
+export type PresetPeriod = 'all' | 'today' | 'yesterday' | '7d' | '30d' | '90d';
 export type PeriodValue = { period: PresetPeriod } | { period: 'custom'; from: string; to: string };
 
 const PRESETS: { value: PresetPeriod; label: string }[] = [
@@ -37,7 +37,7 @@ function rangeProblem(from: string, to: string, today = isoDay(new Date())): str
   return null;
 }
 
-export function PeriodFilter({ value, onChange }: { value: PeriodValue; onChange: (value: PeriodValue) => void }) {
+export function PeriodFilter({ value, onChange, includeAll = false, className = 'w-56' }: { value: PeriodValue; onChange: (value: PeriodValue) => void; includeAll?: boolean; className?: string }) {
   const today = isoDay(new Date());
   const [panelOpen, setPanelOpen] = useState(false);
   const [from, setFrom] = useState(() => (value.period === 'custom' ? value.from : isoDay(new Date(Date.now() - 6 * 86_400_000))));
@@ -62,7 +62,7 @@ export function PeriodFilter({ value, onChange }: { value: PeriodValue; onChange
   }, [panelOpen]);
 
   const customLabel = value.period === 'custom' ? `${shortDay(value.from)} – ${shortDay(value.to)}` : 'Custom range…';
-  const options = [...PRESETS, { value: 'custom' as const, label: customLabel }];
+  const options = [...(includeAll ? [{ value: 'all' as const, label: 'All time' }] : []), ...PRESETS, { value: 'custom' as const, label: customLabel }];
 
   const apply = () => {
     const issue = rangeProblem(from, to, today);
@@ -76,7 +76,7 @@ export function PeriodFilter({ value, onChange }: { value: PeriodValue; onChange
     <div ref={rootRef} className="relative">
       <Select
         ariaLabel="Period"
-        className="w-56"
+        className={className}
         value={value.period}
         options={options}
         onChange={(next) => {
@@ -93,7 +93,7 @@ export function PeriodFilter({ value, onChange }: { value: PeriodValue; onChange
         <div
           role="dialog"
           aria-label="Custom date range"
-          className="absolute right-0 z-40 mt-2 w-[min(18rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10"
+          className="absolute left-0 sm:left-auto sm:right-0 z-40 mt-2 w-[min(18rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-900/10"
         >
           <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
             <CalendarRange size={16} className="text-emerald-700" aria-hidden />

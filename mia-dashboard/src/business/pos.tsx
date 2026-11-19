@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Minus, Plus, Search, ShoppingCart, Trash2 } from 'lucide-react';
+import { Check, CheckCircle2, Minus, Plus, Search, ShoppingCart, Trash2 } from 'lucide-react';
+import { ProductThumb } from '../ui/ProductThumb';
 import { api } from '../lib/auth';
 import { formatMoney, getErrorMessage } from '../lib/format';
 import { Button, Card, Dialog, inputClass, PageHeader, Skeleton } from '../ui/kit';
@@ -111,32 +112,54 @@ export function NewSale() {
           <span className="font-semibold">Sale saved · {done.reference} · {money(done.total)}</span>
         </div>
       ) : null}
-      <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_22rem] xl:grid-cols-[1fr_24rem]">
         <div>
           <div className="relative mb-4">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
             <input aria-label="Search products" placeholder="Search products" value={search} onChange={(e) => setSearch(e.target.value)} className={`${inputClass} pl-9`} />
           </div>
           {products.isLoading ? <Skeleton className="h-64" /> : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {visible.map((p) => {
                 const qty = inCart(p.id);
                 const out = p.track_inventory && p.stock <= 0;
                 const full = p.track_inventory && qty >= p.stock;
+                const lowStock = p.track_inventory && !out && p.stock <= 5;
                 return (
                   <button
                     key={p.id}
                     type="button"
                     disabled={out || full}
                     onClick={() => add(p)}
-                    className={`relative flex min-h-24 flex-col justify-between rounded-2xl border bg-white p-3 text-left shadow-sm transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 ${qty ? 'border-emerald-500 ring-2 ring-emerald-100' : 'border-slate-200'}`}
+                    aria-pressed={qty > 0}
+                    aria-label={`${p.name}, ${money(p.selling_price)}${qty ? `, ${qty} in cart` : ''}`}
+                    className={`group relative flex flex-col overflow-hidden rounded-2xl border-2 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-sm ${qty ? 'border-emerald-600 bg-emerald-50/60 ring-4 ring-emerald-100' : 'border-slate-200 hover:border-emerald-300'}`}
                   >
-                    {qty ? <span className="absolute right-2 top-2 rounded-full bg-emerald-700 px-2 py-0.5 text-xs font-bold text-white">{qty}</span> : null}
-                    <span className="pr-6 font-semibold leading-tight text-slate-900">{p.name}</span>
-                    <span>
-                      <span className="block text-sm font-bold text-slate-900">{money(p.selling_price)}</span>
-                      <span className={`text-xs ${out ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>{p.track_inventory ? (out ? 'Out of stock' : `${p.stock} ${p.unit}`) : p.unit}</span>
-                    </span>
+                    <div className="relative">
+                      <ProductThumb name={p.name} src={(p as ProductOption & { image_url?: string | null }).image_url} className="aspect-[4/3] w-full" />
+                      {qty ? (
+                        <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border-2 border-white bg-emerald-700 px-2 py-0.5 text-xs font-bold text-white shadow">
+                          <Check size={12} strokeWidth={3} aria-hidden />{qty}
+                        </span>
+                      ) : null}
+                      {p.track_inventory ? (
+                        <span className={`absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-white/95 px-2 py-0.5 text-[11px] font-semibold shadow-sm ${out ? 'text-rose-700' : lowStock ? 'text-amber-700' : 'text-slate-700'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${out ? 'bg-rose-500' : lowStock ? 'bg-amber-500' : 'bg-emerald-500'}`} aria-hidden />
+                          {out ? 'Out of stock' : `${p.stock} ${p.unit}`}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-1 flex-col gap-1 p-3">
+                      <span className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-tight text-slate-900">{p.name}</span>
+                      {p.category ? <span className="truncate text-xs text-slate-500">{p.category}</span> : null}
+                      <span className="mt-auto flex items-center justify-between gap-2 pt-1">
+                        <span className={`whitespace-nowrap text-sm font-extrabold tabular-nums ${qty ? 'text-emerald-800' : 'text-slate-900'}`}>{money(p.selling_price)}</span>
+                        <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition ${qty ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-emerald-600 text-emerald-700 group-hover:bg-emerald-50'}`} aria-hidden>
+                          <Plus size={14} strokeWidth={3} />
+                        </span>
+                      </span>
+                      {qty ? <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Selected</span> : null}
+                    </div>
                   </button>
                 );
               })}
@@ -146,17 +169,21 @@ export function NewSale() {
         </div>
 
         <Card className="h-fit lg:sticky lg:top-4">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 font-bold text-slate-900"><ShoppingCart size={18} aria-hidden />Cart</div>
+          <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 font-bold text-slate-900">
+            <ShoppingCart size={18} aria-hidden />Cart
+            {cart.length ? <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">{cart.reduce((n, l) => n + l.quantity, 0)} items</span> : null}
+          </div>
           <div className="space-y-4 p-5">
             {cart.length === 0 ? <p className="text-sm text-slate-500">Tap a product to add it.</p> : (
               <ul className="divide-y divide-slate-100">
                 {cart.map((line) => (
                   <li key={line.product.id} className="space-y-2 py-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-slate-900">{line.product.name}</span>
+                      <ProductThumb name={line.product.name} className="h-9 w-9 shrink-0 rounded-lg" iconSize={16} />
+                      <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{line.product.name}</span>
                       <button type="button" aria-label={`Remove ${line.product.name}`} onClick={() => setQty(line.product.id, 0)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 size={15} /></button>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <div className="flex items-center rounded-xl border border-slate-200">
                         <button type="button" aria-label="One less" onClick={() => setQty(line.product.id, line.quantity - 1)} className="p-2 text-slate-600"><Minus size={14} /></button>
                         <span className="w-8 text-center text-sm font-bold tabular-nums">{line.quantity}</span>

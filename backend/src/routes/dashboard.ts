@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AppDataSource } from '../data-source';
 import { Announcement, Business, BusinessPlatformState, SupportAccessGrant, User } from '../entities';
 import { requireActiveUser, requireAuth } from '../middleware/auth';
-import { bizId, can, type DashboardRequest } from './dashboardShared';
+import { bizId, can, listWindow, windowWhere, type DashboardRequest } from './dashboardShared';
 import { dashboardWriteRouter } from './dashboardWrite';
 import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
 import {
@@ -89,19 +89,25 @@ dashboardRouter.get('/sales', can('sales'), async (req: DashboardRequest, res) =
   const status = z.enum(['all', 'unpaid']).default('all').parse(req.query.status);
   const ownOnly = !hasDashboardPermission(req.member!.role, 'salesAll');
   const customerId = req.query.customer_id ? z.string().uuid().parse(req.query.customer_id) : null;
-  const params: unknown[] = [bizId(req), status, ownOnly ? req.member!.id : null, searchTerm(page.q), customerId];
+  const win = await listWindow(req, { date: 's.sale_date', amount: 's.total_amount', customer: 'c.name', reference: 's.reference_number' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params: unknown[] = [bizId(req), status, ownOnly ? req.member!.id : null, searchTerm(page.q), customerId, win.from, win.to];
   const where = `s.business_id = $1
     AND ($2 = 'all' OR (s.voided = false AND s.total_amount > s.paid_amount))
     AND ($3::text IS NULL OR s.created_by::text = $3)
     AND ($4::text IS NULL OR s.reference_number ILIKE $4 OR c.name ILIKE $4)
-    AND ($5::text IS NULL OR s.customer_id::text = $5)`;
+    AND ($5::text IS NULL OR s.customer_id::text = $5)
+    AND ${windowWhere('s.sale_date', 6)}`;
   const from = `FROM sales s LEFT JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id
                 LEFT JOIN users u ON u.id = s.created_by`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT s.id, s.reference_number, s.total_amount, s.paid_amount, s.payment_status, s.voided, s.sale_date,
               c.name AS customer, u.name AS cashier
-       ${from} WHERE ${where} ORDER BY s.sale_date DESC LIMIT $6 OFFSET $7`,
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, s.sale_date DESC LIMIT $8 OFFSET $9`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
@@ -156,13 +162,18 @@ dashboardRouter.get('/sales/:id', can('sales'), async (req: DashboardRequest, re
 dashboardRouter.get('/payments', can('payments'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
   const ownOnly = !hasDashboardPermission(req.member!.role, 'paymentsAll');
-  const params = [bizId(req), ownOnly ? req.member!.id : null];
-  const where = `p.business_id = $1 AND ($2::text IS NULL OR p.created_by::text = $2)`;
+  const win = await listWindow(req, { date: 'p.payment_date', amount: 'p.amount' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), ownOnly ? req.member!.id : null, win.from, win.to];
+  const where = `p.business_id = $1 AND ($2::text IS NULL OR p.created_by::text = $2) AND ${windowWhere('p.payment_date', 3)}`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT p.id, p.type, p.payment_method, p.amount, p.payment_date, p.notes, u.name AS recorded_by
        FROM payments p LEFT JOIN users u ON u.id = p.created_by
-       WHERE ${where} ORDER BY p.payment_date DESC LIMIT $3 OFFSET $4`,
+       WHERE ${where} ORDER BY ${win.orderBy}, p.payment_date DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM payments p WHERE ${where}`, params),
@@ -172,15 +183,20 @@ dashboardRouter.get('/payments', can('payments'), async (req: DashboardRequest, 
 
 dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [bizId(req), searchTerm(page.q)];
-  const where = `c.business_id = $1 AND ($2::text IS NULL OR c.name ILIKE $2 OR c.phone ILIKE $2)`;
+  const win = await listWindow(req, { name: 'c.name', date: 'c.created_at', balance: 'balance' }, 'name', 'asc');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), searchTerm(page.q), win.from, win.to];
+  const where = `c.business_id = $1 AND ($2::text IS NULL OR c.name ILIKE $2 OR c.phone ILIKE $2) AND ${windowWhere('c.created_at', 3)}`;
   const [rows, [count], [summary]] = await Promise.all([
     q(
-      `SELECT c.id, c.name, c.phone, c.email, c.address, c.credit_limit, c.active,
+      `SELECT c.id, c.name, c.phone, c.email, c.address, c.credit_limit, c.active, c.created_at,
               COALESCE((SELECT SUM(s.total_amount - s.paid_amount) FROM sales s
                         WHERE s.customer_id = c.id AND s.business_id = c.business_id
                           AND s.voided = false AND s.total_amount > s.paid_amount), 0) AS balance
-       FROM customers c WHERE ${where} ORDER BY c.name LIMIT $3 OFFSET $4`,
+       FROM customers c WHERE ${where} ORDER BY ${win.orderBy}, c.name LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM customers c WHERE ${where}`, params),
@@ -237,15 +253,22 @@ dashboardRouter.get('/stock-report', can('stockReport'), async (req: DashboardRe
 
 dashboardRouter.get('/purchases', can('purchases'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [bizId(req)];
+  const win = await listWindow(req, { date: 'p.purchase_date', amount: 'p.total_amount', supplier: 's.name' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), win.from, win.to, searchTerm(page.q)];
+  const where = `p.business_id = $1 AND ${windowWhere('p.purchase_date', 2)}
+    AND ($4::text IS NULL OR p.reference_number ILIKE $4 OR s.name ILIKE $4)`;
+  const from = `FROM purchases p LEFT JOIN suppliers s ON s.id = p.supplier_id AND s.business_id = p.business_id`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT p.id, p.reference_number, p.total_amount, p.paid_amount, p.status, p.purchase_date, s.name AS supplier
-       FROM purchases p LEFT JOIN suppliers s ON s.id = p.supplier_id AND s.business_id = p.business_id
-       WHERE p.business_id = $1 ORDER BY p.purchase_date DESC LIMIT $2 OFFSET $3`,
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, p.purchase_date DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM purchases WHERE business_id = $1`, params),
+    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
   ]);
   res.json({
     total: num(count.total),
@@ -286,19 +309,26 @@ dashboardRouter.get('/purchases/:id', can('purchases'), async (req: DashboardReq
 dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
   const productId = req.query.product_id ? z.string().uuid().parse(req.query.product_id) : null;
-  const params = [bizId(req), productId];
+  const win = await listWindow(req, { date: 'm.occurred_at', quantity: 'm.quantity', product: 'p.name' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), productId, win.from, win.to, searchTerm(page.q)];
+  const where = `m.business_id = $1 AND ($2::text IS NULL OR m.product_id::text = $2) AND ${windowWhere('m.occurred_at', 3)}
+    AND ($5::text IS NULL OR p.name ILIKE $5)`;
+  const from = `FROM stock_movements m
+       LEFT JOIN products p ON p.id = m.product_id AND p.business_id = m.business_id
+       LEFT JOIN users u ON u.id = m.created_by`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT m.id, m.occurred_at, m.type, m.quantity, m.previous_quantity, m.new_quantity, m.reason,
               p.name AS product, u.name AS user_name
-       FROM stock_movements m
-       LEFT JOIN products p ON p.id = m.product_id AND p.business_id = m.business_id
-       LEFT JOIN users u ON u.id = m.created_by
-       WHERE m.business_id = $1 AND ($2::text IS NULL OR m.product_id::text = $2)
-       ORDER BY m.occurred_at DESC LIMIT $3 OFFSET $4`,
+       ${from} WHERE ${where}
+       ORDER BY ${win.orderBy}, m.occurred_at DESC LIMIT $6 OFFSET $7`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM stock_movements WHERE business_id = $1 AND ($2::text IS NULL OR product_id::text = $2)`, params),
+    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
   ]);
   res.json({
     total: num(count.total),
@@ -314,16 +344,24 @@ dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest
 dashboardRouter.get('/expenses', can('expenses'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
   const params = [bizId(req)];
+  const win = await listWindow(req, { date: 'e.expense_date', amount: 'e.amount', category: 'e.category' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const listParams = [bizId(req), win.from, win.to, searchTerm(page.q)];
+  const where = `e.business_id = $1 AND ${windowWhere('e.expense_date', 2)}
+    AND ($4::text IS NULL OR e.description ILIKE $4 OR e.category ILIKE $4)`;
   const [rows, [count], [summary]] = await Promise.all([
     q(
       `SELECT e.id, e.category, e.amount, e.payment_method, e.description, e.reference_number, e.expense_date, e.created_at,
               (e.session_id IS NOT NULL AND e.session_id = (SELECT id FROM daily_closings WHERE business_id = $1 AND status = 'open' LIMIT 1)) AS editable,
               u.name AS recorded_by
        FROM expenses e LEFT JOIN users u ON u.id = e.created_by
-       WHERE e.business_id = $1 ORDER BY e.expense_date DESC, e.created_at DESC LIMIT $2 OFFSET $3`,
-      [...params, page.limit, page.offset],
+       WHERE ${where} ORDER BY ${win.orderBy}, e.created_at DESC LIMIT $5 OFFSET $6`,
+      [...listParams, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM expenses WHERE business_id = $1`, params),
+    q(`SELECT COUNT(*) AS total FROM expenses e WHERE ${where}`, listParams),
     q(
       `SELECT COALESCE(SUM(amount) FILTER (WHERE session_id = (SELECT id FROM daily_closings WHERE business_id = $1 AND status = 'open' LIMIT 1)), 0) AS today,
               COALESCE(SUM(amount) FILTER (WHERE expense_date >= date_trunc('month', now())), 0) AS month,
@@ -341,16 +379,22 @@ dashboardRouter.get('/expenses', can('expenses'), async (req: DashboardRequest, 
 
 dashboardRouter.get('/reports/closings', can('reports'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [bizId(req)];
+  const win = await listWindow(req, { date: 'business_date', sales: 'total_sales', profit: 'net_profit' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), win.from, win.to];
+  const where = `business_id = $1 AND ${windowWhere('business_date::timestamp', 2)}`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT id, business_date, session_number, status, total_sales, cogs, gross_profit, expenses, net_profit,
               expected_cash, actual_cash, cash_variance
-       FROM daily_closings WHERE business_id = $1
-       ORDER BY business_date DESC, session_number DESC LIMIT $2 OFFSET $3`,
+       FROM daily_closings WHERE ${where}
+       ORDER BY ${win.orderBy}, business_date DESC, session_number DESC LIMIT $4 OFFSET $5`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM daily_closings WHERE business_id = $1`, params),
+    q(`SELECT COUNT(*) AS total FROM daily_closings WHERE ${where}`, params),
   ]);
   const money = ['total_sales', 'cogs', 'gross_profit', 'expenses', 'net_profit', 'expected_cash', 'actual_cash', 'cash_variance'];
   res.json({
@@ -365,8 +409,8 @@ dashboardRouter.get('/staff', can('staff'), async (req: DashboardRequest, res) =
     order: { name: 'ASC' },
   });
   res.json({
-    rows: staff.map(({ id, name, email, phone, role, active, locked_until }) => ({
-      id, name, email, phone, role, active, locked: Boolean(locked_until && locked_until > new Date()),
+    rows: staff.map(({ id, name, email, phone, role, active, locked_until, created_at }) => ({
+      id, name, email, phone, role, active, created_at, locked: Boolean(locked_until && locked_until > new Date()),
     })),
   });
 });
@@ -405,15 +449,22 @@ dashboardRouter.patch('/staff/:id', can('staffManage'), async (req: DashboardReq
 
 dashboardRouter.get('/audit', can('audit'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [bizId(req)];
+  const win = await listWindow(req, { date: 'a.created_at', action: 'a.action', user: 'u.name' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [bizId(req), win.from, win.to, searchTerm(page.q)];
+  const where = `a.business_id = $1 AND ${windowWhere('a.created_at', 2)}
+    AND ($4::text IS NULL OR a.action ILIKE $4 OR a.entity ILIKE $4 OR u.name ILIKE $4)`;
+  const from = `FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT a.id, a.action, a.entity, a.entity_id, a.reason, a.role, a.created_at, u.name AS user_name
-       FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
-       WHERE a.business_id = $1 ORDER BY a.created_at DESC LIMIT $2 OFFSET $3`,
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, a.created_at DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM audit_logs WHERE business_id = $1`, params),
+    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
   ]);
   res.json({ total: num(count.total), rows });
 });

@@ -7,7 +7,7 @@ import { recordMovement } from '../books/stock';
 import { closeDay, daySummary, openDay, recordCount } from '../books/day';
 import { adjustStock, createPurchase, createSale, customerPayment, supplierPayment, voidPurchase, voidSale } from '../books/trade';
 import { addItems, issueTab, recordTabPayment, returnTabItems } from '../books/waiter';
-import { actorOf, can, sendError, type DashboardRequest } from './dashboardShared';
+import { actorOf, can, listWindow, sendError, windowWhere, type DashboardRequest } from './dashboardShared';
 
 export const dashboardWriteRouter = Router();
 
@@ -213,15 +213,20 @@ dashboardWriteRouter.patch('/customers/:id', can('customersWrite'), async (req: 
 
 dashboardWriteRouter.get('/suppliers', can('suppliers'), async (req: DashboardRequest, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [actorOf(req).businessId, like(page.q)];
-  const where = `s.business_id = $1 AND ($2::text IS NULL OR s.name ILIKE $2 OR s.phone ILIKE $2)`;
+  const win = await listWindow(req, { name: 's.name', date: 's.created_at', balance: 'balance' }, 'name', 'asc');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [actorOf(req).businessId, like(page.q), win.from, win.to];
+  const where = `s.business_id = $1 AND ($2::text IS NULL OR s.name ILIKE $2 OR s.phone ILIKE $2) AND ${windowWhere('s.created_at', 3)}`;
   const [rows, [count], [summary]] = await Promise.all([
     q(
-      `SELECT s.id, s.name, s.phone, s.email, s.address, s.active,
+      `SELECT s.id, s.name, s.phone, s.email, s.address, s.active, s.created_at,
               COALESCE((SELECT SUM(p.total_amount - p.paid_amount) FROM purchases p
                         WHERE p.supplier_id = s.id AND p.business_id = s.business_id AND p.status <> 'cancelled'
                           AND p.total_amount > p.paid_amount), 0) AS balance
-       FROM suppliers s WHERE ${where} ORDER BY s.active DESC, s.name LIMIT $3 OFFSET $4`,
+       FROM suppliers s WHERE ${where} ORDER BY s.active DESC, ${win.orderBy}, s.name LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM suppliers s WHERE ${where}`, params),
@@ -534,16 +539,22 @@ dashboardWriteRouter.get('/waiter-tabs', can('waiterTabs'), async (req: Dashboar
   const page = pageSchema.parse(req.query);
   const status = z.enum(['open', 'debt', 'paid', 'all']).default('open').parse(req.query.status);
   const statuses = status === 'open' ? ['draft', 'partial'] : status === 'all' ? ['draft', 'partial', 'debt', 'paid', 'cancelled'] : [status];
-  const params = [actorOf(req).businessId, statuses];
+  const win = await listWindow(req, { date: 't.created_at', total: 'total', waiter: 'u.name' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [actorOf(req).businessId, statuses, win.from, win.to];
+  const where = `t.business_id = $1 AND t.status = ANY($2::text[]) AND ${windowWhere('t.created_at', 3)}`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT t.id, t.status, t.client_label, t.paid_amount, t.created_at, u.name AS waiter,
               COALESCE((SELECT SUM(i.quantity_outstanding * i.selling_price) FROM waiter_tab_items i WHERE i.tab_id = t.id), 0) AS total
        FROM waiter_tabs t LEFT JOIN users u ON u.id = t.waiter_user_id
-       WHERE t.business_id = $1 AND t.status = ANY($2::text[]) ORDER BY t.created_at DESC LIMIT $3 OFFSET $4`,
+       WHERE ${where} ORDER BY ${win.orderBy}, t.created_at DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM waiter_tabs WHERE business_id = $1 AND status = ANY($2::text[])`, params),
+    q(`SELECT COUNT(*) AS total FROM waiter_tabs t WHERE ${where}`, params),
   ]);
   res.json({
     total: num(count.total),

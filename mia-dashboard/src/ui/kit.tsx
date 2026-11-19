@@ -183,7 +183,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
   );
 }
 
-export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom }: {
+export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom, toolbar }: {
   client: AxiosInstance;
   path: string;
   queryKey: string;
@@ -193,6 +193,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   params?: Record<string, string>;
   empty?: string;
   rowsFrom?: (data: { rows: T[]; total?: number }) => T[];
+  toolbar?: ReactNode;
 }) {
   const paramsKey = JSON.stringify(params ?? {});
   const [paging, setPaging] = useState({ key: paramsKey, page: 0 });
@@ -210,12 +211,15 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   const total = query.data?.total ?? query.data?.rows.length ?? 0;
   return (
     <div className={cardClass}>
-      {searchPlaceholder ? (
-        <div className="p-4 border-b border-slate-100">
-          <div className="relative max-w-sm">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input aria-label={searchPlaceholder} placeholder={searchPlaceholder} value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} className={`${inputClass} pl-9`} />
-          </div>
+      {searchPlaceholder || toolbar ? (
+        <div className="flex flex-col gap-3 p-4 border-b border-slate-100 lg:flex-row lg:items-center lg:justify-between">
+          {searchPlaceholder ? (
+            <div className="relative w-full lg:max-w-sm">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input aria-label={searchPlaceholder} placeholder={searchPlaceholder} value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} className={`${inputClass} pl-9`} />
+            </div>
+          ) : <span className="hidden lg:block" />}
+          {toolbar}
         </div>
       ) : null}
       <div className={query.isError ? 'p-4' : ''}>

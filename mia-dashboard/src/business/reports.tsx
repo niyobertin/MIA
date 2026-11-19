@@ -9,6 +9,7 @@ import { BarList, CurveChart, DonutChart } from '../ui/charts';
 import { Badge, Button, Card, DataTable, ErrorNotice, PageHeader, QueryBoundary, Skeleton, Stat } from '../ui/kit';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
+import { SortToggle, sortRows, type SortDirection } from '../ui/ListFilters';
 
 export function ExportPdfButton({ onExport, disabled }: { onExport: () => Promise<unknown>; disabled?: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -42,6 +43,7 @@ export function ExportPdfButton({ onExport, disabled }: { onExport: () => Promis
 function ReportContent({ data, currency }: { data: ReportSummary; currency: string }) {
   const money = (value: number) => formatMoney(value, currency);
   const { kpis } = data;
+  const [closingOrder, setClosingOrder] = useState<SortDirection>('desc');
   const margin = kpis.sales_total > 0 ? Math.round((kpis.gross_profit / kpis.sales_total) * 1000) / 10 : 0;
   return (
     <div className="space-y-6">
@@ -88,9 +90,9 @@ function ReportContent({ data, currency }: { data: ReportSummary; currency: stri
         </Card>
       </div>
 
-      <Card title="Daily closings" className="min-w-0">
+      <Card title="Daily closings" className="min-w-0" action={<SortToggle direction={closingOrder} onChange={setClosingOrder} />}>
         <DataTable
-          rows={data.closings}
+          rows={sortRows(data.closings, (row) => `${row.business_date}#${String(row.session_number).padStart(4, '0')}`, closingOrder)}
           rowKey={(row) => row.id}
           empty="No days were closed in this period."
           columns={[

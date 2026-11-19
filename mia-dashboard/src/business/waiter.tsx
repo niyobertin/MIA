@@ -9,6 +9,7 @@ import { useDashboard } from './BusinessApp';
 import { RowButton, useRowDialog } from './details';
 import { LinesEditor, type Line } from './stockIn';
 import { AddButton } from './tables';
+import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 type TabItem = { id: string; product: string; quantity: number; quantity_outstanding: number; selling_price: number; paid_amount: number; created_at: string };
@@ -33,6 +34,11 @@ export function WaiterTabs() {
   const [status, setStatus] = useState('open');
   const [issuing, setIssuing] = useState(false);
   const open = useRowDialog<string>();
+  const filters = useListFilters({ sortOptions: [
+    { value: 'date', label: 'Started', kind: 'date' },
+    { value: 'total', label: 'Total', kind: 'number' },
+    { value: 'waiter', label: 'Waiter', kind: 'text' },
+  ] });
   return (
     <>
       <PageHeader
@@ -51,7 +57,8 @@ export function WaiterTabs() {
         client={api}
         path="/dashboard/waiter-tabs"
         queryKey="waiter-tabs"
-        params={{ status }}
+        params={{ status, ...filters.params }}
+        toolbar={filters.controls}
         rowKey={(r) => String(r.id)}
         empty="No tabs here."
         columns={[

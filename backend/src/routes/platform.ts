@@ -40,6 +40,7 @@ import {
   type PlatformRequest,
 } from '../middleware/platform';
 import { issuePinResetCode } from './auth';
+import { listWindow, windowWhere } from './dashboardShared';
 import { generateTemporaryPin } from '../lib/pin';
 
 export const platformRouter = Router();
@@ -323,9 +324,14 @@ platformRouter.get('/overview', requirePermission('metrics:read'), async (_req, 
 platformRouter.get('/businesses', requirePermission('businesses:read'), async (req, res) => {
   const page = pageSchema.parse(req.query);
   const status = z.enum(['all', 'active', 'suspended']).default('all').parse(req.query.status);
-  const params = [searchTerm(page.q), status];
+  const win = await listWindow(req, { date: 'b.created_at', name: 'b.name', users: 'users' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [searchTerm(page.q), status, win.from, win.to];
   const where = `($1::text IS NULL OR b.name ILIKE $1 OR b.business_code ILIKE $1)
-    AND ($2 = 'all' OR COALESCE(st.status, 'active') = $2)`;
+    AND ($2 = 'all' OR COALESCE(st.status, 'active') = $2) AND ${windowWhere('b.created_at', 3)}`;
   const from = `FROM businesses b LEFT JOIN business_platform_states st ON st.business_id = b.id`;
   const [rows, [count]] = await Promise.all([
     q(
@@ -335,7 +341,7 @@ platformRouter.get('/businesses', requirePermission('businesses:read'), async (r
               (SELECT COUNT(*) FROM users u WHERE u.business_id = b.id) AS users,
               (SELECT u.email FROM users u WHERE u.business_id = b.id AND u.role = 'OWNER' ORDER BY u.created_at LIMIT 1) AS owner_email,
               (SELECT MAX(s.updated_at) FROM sales s WHERE s.business_id = b.id) AS last_sale_sync
-       ${from} WHERE ${where} ORDER BY b.created_at DESC LIMIT $3 OFFSET $4`,
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, b.created_at DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
@@ -464,17 +470,22 @@ platformRouter.get('/businesses/:id/export', requirePermission('data:manage'), a
 
 platformRouter.get('/users', requirePermission('users:read'), async (req, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [searchTerm(page.q)];
-  const where = `($1::text IS NULL OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone ILIKE $1)`;
+  const win = await listWindow(req, { date: 'u.created_at', name: 'u.name', business: 'b.name' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [searchTerm(page.q), win.from, win.to];
+  const where = `($1::text IS NULL OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.phone ILIKE $1) AND ${windowWhere('u.created_at', 2)}`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.active, u.locked_until, u.failed_login_attempts,
-              u.business_id, b.name AS business_name
+              u.business_id, u.created_at, b.name AS business_name
        FROM users u LEFT JOIN businesses b ON b.id = u.business_id
-       WHERE ${where} ORDER BY u.created_at DESC LIMIT $2 OFFSET $3`,
+       WHERE ${where} ORDER BY ${win.orderBy}, u.created_at DESC LIMIT $4 OFFSET $5`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM users u WHERE ${where}`, params),
+    q(`SELECT COUNT(*) AS total FROM users u LEFT JOIN businesses b ON b.id = u.business_id WHERE ${where}`, params),
   ]);
   res.json({ total: num(count.total), rows });
 });
@@ -610,13 +621,18 @@ platformRouter.post('/pin-help/:id/close', requirePermission('users:manage'), as
 
 platformRouter.get('/audit', requirePermission('audit:read'), async (req, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [searchTerm(page.q)];
-  const where = `($1::text IS NULL OR a.action ILIKE $1 OR a.admin_email ILIKE $1 OR a.target_id ILIKE $1 OR b.name ILIKE $1)`;
+  const win = await listWindow(req, { date: 'a.created_at', action: 'a.action', admin: 'a.admin_email' }, 'date');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [searchTerm(page.q), win.from, win.to];
+  const where = `($1::text IS NULL OR a.action ILIKE $1 OR a.admin_email ILIKE $1 OR a.target_id ILIKE $1 OR b.name ILIKE $1) AND ${windowWhere('a.created_at', 2)}`;
   const from = `FROM platform_audit_logs a LEFT JOIN businesses b ON b.id = a.business_id`;
   const [rows, [count]] = await Promise.all([
     q(
       `SELECT a.id, a.admin_email, a.action, a.target_type, a.target_id, a.reason, a.metadata, a.ip, a.created_at, b.name AS business_name
-       ${from} WHERE ${where} ORDER BY a.created_at DESC LIMIT $2 OFFSET $3`,
+       ${from} WHERE ${where} ORDER BY ${win.orderBy}, a.created_at DESC LIMIT $4 OFFSET $5`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
@@ -684,15 +700,20 @@ platformRouter.get('/alerts', requirePermission('alerts:read'), async (_req, res
 
 platformRouter.get('/billing', requirePermission('billing:read'), async (req, res) => {
   const page = pageSchema.parse(req.query);
-  const params = [searchTerm(page.q)];
-  const where = `($1::text IS NULL OR b.name ILIKE $1 OR b.business_code ILIKE $1)`;
+  const win = await listWindow(req, { name: 'b.name', paid_until: 's.current_period_end', balance: 'open_balance', date: 'b.created_at' }, 'name', 'asc');
+  if ('error' in win) {
+    res.status(400).json({ error: win.error });
+    return;
+  }
+  const params = [searchTerm(page.q), win.from, win.to];
+  const where = `($1::text IS NULL OR b.name ILIKE $1 OR b.business_code ILIKE $1) AND ${windowWhere('b.created_at', 2)}`;
   const [rows, [count], [summary]] = await Promise.all([
     q(
       `SELECT b.id, b.name, b.business_code, b.currency, COALESCE(s.plan, 'free') AS plan,
               COALESCE(s.subscription_status, 'trial') AS subscription_status, s.trial_ends_at, s.current_period_end,
               (SELECT COALESCE(SUM(amount), 0) FROM subscription_invoices i WHERE i.business_id = b.id AND i.status = 'open') AS open_balance
        FROM businesses b LEFT JOIN business_platform_states s ON s.business_id = b.id
-       WHERE ${where} ORDER BY b.name LIMIT $2 OFFSET $3`,
+       WHERE ${where} ORDER BY ${win.orderBy}, b.name LIMIT $4 OFFSET $5`,
       [...params, page.limit, page.offset],
     ),
     q(`SELECT COUNT(*) AS total FROM businesses b WHERE ${where}`, params),

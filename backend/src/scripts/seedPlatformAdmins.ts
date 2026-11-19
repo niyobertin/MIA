@@ -10,6 +10,7 @@ dotenv.config();
 
 const DEV_ADMINS: { id: string; name: string; email: string; role: PlatformRole; password: string }[] = [
   { id: 'b1000000-0000-4000-8000-000000000001', name: 'MIA Super Admin', email: 'superadmin@mia.rw', role: 'SUPER_ADMIN', password: 'SuperAdmin#2026' },
+  { id: 'b1000000-0000-4000-8000-000000000004', name: 'Tanga Hub Services', email: 'tangahubservices@gmail.com', role: 'SUPER_ADMIN', password: '2001' },
   { id: 'b1000000-0000-4000-8000-000000000002', name: 'MIA Support', email: 'support@mia.rw', role: 'SUPPORT', password: 'SupportTeam#2026' },
   { id: 'b1000000-0000-4000-8000-000000000003', name: 'MIA Finance', email: 'finance@mia.rw', role: 'FINANCE', password: 'FinanceTeam#2026' },
 ];

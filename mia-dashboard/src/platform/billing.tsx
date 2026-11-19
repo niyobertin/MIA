@@ -5,6 +5,7 @@ import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction, Stat } from '../ui/kit';
 import { useCan } from './PlatformGate';
 import { Select } from '../ui/Select';
+import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 
@@ -91,6 +92,12 @@ export function Billing() {
   const canWrite = useCan('billing:write');
   const [editing, setEditing] = useState<Row | null>(null);
   const [invoices, setInvoices] = useState<Row | null>(null);
+  const filters = useListFilters({ defaultSort: 'name', defaultDirection: 'asc', sortOptions: [
+    { value: 'name', label: 'Business', kind: 'text' },
+    { value: 'paid_until', label: 'Paid until', kind: 'date' },
+    { value: 'balance', label: 'Open balance', kind: 'number' },
+    { value: 'date', label: 'Joined', kind: 'date' },
+  ] });
   const summary = useQuery({ queryKey: ['billing-summary'], queryFn: async () => (await platformApi.get<{ summary: { open_invoices: number; paid_30d: number } }>('/billing', { params: { limit: 1 } })).data.summary });
   return (
     <>
@@ -101,6 +108,7 @@ export function Billing() {
       </div>
       <PagedTable<Row>
         client={platformApi} path="/billing" queryKey="billing" rowKey={(row) => row.id} searchPlaceholder="Search business" empty="No businesses match."
+        params={filters.params} toolbar={filters.controls}
         columns={[
           { header: 'Business', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.business_code}</div></div> },
           { header: 'Plan', cell: (row) => humanize(row.plan) },

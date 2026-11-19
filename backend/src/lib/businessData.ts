@@ -64,7 +64,7 @@ export async function periodBounds(period: Period, timezone: string, custom?: Cu
 
 const STOCK_SQL = `
   SELECT p.id, p.name, p.sku, p.barcode, p.unit, p.selling_price, p.average_cost, p.reorder_level, p.track_inventory, p.active,
-         p.category_id, p.preferred_supplier_id, c.name AS category,
+         p.category_id, p.preferred_supplier_id, p.created_at, c.name AS category,
          COALESCE(SUM(CASE WHEN m.type IN ('opening','purchase','return_in','adjustment_in') THEN m.quantity
                            WHEN m.id IS NULL THEN 0 ELSE -m.quantity END), 0) AS stock
   FROM products p

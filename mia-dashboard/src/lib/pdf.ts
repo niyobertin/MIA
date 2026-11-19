@@ -17,6 +17,7 @@ export type ReportPdfInput = {
 };
 
 const PRESET_LABELS: Record<string, string> = {
+  all: 'All time',
   today: 'Today',
   yesterday: 'Yesterday',
   '7d': 'Last 7 days',

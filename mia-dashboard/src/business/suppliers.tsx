@@ -7,6 +7,7 @@ import { useDashboard } from './BusinessApp';
 import { RowButton, useRowDialog } from './details';
 import { PartyPaymentDialog, SupplierDialog } from './partyForms';
 import { AddButton, StatRow } from './tables';
+import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 
@@ -19,6 +20,11 @@ export function Suppliers() {
   const edit = useRowDialog<Row | 'new'>();
   const pay = useRowDialog<Row>();
   const toggle = useSave('patch', LIST_KEYS);
+  const filters = useListFilters({ defaultSort: 'name', defaultDirection: 'asc', sortOptions: [
+    { value: 'name', label: 'Name', kind: 'text' },
+    { value: 'balance', label: 'You owe', kind: 'number' },
+    { value: 'date', label: 'Date added', kind: 'date' },
+  ] });
   const summary = useQuery({
     queryKey: ['suppliers', me.user.id, 'summary'],
     queryFn: async () => (await api.get<{ summary: { active: number; owed: number } }>('/dashboard/suppliers', { params: { limit: 1 } })).data.summary,
@@ -36,7 +42,9 @@ export function Suppliers() {
         queryKey="suppliers"
         rowKey={(r) => String(r.id)}
         searchPlaceholder="Search name or phone"
-        empty="No suppliers yet."
+        empty="No suppliers found."
+        params={filters.params}
+        toolbar={filters.controls}
         columns={[
           { header: 'Name', cell: (r) => <div><span className="font-semibold text-slate-900">{r.name}</span>{r.active ? null : <span className="ml-2"><Badge>Inactive</Badge></span>}</div> },
           { header: 'Phone', cell: (r) => r.phone ?? '—' },

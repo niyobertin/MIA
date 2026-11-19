@@ -6,6 +6,7 @@ import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedT
 import { OverviewContent, type OverviewData } from '../business/Overview';
 import { useAdmin } from './PlatformGate';
 import { Select } from '../ui/Select';
+import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -236,11 +237,17 @@ export function Announcements() {
 }
 
 export function AuditLog() {
+  const filters = useListFilters({ sortOptions: [
+    { value: 'date', label: 'When', kind: 'date' },
+    { value: 'action', label: 'Action', kind: 'text' },
+    { value: 'admin', label: 'Admin', kind: 'text' },
+  ] });
   return (
     <>
       <PageHeader title="Audit log" subtitle="Every platform action and sign-in. Entries can't be edited or deleted here." />
       <PagedTable<Row>
         client={platformApi} path="/audit" queryKey="platform-audit" rowKey={rowId} searchPlaceholder="Search action, admin or business" empty="No entries match."
+        params={filters.params} toolbar={filters.controls}
         columns={[
           { header: 'When', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(row.created_at)}</span> },
           { header: 'Admin', cell: (row) => row.admin_email ?? 'Unknown' },

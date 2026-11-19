@@ -7,6 +7,7 @@ import { platformApi } from '../lib/platformAuth';
 import { Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader, QueryBoundary, ReasonAction, Stat } from '../ui/kit';
 import { useCan } from './PlatformGate';
 import { Select } from '../ui/Select';
+import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -15,6 +16,11 @@ const statusBadge = (status: string) => <Badge tone={status === 'suspended' ? 'b
 
 export function Businesses() {
   const [status, setStatus] = useState('all');
+  const filters = useListFilters({ sortOptions: [
+    { value: 'date', label: 'Joined', kind: 'date' },
+    { value: 'name', label: 'Name', kind: 'text' },
+    { value: 'users', label: 'Users', kind: 'number' },
+  ] });
   return (
     <>
       <PageHeader
@@ -24,7 +30,8 @@ export function Businesses() {
         )}
       />
       <PagedTable<Row>
-        client={platformApi} path="/businesses" queryKey="platform-businesses" rowKey={rowId} params={{ status }}
+        client={platformApi} path="/businesses" queryKey="platform-businesses" rowKey={rowId} params={{ status, ...filters.params }}
+        toolbar={filters.controls}
         searchPlaceholder="Search name or business code" empty="No businesses match."
         columns={[
           { header: 'Business', cell: (row) => <div><Link to={`/platform/businesses/${row.id}`} className="font-semibold text-slate-900 hover:underline">{row.name}</Link><div className="text-xs text-slate-500">{row.business_code}</div></div> },
@@ -59,16 +66,23 @@ function UserActions({ row }: { row: Row }) {
 
 export function PlatformUsers() {
   const canManage = useCan('users:manage');
+  const filters = useListFilters({ sortOptions: [
+    { value: 'date', label: 'Joined', kind: 'date' },
+    { value: 'name', label: 'Name', kind: 'text' },
+    { value: 'business', label: 'Business', kind: 'text' },
+  ] });
   return (
     <>
       <PageHeader title="User accounts" subtitle="PINs are never visible here." />
       <PagedTable<Row>
         client={platformApi} path="/users" queryKey="platform-users" rowKey={rowId}
         searchPlaceholder="Search name, email or phone" empty="No users match."
+        params={filters.params} toolbar={filters.controls}
         columns={[
           { header: 'User', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{[row.phone, row.email].filter(Boolean).join(' · ')}</div></div> },
           { header: 'Business', cell: (row) => row.business_id ? <Link to={`/platform/businesses/${row.business_id}`} className="hover:underline">{row.business_name}</Link> : '—' },
           { header: 'Role', cell: (row) => humanize(row.role) },
+          { header: 'Joined', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDate(row.created_at)}</span> },
           { header: 'Status', cell: (row) => !row.active ? <Badge tone="bad">Deactivated</Badge> : row.locked_until && new Date(row.locked_until) > new Date() ? <Badge tone="warn">Locked</Badge> : <Badge tone="good">Active</Badge> },
           ...(canManage ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => <UserActions row={row} /> }] : []),
         ]}
