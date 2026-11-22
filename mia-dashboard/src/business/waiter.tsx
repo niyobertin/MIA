@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney } from '../lib/format';
-import { Badge, Button, Dialog, inputClass, PagedTable, PageHeader, QueryBoundary, Skeleton } from '../ui/kit';
+import { Badge, Button, Dialog, inputClass, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
+import { DrawerSkeleton } from '../ui/skeleton';
 import { Select } from '../ui/Select';
 import { Field, FormDialog, FormError, LIST_KEYS, MethodButtons, SelectField, TextField, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
@@ -136,7 +137,7 @@ function TabDialog({ tabId, onClose }: { tabId: string; onClose: () => void }) {
   const pay = useSave('post', LIST_KEYS);
   return (
     <Dialog title="Waiter tab" onClose={onClose} wide>
-      <QueryBoundary query={tab} skeleton={<Skeleton className="h-48" />}>
+      <QueryBoundary query={tab} skeleton={<DrawerSkeleton />}>
         {(t) => {
           const lines = t.items.filter((i) => i.quantity_outstanding > 0);
           const unpaidOf = (ids: string[]) => lines.filter((i) => ids.includes(i.id)).reduce((s, i) => s + Math.max(0, i.quantity_outstanding * i.selling_price - i.paid_amount), 0);

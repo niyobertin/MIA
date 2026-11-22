@@ -3,8 +3,11 @@ import { Link, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { BarChart3, Building2, CalendarClock, ClipboardList, CreditCard, FileText, HandPlatter, LayoutDashboard, PackageSearch, PlusCircle, ReceiptText, Settings, ShieldCheck, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
 import { signOut, type Session } from '../lib/auth';
 import { Shell, type NavGroup } from '../ui/Shell';
-import { Button, ErrorNotice, Skeleton } from '../ui/kit';
+import { Button, ErrorNotice } from '../ui/kit';
+import { AppShellSkeleton } from '../ui/skeleton';
+import { AnnouncementBanner } from '../ui/AnnouncementBanner';
 import { useMe, type Me } from './useMe';
+import { BusinessHeaderActions } from './HeaderActions';
 import { Overview } from './Overview';
 import { Customers, Expenses, Movements, Payments, Products, Purchases, Sales, StockReport } from './tables';
 import { Activity, BusinessSettings, Reports, Staff } from './manage';
@@ -37,7 +40,6 @@ const NAV: (NavGroup['items'][number] & { group: string; permission: string; fla
 const MeContext = createContext<Me | null>(null);
 
 const ROLE_LABELS: Record<string, string> = { OWNER: 'Owner', MANAGER: 'Manager', CASHIER: 'Cashier', STAFF: 'Staff' };
-const SEVERITY = { info: 'bg-sky-50 text-sky-900 border-sky-100', warning: 'bg-amber-50 text-amber-900 border-amber-100', critical: 'bg-rose-50 text-rose-900 border-rose-100' };
 
 export function useDashboard() {
   return useContext(MeContext) as Me;
@@ -58,7 +60,7 @@ function Home() {
 export default function BusinessApp({ session }: { session: Session }) {
   const me = useMe(session.user.id);
 
-  if (me.isLoading) return <div className="p-8"><Skeleton className="h-96" /></div>;
+  if (me.isLoading) return <AppShellSkeleton />;
   if (me.isError || !me.data) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f8fafb] p-4">
@@ -85,11 +87,7 @@ export default function BusinessApp({ session }: { session: Session }) {
   const banner = data.announcements.length > 0 || dayBanner ? (
     <div className="space-y-px">
       {dayBanner}
-      {data.announcements.map((a) => (
-        <div key={a.id} role="status" className={`border-b px-4 py-2.5 text-sm sm:px-8 ${SEVERITY[a.severity]}`}>
-          <span className="font-semibold">{a.title}: </span>{a.body}
-        </div>
-      ))}
+      <AnnouncementBanner announcements={data.announcements} />
     </div>
   ) : undefined;
 
@@ -134,10 +132,12 @@ function ShellWithContext({ data, groups, banner }: { data: Me; groups: NavGroup
         brandSub="MIA business dashboard"
         groups={groups}
         userName={data.user.name}
+        userEmail={data.user.email}
+        headerActions={<BusinessHeaderActions me={data} />}
         userSub={ROLE_LABELS[data.user.role] ?? data.user.role}
         onSignOut={signOut}
         sidebarClass="bg-[#0e3b36] text-emerald-50"
-        activeClass="bg-emerald-700/50 text-white"
+        activeClass="bg-emerald-600 text-white shadow-sm shadow-emerald-950/30"
         inactiveClass="text-emerald-100/80 hover:bg-white/5 hover:text-white"
         banner={banner}
       />

@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { ArrowDownWideNarrow, ArrowUpNarrowWide } from 'lucide-react';
 import { PeriodFilter, type PeriodValue } from './PeriodFilter';
 import { Select } from './Select';
+import { sortRows, type SortDirection } from './sorting';
 
 export type SortKind = 'date' | 'text' | 'number';
 export type SortOption = { value: string; label: string; kind?: SortKind };
-export type SortDirection = 'asc' | 'desc';
+export type { SortDirection };
 
 const DAY = 86_400_000;
 
@@ -43,25 +44,7 @@ export function directionLabel(kind: SortKind | undefined, direction: SortDirect
   return direction === 'desc' ? 'Highest first' : 'Lowest first';
 }
 
-function compare(a: unknown, b: unknown) {
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-}
-
-const empty = (value: unknown) => value === null || value === undefined || value === '';
-
-/** Sorts a copy; empty values always go last; ties keep their original order. */
-export function sortRows<T>(rows: readonly T[], getValue: (row: T) => unknown, direction: SortDirection): T[] {
-  const factor = direction === 'asc' ? 1 : -1;
-  return rows
-    .map((row, index) => ({ row, index, value: getValue(row) }))
-    .sort((x, y) => {
-      if (empty(x.value) !== empty(y.value)) return empty(x.value) ? 1 : -1;
-      const diff = empty(x.value) ? 0 : compare(x.value, y.value) * factor;
-      return diff !== 0 ? diff : x.index - y.index;
-    })
-    .map((entry) => entry.row);
-}
+export { sortRows };
 
 export function useListFilters({
   sortOptions,

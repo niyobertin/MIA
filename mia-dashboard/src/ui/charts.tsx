@@ -1,5 +1,7 @@
 import { useEffect, useId, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { EmptyNotice } from './kit';
+import { BarChart3, Table2, type LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Card, EmptyNotice, Segmented } from './kit';
 import { CHART_COLORS, compactNumber, monotonePath, axisLabelIndexes } from './chartUtils';
 
 export type TrendPoint = { label: string; value: number };
@@ -34,7 +36,7 @@ function niceScale(value: number) {
 
 
 
-export function CurveChart({ labels, series, format, name }: { labels: string[]; series: Series[]; format: (value: number) => string; name: string }) {
+export function CurveChart({ labels, series, format, name, tableToggle = true, height = HEIGHT }: { labels: string[]; series: Series[]; format: (value: number) => string; name: string; tableToggle?: boolean; height?: number }) {
   const [wrapRef, width] = useWidth<HTMLDivElement>();
   const [active, setActive] = useState<number | null>(null);
   const gradientBase = useId().replace(/:/g, '');
@@ -43,7 +45,7 @@ export function CurveChart({ labels, series, format, name }: { labels: string[];
 
   const { top, ticks } = niceScale(peak);
   const innerW = width - PAD.left - PAD.right;
-  const innerH = HEIGHT - PAD.top - PAD.bottom;
+  const innerH = height - PAD.top - PAD.bottom;
   const baseline = PAD.top + innerH;
   const x = (index: number) => PAD.left + (labels.length === 1 ? innerW / 2 : (index / (labels.length - 1)) * innerW);
   const y = (value: number) => baseline - (Math.max(0, value) / top) * innerH;
@@ -74,8 +76,8 @@ export function CurveChart({ labels, series, format, name }: { labels: string[];
       <div ref={wrapRef} className="relative select-none">
         <svg
           width={width}
-          height={HEIGHT}
-          viewBox={`0 0 ${width} ${HEIGHT}`}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
           className="block max-w-full touch-pan-y"
           role="img"
           aria-label={`${name} by day. ${summary}.`}
@@ -98,7 +100,7 @@ export function CurveChart({ labels, series, format, name }: { labels: string[];
             </g>
           ))}
           {axisLabelIndexes(labels.length, maxLabels).map((index) => (
-            <text key={index} x={x(index)} y={HEIGHT - 9} textAnchor={labels.length === 1 ? 'middle' : index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'} fontSize="11" fill="#64748b">{labels[index]}</text>
+            <text key={index} x={x(index)} y={height - 9} textAnchor={labels.length === 1 ? 'middle' : index === 0 ? 'start' : index === labels.length - 1 ? 'end' : 'middle'} fontSize="11" fill="#64748b">{labels[index]}</text>
           ))}
           {series.map((item, index) => {
             const coords = item.values.map((value, i) => [x(i), y(value)] as [number, number]);
@@ -138,7 +140,7 @@ export function CurveChart({ labels, series, format, name }: { labels: string[];
           </div>
         ) : null}
       </div>
-      <details className="mt-2 text-sm text-slate-600">
+      {tableToggle ? <details className="mt-2 text-sm text-slate-600">
         <summary className="cursor-pointer text-xs font-medium text-slate-500">View as table</summary>
         <div className="overflow-x-auto">
           <table className="mt-2 w-full text-sm">
@@ -160,13 +162,13 @@ export function CurveChart({ labels, series, format, name }: { labels: string[];
             </tbody>
           </table>
         </div>
-      </details>
+      </details> : null}
     </div>
   );
 }
 
-export function TrendChart({ points, format, name, color = CHART_COLORS[0] }: { points: TrendPoint[]; format: (value: number) => string; name: string; color?: string }) {
-  return <CurveChart name={name} format={format} labels={points.map((point) => point.label)} series={[{ name, color, values: points.map((point) => point.value) }]} />;
+export function TrendChart({ points, format, name, color = CHART_COLORS[0], tableToggle }: { points: TrendPoint[]; format: (value: number) => string; name: string; color?: string; tableToggle?: boolean }) {
+  return <CurveChart name={name} format={format} tableToggle={tableToggle} labels={points.map((point) => point.label)} series={[{ name, color, values: points.map((point) => point.value) }]} />;
 }
 
 export function DonutChart({ items, format, empty, centerLabel = 'Total' }: { items: { label: string; value: number }[]; format: (value: number) => string; empty: string; centerLabel?: string }) {
@@ -254,5 +256,17 @@ export function BarList({ items, format, empty }: { items: { label: string; valu
         </li>
       ))}
     </ul>
+  );
+}
+
+export function ChartCard({ title, subtitle, icon, chart, table, action, className = '', bodyClass = 'p-5' }: { title: string; subtitle?: ReactNode; icon?: LucideIcon; chart: ReactNode; table?: ReactNode; action?: ReactNode; className?: string; bodyClass?: string }) {
+  const [view, setView] = useState<'chart' | 'table'>('chart');
+  const toggle = table ? (
+    <Segmented size="sm" label={`${title} view`} value={view} onChange={setView} options={[{ value: 'chart', label: 'Chart', icon: BarChart3 }, { value: 'table', label: 'Table', icon: Table2 }]} />
+  ) : null;
+  return (
+    <Card title={title} subtitle={subtitle} icon={icon} className={className} divided={false} action={action || toggle ? <div className="flex items-center gap-2">{action}{toggle}</div> : undefined}>
+      {view === 'table' && table ? <div className="max-h-[320px] overflow-y-auto border-t border-slate-100">{table}</div> : <div className={bodyClass}>{chart}</div>}
+    </Card>
   );
 }

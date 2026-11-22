@@ -1,18 +1,27 @@
 import { useState, type ButtonHTMLAttributes, type FormEvent, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { AxiosInstance } from 'axios';
-import { AlertCircle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Inbox, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Inbox, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
 import { getErrorMessage } from '../lib/format';
 import { Select } from './Select';
+import { surfaceCard } from './tokens';
+import { Bone, RefreshBar, TableSkeleton } from './skeleton';
+import { sortRows, type SortDirection } from './sorting';
 
-export const cardClass = 'bg-white rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(0,0,0,0.04)]';
+export const cardClass = surfaceCard;
 
-export function Card({ title, action, children, className = '' }: { title?: string; action?: ReactNode; children: ReactNode; className?: string }) {
+export function Card({ title, subtitle, icon: Icon, action, children, className = '', divided = true }: { title?: ReactNode; subtitle?: ReactNode; icon?: LucideIcon; action?: ReactNode; children: ReactNode; className?: string; divided?: boolean }) {
   return (
-    <section className={`${cardClass} ${className}`}>
+    <section className={`${cardClass} min-w-0 ${className}`}>
       {title ? (
-        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
-          <h3 className="font-bold text-slate-900">{title}</h3>
+        <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-4 ${divided ? 'border-b border-slate-100' : 'pb-1'}`}>
+          <div className="min-w-0">
+            <h3 className="flex min-w-0 items-center gap-2 text-[15px] font-bold text-ink">
+              {Icon ? <Icon size={18} className="shrink-0 text-brand" aria-hidden /> : null}
+              <span className="truncate">{title}</span>
+            </h3>
+            {subtitle ? <p className="mt-0.5 text-xs text-muted">{subtitle}</p> : null}
+          </div>
           {action}
         </div>
       ) : null}
@@ -21,26 +30,62 @@ export function Card({ title, action, children, className = '' }: { title?: stri
   );
 }
 
-export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
+export function Stat({ label, value, hint, loading = false }: { label: string; value: ReactNode; hint?: ReactNode; loading?: boolean }) {
   return (
     <div className={`${cardClass} p-5 min-w-0`}>
       <div className="text-sm font-medium text-slate-500">{label}</div>
-      <div className="mt-1.5 text-2xl font-extrabold tracking-tight text-slate-900 break-words">{value}</div>
-      {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
+      {loading ? <div className="mt-2.5 space-y-2"><Bone className="h-6 w-28" /><Bone className="h-3 w-20" /></div> : (
+        <>
+          <div className="mt-1.5 text-2xl font-extrabold tracking-tight text-slate-900 break-words tabular-nums">{value}</div>
+          {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
+        </>
+      )}
     </div>
   );
 }
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+export function PageHeader({ title, subtitle, action, icon: Icon, refreshing = false }: { title: string; subtitle?: ReactNode; action?: ReactNode; icon?: LucideIcon; refreshing?: boolean }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-      <div className="min-w-0">
-        <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">{title}</h2>
-        {subtitle ? <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p> : null}
+    <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3.5">
+        {Icon ? <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-brand sm:flex"><Icon size={22} aria-hidden /></span> : null}
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-ink">
+            <span className="truncate">{title}</span>
+            {refreshing ? <RefreshCw aria-label="Refreshing" size={15} className="shrink-0 animate-spin text-muted motion-reduce:animate-none" /> : null}
+          </h1>
+          {subtitle ? <p className="mt-0.5 text-sm text-muted">{subtitle}</p> : null}
+        </div>
       </div>
-      {action}
+      {action ? <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto">{action}</div> : null}
+    </header>
+  );
+}
+
+export function Segmented<T extends string>({ value, onChange, options, label, size = 'md' }: { value: T; onChange: (value: T) => void; options: { value: T; label: string; icon?: LucideIcon }[]; label: string; size?: 'sm' | 'md' }) {
+  return (
+    <div role="radiogroup" aria-label={label} className={`inline-flex flex-wrap ${size === 'sm' ? 'gap-0.5 rounded-lg bg-slate-100 p-0.5' : 'gap-1.5'}`}>
+      {options.map((option) => {
+        const active = value === option.value;
+        const Icon = option.icon;
+        return (
+          <button key={option.value} role="radio" aria-checked={active} type="button" onClick={() => onChange(option.value)} title={option.label}
+            className={size === 'sm'
+              ? `inline-flex min-h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors ${active ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`
+              : `inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition-colors ${active ? 'bg-brand text-white' : 'bg-slate-100 text-ink/80 hover:bg-slate-200'}`}>
+            {Icon ? <Icon size={14} aria-hidden /> : null}
+            <span className={Icon && size === 'sm' ? 'sr-only sm:not-sr-only' : ''}>{option.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
+}
+
+export function Amount({ value, format, signed = false, strong = false }: { value: number; format: (value: number) => string; signed?: boolean; strong?: boolean }) {
+  const tone = !signed || value === 0 ? 'text-slate-700' : value > 0 ? 'text-emerald-700' : 'text-rose-700';
+  const text = signed && value > 0 ? `+${format(value)}` : format(value);
+  return <span className={`whitespace-nowrap tabular-nums ${strong || (signed && value !== 0) ? 'font-semibold' : ''} ${tone}`}>{text}</span>;
 }
 
 const BADGE_TONES = {
@@ -81,10 +126,10 @@ export function ErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () =
   );
 }
 
-export function EmptyNotice({ children }: { children: ReactNode }) {
+export function EmptyNotice({ children, icon: Icon = Inbox, compact = false }: { children: ReactNode; icon?: LucideIcon; compact?: boolean }) {
   return (
-    <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-sm text-slate-500">
-      <Inbox size={22} className="text-slate-300" />
+    <div className={`flex flex-col items-center gap-2 px-6 text-center text-sm text-slate-500 ${compact ? 'py-6' : 'py-10'}`}>
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-50 text-slate-300"><Icon size={20} aria-hidden /></span>
       {children}
     </div>
   );
@@ -96,7 +141,8 @@ export function QueryBoundary<T>({ query, children, skeleton }: { query: UseQuer
   return <>{query.data !== undefined ? children(query.data) : null}</>;
 }
 
-export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right' };
+export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right'; sortValue?: (row: T) => unknown };
+export type TableSort = { column: string; direction: SortDirection };
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -165,30 +211,59 @@ export function Pager({ page, pageSize, total, onPage, onPageSize, noun = 'rows'
   );
 }
 
-export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.', pageSize: initialPageSize = 10 }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string; pageSize?: number }) {
+function SortHeader({ label, direction, onClick, align }: { label: string; direction: SortDirection | null; onClick: () => void; align?: 'right' }) {
+  const Icon = direction === 'asc' ? ArrowUp : direction === 'desc' ? ArrowDown : ArrowUpDown;
+  return (
+    <button type="button" onClick={onClick} className={`inline-flex items-center gap-1 rounded hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 ${align === 'right' ? 'flex-row-reverse' : ''} ${direction ? 'text-ink' : ''}`}>
+      {label}
+      <Icon size={12} aria-hidden className={direction ? 'text-brand' : 'text-slate-300'} />
+    </button>
+  );
+}
+
+export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.', pageSize: initialPageSize = 10, defaultSort, onSortChange }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string; pageSize?: number; defaultSort?: TableSort; onSortChange?: (sort: TableSort | null) => void }) {
   const [page, setPage] = useState(0);
   const [chosenSize, setChosenSize] = useState<number | null>(null);
+  const [sort, setSort] = useState<TableSort | null>(defaultSort ?? null);
   const pageSize = initialPageSize > 0 ? chosenSize ?? initialPageSize : 0;
   const lastPage = pageSize > 0 ? Math.max(0, Math.ceil(rows.length / pageSize) - 1) : 0;
   const current = Math.min(page, lastPage);
   if (rows.length === 0) return <EmptyNotice>{empty}</EmptyNotice>;
-  const visible = pageSize > 0 ? rows.slice(current * pageSize, (current + 1) * pageSize) : rows;
+  const sortColumn = sort ? columns.find((column) => column.header === sort.column && column.sortValue) : undefined;
+  const ordered = sortColumn?.sortValue && sort ? sortRows(rows, sortColumn.sortValue, sort.direction) : rows;
+  const visible = pageSize > 0 ? ordered.slice(current * pageSize, (current + 1) * pageSize) : ordered;
+  const toggle = (column: Column<T>) => {
+    const next: TableSort = sort?.column === column.header ? { column: column.header, direction: sort.direction === 'desc' ? 'asc' : 'desc' } : { column: column.header, direction: column.align === 'right' ? 'desc' : 'asc' };
+    setSort(next);
+    setPage(0);
+    onSortChange?.(next);
+  };
   return (
     <div>
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-100 text-left text-xs font-semibold text-slate-500">
-            {columns.map((column) => (
-              <th key={column.header} className={`whitespace-nowrap px-5 py-3 ${column.align === 'right' ? 'text-right' : ''}`}>{column.header}</th>
-            ))}
+          <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-xs font-semibold text-slate-500">
+            {columns.map((column) => {
+              const direction = sort?.column === column.header ? sort.direction : null;
+              return (
+                <th
+                  key={column.header}
+                  scope="col"
+                  aria-sort={column.sortValue ? (direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none') : undefined}
+                  className={`whitespace-nowrap px-5 py-3 ${column.align === 'right' ? 'text-right' : ''}`}
+                >
+                  {column.sortValue ? <SortHeader label={column.header} direction={direction} align={column.align} onClick={() => toggle(column)} /> : column.header}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {visible.map((row) => (
             <tr key={rowKey(row)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70">
               {columns.map((column) => (
-                <td key={column.header} className={`px-5 py-3 align-middle text-slate-700 ${column.align === 'right' ? 'text-right tabular-nums' : ''}`}>{column.cell(row)}</td>
+                <td key={column.header} className={`px-5 py-3 align-middle text-slate-700 ${column.align === 'right' ? 'text-right tabular-nums whitespace-nowrap' : ''}`}>{column.cell(row)}</td>
               ))}
             </tr>
           ))}
@@ -227,7 +302,8 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   });
   const total = query.data?.total ?? query.data?.rows.length ?? 0;
   return (
-    <div className={cardClass}>
+    <div className={`${cardClass} min-w-0 overflow-hidden`} aria-busy={query.isFetching || undefined}>
+      <RefreshBar active={query.isFetching && !query.isLoading} />
       {searchPlaceholder || toolbar ? (
         <div className="flex flex-col gap-3 p-4 border-b border-slate-100 lg:flex-row lg:items-center lg:justify-between">
           {searchPlaceholder ? (
@@ -240,7 +316,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
         </div>
       ) : null}
       <div className={query.isError ? 'p-4' : ''}>
-        <QueryBoundary query={query} skeleton={<div className="p-4"><Skeleton className="h-48" /></div>}>
+        <QueryBoundary query={query} skeleton={<TableSkeleton columns={columns} rows={8} />}>
           {(data) => <DataTable columns={columns} rows={rowsFrom ? rowsFrom(data) : data.rows} rowKey={rowKey} empty={empty} pageSize={0} />}
         </QueryBoundary>
       </div>

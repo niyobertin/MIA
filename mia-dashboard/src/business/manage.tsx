@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, humanize } from '../lib/format';
 import { Badge, Button, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
+import { TableSkeleton } from '../ui/skeleton';
 import { useDashboard } from './BusinessApp';
 import { Select } from '../ui/Select';
 import { useListFilters } from '../ui/ListFilters';
@@ -44,7 +45,7 @@ export function Staff() {
       <Card>
         <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>
         <div className={query.isError ? 'p-4' : ''}>
-          <QueryBoundary query={query}>
+          <QueryBoundary query={query} skeleton={<TableSkeleton rows={6} columns={[{ header: 'Name' }, { header: 'Role' }, { header: 'Status' }, { header: 'Joined' }, ...(canManage ? [{ header: 'Manage', align: 'right' as const }] : [])]} />}>
             {(data) => (
               <DataTable
                 rows={filters.apply(data.rows, (row) => row.created_at, { name: (row) => row.name, role: (row) => row.role, date: (row) => row.created_at })}
@@ -96,7 +97,7 @@ export function Activity() {
       </div>
       <Card title="MIA support access">
         <div className={grants.isError ? 'p-4' : ''}>
-          <QueryBoundary query={grants}>
+          <QueryBoundary query={grants} skeleton={<TableSkeleton rows={3} columns={[{ header: 'Support person' }, { header: 'Reason' }, { header: 'Started' }, { header: 'Ended' }]} />}>
             {(data) => (
               <DataTable
                 rows={data.rows}

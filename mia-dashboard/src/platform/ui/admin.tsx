@@ -1,15 +1,18 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Inbox, Lock, MoreHorizontal, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getErrorMessage, humanize } from '../../lib/format';
 import { platformApi } from '../../lib/platformAuth';
-import { Pager } from '../../ui/kit';
+import { Pager, Segmented } from '../../ui/kit';
+
+export { Segmented };
 import { Select, type SelectOption } from '../../ui/Select';
 import { useCan } from '../context';
 import { RefreshBar, SkeletonTableRows, type SkeletonColumn } from './skeleton';
 import { adminCard, TONES, type Tone } from './tokens';
+import { MetricCard, Sparkline, Trend } from '../../ui/metrics';
 
 export { adminCard };
 
@@ -67,54 +70,10 @@ export function Chip({ tone = 'green', children }: { tone?: Tone; children: Reac
   return <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold ${TONES[tone].icon}`}>{children}</span>;
 }
 
-export function Sparkline({ values, tone = 'green' }: { values: number[]; tone?: Tone }) {
-  const gradient = useId().replace(/:/g, '');
-  if (values.length < 2 || Math.max(...values) === 0) return null;
-  const width = 80;
-  const height = 32;
-  const max = Math.max(...values);
-  const points = values.map((value, index) => [(index / (values.length - 1)) * width, height - 3 - (value / max) * (height - 6)]);
-  const line = points.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  return (
-    <svg aria-hidden="true" width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="shrink-0">
-      <defs><linearGradient id={gradient} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={TONES[tone].stroke} stopOpacity="0.25" /><stop offset="100%" stopColor={TONES[tone].stroke} stopOpacity="0" /></linearGradient></defs>
-      <path d={`${line} L${width},${height} L0,${height} Z`} fill={`url(#${gradient})`} />
-      <path d={line} fill="none" stroke={TONES[tone].stroke} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
+export { Sparkline, Trend };
 
-export function Trend({ growth, label = 'vs previous period' }: { growth: number | null | undefined; label?: string }) {
-  if (growth === null || growth === undefined) return null;
-  const up = growth >= 0;
-  const Arrow = up ? ArrowUp : ArrowDown;
-  return (
-    <span className="flex min-w-0 items-center gap-1 text-xs text-muted" title={label ? `${up ? '+' : ''}${growth}% ${label}` : undefined}>
-      <span className={`inline-flex shrink-0 items-center gap-0.5 font-semibold ${up ? 'text-emerald-700' : 'text-rose-600'}`}><Arrow size={12} />{up ? '+' : ''}{growth}%</span>
-      {label ? <span className="truncate">{label}</span> : null}
-    </span>
-  );
-}
-
-export function KpiCard({ icon: Icon, tone, label, value, hint, growth, growthLabel, spark, soft = false }: {
-  icon: LucideIcon; tone: Tone; label: string; value: ReactNode; hint?: ReactNode; growth?: number | null; growthLabel?: string; spark?: number[]; soft?: boolean;
-}) {
-  return (
-    <div className={`${adminCard} ${soft ? TONES[tone].soft : ''} flex min-h-[124px] min-w-0 items-start gap-4 p-5`}>
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${TONES[tone].icon}`}><Icon size={24} /></span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <div className="pt-0.5 text-sm font-semibold text-ink/80">{label}</div>
-          {spark ? <Sparkline values={spark} tone={tone} /> : null}
-        </div>
-        <div className="-mt-1 break-words text-2xl font-extrabold leading-tight tracking-tight text-ink">{value}</div>
-        <div className="mt-1 space-y-0.5">
-          <Trend growth={growth} label={growthLabel} />
-          {hint ? <div className="truncate text-xs text-muted" title={typeof hint === 'string' ? hint : undefined}>{hint}</div> : null}
-        </div>
-      </div>
-    </div>
-  );
+export function KpiCard(props: Parameters<typeof MetricCard>[0]) {
+  return <MetricCard {...props} />;
 }
 
 const STATUS_STYLES: Record<string, { tone: string; label?: string }> = {
@@ -449,19 +408,6 @@ export function Tabs<T extends string>({ value, onChange, tabs, label }: { value
         >
           {tab.icon ? <tab.icon size={16} className={value === tab.value ? 'text-brand' : ''} /> : null}
           {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-export function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (value: T) => void; options: { value: T; label: string }[]; label: string }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="inline-flex flex-wrap gap-1.5">
-      {options.map((option) => (
-        <button key={option.value} role="radio" aria-checked={value === option.value} type="button" onClick={() => onChange(option.value)}
-          className={`min-h-9 rounded-full px-3.5 text-xs font-bold transition-colors ${value === option.value ? 'bg-brand text-white' : 'bg-slate-100 text-ink/80 hover:bg-slate-200'}`}>
-          {option.label}
         </button>
       ))}
     </div>

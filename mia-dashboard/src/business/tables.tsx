@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CalendarRange, HandCoins, History, PackageSearch, PackageX, Plus, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, Stat } from '../ui/kit';
+import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, type Column } from '../ui/kit';
+import { MetricCard } from '../ui/metrics';
+import { KpiGridSkeleton, TableSkeleton } from '../ui/skeleton';
 import { LIST_KEYS, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 import { CustomerSalesDialog, ProductHistoryDialog, PurchaseDetailDialog, RowButton, SaleDetailDialog, useRowDialog } from './details';
@@ -41,7 +43,7 @@ export function AddButton({ children, onClick, to }: { children: string; onClick
 }
 
 export function StatRow({ children }: { children: React.ReactNode }) {
-  return <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">{children}</div>;
+  return <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{children}</div>;
 }
 
 function ToggleActive({ path, active, label }: { path: string; active: boolean; label: string }) {
@@ -140,9 +142,9 @@ export function Customers() {
     <>
       <PageHeader title="Customers" action={canWrite ? <AddButton onClick={() => edit.open('new')}>Add customer</AddButton> : undefined} />
       <StatRow>
-        <Stat label="Customers" value={summary.data?.active ?? '—'} hint="Active" />
-        <Stat label="Owed to you" value={summary.data ? money(summary.data.owed) : '—'} hint="All unpaid sales" />
-        <Stat label="Customers who owe" value={summary.data?.debtors ?? '—'} />
+        <MetricCard loading={!summary.data} icon={Users} tone="green" label="Customers" value={summary.data?.active} hint="Active" />
+        <MetricCard loading={!summary.data} icon={HandCoins} tone="amber" label="Owed to you" value={summary.data ? money(summary.data.owed) : null} hint="All unpaid sales" />
+        <MetricCard loading={!summary.data} icon={AlertTriangle} tone="red" label="Customers who owe" value={summary.data?.debtors} hint="With an unpaid balance" />
       </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/customers" queryKey="customers" rowKey={rowId} searchPlaceholder="Search name or phone" empty="No customers found."
@@ -192,9 +194,9 @@ export function Expenses() {
         action={canWrite && me.day.open ? <AddButton onClick={() => edit.open('new')}>Record expense</AddButton> : undefined}
       />
       <StatRow>
-        <Stat label="This open day" value={summary.data ? money(summary.data.today) : '—'} />
-        <Stat label="This month" value={summary.data ? money(summary.data.month) : '—'} />
-        <Stat label="All time" value={summary.data ? money(summary.data.all_time) : '—'} />
+        <MetricCard loading={!summary.data} icon={CalendarDays} tone="red" label="This open day" value={summary.data ? money(summary.data.today) : null} hint="Recorded since the day opened" />
+        <MetricCard loading={!summary.data} icon={CalendarRange} tone="amber" label="This month" value={summary.data ? money(summary.data.month) : null} hint="Since the 1st of the month" />
+        <MetricCard loading={!summary.data} icon={History} tone="slate" label="All time" value={summary.data ? money(summary.data.all_time) : null} hint="Every recorded expense" />
       </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/expenses" queryKey="expenses" rowKey={rowId} empty="No expenses in this period."
@@ -253,10 +255,10 @@ export function Products() {
         ) : undefined}
       />
       <StatRow>
-        <Stat label="Products" value={summary?.active ?? '—'} hint="Active" />
-        <Stat label="Running low" value={summary?.low_stock ?? '—'} hint="At or below the warning level" />
-        <Stat label="Out of stock" value={summary?.out_of_stock ?? '—'} />
-        {showCosts ? <Stat label="Stock value" value={summary?.stock_value != null ? money(summary.stock_value) : '—'} hint="At average cost" /> : null}
+        <MetricCard loading={!summary} icon={PackageSearch} tone="green" label="Products" value={summary?.active} hint="Active" />
+        <MetricCard loading={!summary} icon={AlertTriangle} tone="amber" label="Running low" value={summary?.low_stock} hint="At or below the warning level" />
+        <MetricCard loading={!summary} icon={PackageX} tone="red" label="Out of stock" value={summary?.out_of_stock} hint="Nothing left to sell" />
+        {showCosts ? <MetricCard loading={!summary} icon={Warehouse} tone="blue" label="Stock value" value={summary?.stock_value != null ? money(summary.stock_value) : '—'} hint="At average cost" /> : null}
       </StatRow>
       <Card>
         <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -270,7 +272,7 @@ export function Products() {
           {filters.controls}
         </div>
         <div className={query.isError ? 'p-4' : ''}>
-          <QueryBoundary query={query}>
+          <QueryBoundary query={query} skeleton={<TableSkeleton rows={8} columns={[{ header: 'Product' }, { header: 'Category' }, { header: 'In stock', align: 'right' }, { header: 'Selling price', align: 'right' }, ...(showCosts ? [{ header: 'Average cost', align: 'right' as const }] : []), { header: 'Actions', align: 'right' }]} />}>
             {(data) => (
               <DataTable
                 rows={filters.apply(
@@ -371,6 +373,8 @@ export function Movements() {
   );
 }
 
+const STOCK_REPORT_SKELETON: Pick<Column<unknown>, 'header' | 'align'>[] = [{ header: 'Product' }, { header: 'In stock', align: 'right' }, { header: 'Reorder at', align: 'right' }, { header: 'Average cost', align: 'right' }, { header: 'Value', align: 'right' }];
+
 export function StockReport() {
   const me = useDashboard();
   const money = (value: number) => formatMoney(value, me.business.currency);
@@ -386,12 +390,12 @@ export function StockReport() {
   return (
     <>
       <PageHeader title="Stock report" />
-      <QueryBoundary query={query}>
+      <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={2} columns={2} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
         {(data) => (
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Stat label="Stock value" value={money(data.total_value)} hint="At average cost" />
-              <Stat label="Low-stock items" value={data.low_count} />
+              <MetricCard icon={Warehouse} tone="blue" label="Stock value" value={money(data.total_value)} hint="At average cost" />
+              <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count} hint="At or below reorder level" />
             </div>
             <Card>
               <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>

@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatMoney } from '../lib/format';
-import { Badge, PagedTable, PageHeader, Stat } from '../ui/kit';
+import { Building2, HandCoins } from 'lucide-react';
+import { Badge, PagedTable, PageHeader } from '../ui/kit';
+import { MetricCard } from '../ui/metrics';
 import { LIST_KEYS, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 import { RowButton, useRowDialog } from './details';
@@ -33,8 +35,8 @@ export function Suppliers() {
     <>
       <PageHeader title="Suppliers" action={canWrite ? <AddButton onClick={() => edit.open('new')}>Add supplier</AddButton> : undefined} />
       <StatRow>
-        <Stat label="Suppliers" value={summary.data?.active ?? '—'} hint="Active" />
-        <Stat label="You owe suppliers" value={summary.data ? money(summary.data.owed) : '—'} hint="Stock bought on credit" />
+        <MetricCard loading={!summary.data} icon={Building2} tone="green" label="Suppliers" value={summary.data?.active} hint="Active" />
+        <MetricCard loading={!summary.data} icon={HandCoins} tone="amber" label="You owe suppliers" value={summary.data ? money(summary.data.owed) : null} hint="Stock bought on credit" />
       </StatRow>
       <PagedTable<Row>
         client={api}

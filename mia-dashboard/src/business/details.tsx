@@ -2,7 +2,8 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Button, DataTable, Dialog, PagedTable, QueryBoundary, ReasonAction, Skeleton } from '../ui/kit';
+import { Badge, Button, DataTable, Dialog, PagedTable, QueryBoundary, ReasonAction } from '../ui/kit';
+import { DrawerSkeleton } from '../ui/skeleton';
 import { LIST_KEYS } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 
@@ -44,7 +45,7 @@ export function SaleDetailDialog({ saleId, onClose }: { saleId: string; onClose:
   const query = useQuery({ queryKey: ['sale', saleId], queryFn: async () => (await api.get<Row>(`/dashboard/sales/${saleId}`)).data });
   return (
     <Dialog title="Sale details" onClose={onClose} wide>
-      <QueryBoundary query={query} skeleton={<Skeleton className="h-40" />}>
+      <QueryBoundary query={query} skeleton={<DrawerSkeleton />}>
         {(sale) => (
           <>
             <Summary items={[
@@ -91,7 +92,7 @@ export function PurchaseDetailDialog({ purchaseId, onClose }: { purchaseId: stri
   const query = useQuery({ queryKey: ['purchase', purchaseId], queryFn: async () => (await api.get<Row>(`/dashboard/purchases/${purchaseId}`)).data });
   return (
     <Dialog title="Stock-in details" onClose={onClose} wide>
-      <QueryBoundary query={query} skeleton={<Skeleton className="h-40" />}>
+      <QueryBoundary query={query} skeleton={<DrawerSkeleton />}>
         {(purchase) => (
           <>
             <Summary items={[

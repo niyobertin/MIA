@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/auth';
-import { Badge, Button, DataTable, Dialog, QueryBoundary, Skeleton } from '../ui/kit';
+import { Badge, Button, DataTable, Dialog, QueryBoundary } from '../ui/kit';
+import { TableSkeleton } from '../ui/skeleton';
 import { CheckField, FormDialog, FormError, LIST_KEYS, NumberField, SelectField, TextField, useFormState, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
 
@@ -131,7 +132,7 @@ export function CategoriesDialog({ onClose }: { onClose: () => void }) {
         <Button type="submit" tone="primary" disabled={add.isPending}>Add</Button>
       </form>
       <FormError error={add.error ?? update.error} />
-      <QueryBoundary query={categories} skeleton={<Skeleton className="h-32" />}>
+      <QueryBoundary query={categories} skeleton={<TableSkeleton rows={4} columns={[{ header: 'Category' }, { header: 'Actions', align: 'right' }]} />}>
         {(rows) => (
           <DataTable<Category>
             rows={rows}

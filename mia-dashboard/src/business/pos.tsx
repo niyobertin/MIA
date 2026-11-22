@@ -5,7 +5,8 @@ import { Check, CheckCircle2, Minus, Plus, Search, ShoppingCart, Trash2 } from '
 import { ProductThumb } from '../ui/ProductThumb';
 import { api } from '../lib/auth';
 import { formatMoney, getErrorMessage } from '../lib/format';
-import { Button, Card, Dialog, inputClass, PageHeader, Skeleton } from '../ui/kit';
+import { Button, Card, Dialog, inputClass, PageHeader } from '../ui/kit';
+import { TileGridSkeleton } from '../ui/skeleton';
 import { Select } from '../ui/Select';
 import { FormError, LIST_KEYS, MethodButtons, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
@@ -118,7 +119,7 @@ export function NewSale() {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
             <input aria-label="Search products" placeholder="Search products" value={search} onChange={(e) => setSearch(e.target.value)} className={`${inputClass} pl-9`} />
           </div>
-          {products.isLoading ? <Skeleton className="h-64" /> : (
+          {products.isLoading ? <TileGridSkeleton count={9} /> : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {visible.map((p) => {
                 const qty = inCart(p.id);
