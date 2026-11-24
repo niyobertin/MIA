@@ -1,4 +1,4 @@
-import { inDateRange, rangeForPreset } from '@/components/DateRangeFilter';
+import { inDateRange, rangeForPreset } from '@/utils/dateRange';
 import { getTodayDateString, getYesterdayDateString } from '@/utils/formatters';
 
 describe('date range filter', () => {

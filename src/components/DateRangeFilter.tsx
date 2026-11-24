@@ -7,16 +7,12 @@ import { BottomSheet } from '@/components/SegmentedControl';
 import { Button } from '@/components/Button';
 import { DatePickerField } from '@/components/DatePickerField';
 import { showToast } from '@/stores/toastStore';
-import {
-  getMonthStartDateString,
-  getTodayDateString,
-  getWeekStartDateString,
-  getYesterdayDateString,
-} from '@/utils/formatters';
-import { toLocalDateString } from '@/utils/periodBounds';
+import { getTodayDateString } from '@/utils/formatters';
+import { inDateRange, rangeForPreset, type DatePreset, type DateRangeValue } from '@/utils/dateRange';
 
-export type DatePreset = 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' | 'custom';
-export type DateRangeValue = { preset: DatePreset; start: string; end: string };
+export { inDateRange, rangeForPreset, type DatePreset, type DateRangeValue };
+import { ExportButton } from '@/components/ExportButton';
+import type { ListExport } from '@/utils/listExport';
 
 const PRESETS: { value: Exclude<DatePreset, 'custom'>; key: string }[] = [
   { value: 'today', key: 'reports.today' },
@@ -26,33 +22,12 @@ const PRESETS: { value: Exclude<DatePreset, 'custom'>; key: string }[] = [
   { value: 'all', key: 'sales.allTime' },
 ];
 
-export function rangeForPreset(preset: Exclude<DatePreset, 'custom'>): DateRangeValue {
-  const today = getTodayDateString();
-  switch (preset) {
-    case 'today':
-      return { preset, start: today, end: today };
-    case 'yesterday': {
-      const day = getYesterdayDateString();
-      return { preset, start: day, end: day };
-    }
-    case 'week':
-      return { preset, start: getWeekStartDateString(), end: today };
-    case 'month':
-      return { preset, start: getMonthStartDateString(), end: today };
-    case 'year':
-      return { preset, start: `${today.slice(0, 4)}-01-01`, end: today };
-    default:
-      return { preset: 'all', start: '', end: '' };
+export function rangeLabel(value: DateRangeValue, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (value.preset === 'custom') {
+    return value.start === value.end ? value.start : t('common.dateRange', { start: value.start, end: value.end });
   }
-}
-
-export function inDateRange(value: string | null | undefined, range: DateRangeValue): boolean {
-  if (range.preset === 'all') return true;
-  if (!value) return false;
-  const day = value.length > 10 && (value.includes('T') || value.includes(' '))
-    ? toLocalDateString(new Date(value.replace(' ', 'T')))
-    : value.slice(0, 10);
-  return day >= range.start && day <= range.end;
+  if (value.preset === 'yesterday') return t('reports.yesterday');
+  return t(PRESETS.find((p) => p.value === value.preset)?.key ?? 'sales.allTime');
 }
 
 export function useDateRange(initial: Exclude<DatePreset, 'custom'> = 'all') {
@@ -71,9 +46,7 @@ export function DateRangeFilter({ value, onChange }: { value: DateRangeValue; on
   const [start, setStart] = React.useState(value.preset === 'custom' ? value.start : today);
   const [end, setEnd] = React.useState(value.preset === 'custom' ? value.end : today);
 
-  const label = value.preset === 'custom'
-    ? value.start === value.end ? value.start : t('common.dateRange', { start: value.start, end: value.end })
-    : value.preset === 'yesterday' ? t('reports.yesterday') : t(PRESETS.find((p) => p.value === value.preset)?.key ?? 'sales.allTime');
+  const label = rangeLabel(value, t);
 
   const applyCustom = () => {
     if (start > end) {
@@ -135,18 +108,32 @@ export function DateRangeFilter({ value, onChange }: { value: DateRangeValue; on
   );
 }
 
-export function DateRangeBar({ value, onChange, count }: { value: DateRangeValue; onChange: (value: DateRangeValue) => void; count?: number }) {
+export function DateRangeBar({
+  value,
+  onChange,
+  count,
+  onExport,
+}: {
+  value: DateRangeValue;
+  onChange: (value: DateRangeValue) => void;
+  count?: number;
+  onExport?: () => ListExport;
+}) {
   const { t } = useTranslation();
   return (
     <View style={styles.bar}>
       <DateRangeFilter value={value} onChange={onChange} />
-      {count !== undefined ? <Text style={styles.count}>{t('common.itemCount', { count })}</Text> : null}
+      <View style={styles.barRight}>
+        {count !== undefined ? <Text style={styles.count}>{t('common.itemCount', { count })}</Text> : null}
+        {onExport ? <ExportButton build={onExport} disabled={count === 0} /> : null}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, marginBottom: spacing.sm },
+  bar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, marginBottom: spacing.sm },
+  barRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginLeft: 'auto' },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',

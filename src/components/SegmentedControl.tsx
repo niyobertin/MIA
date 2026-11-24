@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -46,6 +46,11 @@ interface BottomSheetProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
+}
+
+/** Waits for a closing sheet to finish sliding away; iOS cannot present a new modal or share sheet until it has. */
+export function afterSheetCloses(action: () => void) {
+  setTimeout(action, Platform.OS === 'ios' ? 400 : 50);
 }
 
 export const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, children }) => {

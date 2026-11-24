@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Text, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
@@ -13,7 +12,8 @@ import { EmptyState } from '@/components/EmptyState';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { OtherIncomePanel } from '@/components/OtherIncomePanel';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
+import { RowActionMenu } from '@/components/RowActionMenu';
 import { showToast } from '@/stores/toastStore';
 import {
   useCreateExpense,
@@ -257,7 +257,33 @@ export default function ExpenseScreen() {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('expenses.recentExpenses')}</Text>
-            <DateRangeBar value={dates.range} onChange={dates.setRange} count={recent.length} />
+            <DateRangeBar
+              value={dates.range}
+              onChange={dates.setRange}
+              count={recent.length}
+              onExport={() => ({
+                title: t('expenses.expenses'),
+                periodLabel: rangeLabel(dates.range, t),
+                summary: [
+                  { label: t('expenses.periodTotal'), value: recentTotal },
+                  { label: t('expenses.expenses'), value: recent.length },
+                ],
+                columns: [
+                  { header: t('expenses.date') },
+                  { header: t('expenses.category') },
+                  { header: t('expenses.description') },
+                  { header: t('expenses.paymentMethod') },
+                  { header: t('expenses.amount'), numeric: true },
+                ],
+                rows: recent.map((e) => [
+                  formatRecordDateTime(e.created_at || e.expense_date),
+                  t(`expenses.${e.category}` as any),
+                  e.description ?? '',
+                  t(`common.${e.payment_method === 'mobile_money' ? 'mobileMoney' : e.payment_method}` as any),
+                  e.amount,
+                ]),
+              })}
+            />
             {recent.length > 0 ? (
               <View style={styles.periodTotal}>
                 <Text style={styles.periodTotalLabel}>{t('expenses.periodTotal')}</Text>
@@ -289,12 +315,13 @@ export default function ExpenseScreen() {
                         />
                       </View>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconBtn} onPress={() => startEdit(e)} hitSlop={8}>
-                      <Ionicons name="create-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.iconBtn} onPress={() => setDeleting(e)} hitSlop={8}>
-                      <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                    </TouchableOpacity>
+                    <RowActionMenu
+                      title={e.description || t(`expenses.${e.category}` as any)}
+                      actions={[
+                        { label: t('common.edit'), icon: 'create-outline', onPress: () => startEdit(e) },
+                        { label: t('common.delete'), icon: 'trash-outline', tone: 'danger', onPress: () => setDeleting(e) },
+                      ]}
+                    />
                   </View>
                 ))
               )}

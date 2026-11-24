@@ -6,7 +6,7 @@ import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Input } from '@/components/Input';
 import { FilterChip } from '@/components/FilterChip';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
@@ -64,7 +64,39 @@ export default function StockMovementsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <DateRangeBar value={dates.range} onChange={dates.setRange} count={history.data?.length} />
+        <DateRangeBar
+          value={dates.range}
+          onChange={dates.setRange}
+          count={history.data?.length}
+          onExport={() => {
+            const rows = history.data ?? [];
+            return {
+              title: t('stock.movementHistory'),
+              periodLabel: rangeLabel(dates.range, t),
+              summary: [{ label: t('stock.movementHistory'), value: rows.length }],
+              columns: [
+                { header: t('expenses.date') },
+                { header: t('stock.productName') },
+                { header: t('stock.movementType') },
+                { header: t('stock.adjustQuantity'), numeric: true },
+                { header: t('stock.previousQty'), numeric: true },
+                { header: t('stock.newQty'), numeric: true },
+                { header: t('stock.user') },
+                { header: t('stock.reason') },
+              ],
+              rows: rows.map((row) => [
+                formatRecordDateTime(row.occurred_at),
+                row.product_name ?? '',
+                labelFor(row.type),
+                row.quantity,
+                row.previous_quantity,
+                row.new_quantity,
+                row.user_name ?? '',
+                row.reason ?? '',
+              ]),
+            };
+          }}
+        />
 
         <TouchableOpacity
           style={styles.filterToggle}

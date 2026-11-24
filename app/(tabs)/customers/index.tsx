@@ -1,6 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
@@ -10,7 +9,9 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ContactsSwitcher } from '@/components/ContactsSwitcher';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
+import { RowActionMenu } from '@/components/RowActionMenu';
+import { formatRecordDateTime } from '@/utils/formatters';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -103,7 +104,35 @@ export default function CustomersScreen() {
       <ScreenHeader title={t('navigation.contacts')} />
       <ContactsSwitcher active="customers" />
       <View style={styles.filterWrap}>
-        <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
+        <DateRangeBar
+          value={dates.range}
+          onChange={dates.setRange}
+          count={rows.length}
+          onExport={() => ({
+            title: t('customers.customers'),
+            periodLabel: `${t('common.dateAdded')}: ${rangeLabel(dates.range, t)}`,
+            summary: [
+              { label: t('customers.customers'), value: rows.length },
+              { label: t('customers.totalOutstanding'), value: rows.reduce((sum, row) => sum + Math.max(0, row.outstanding), 0) },
+            ],
+            columns: [
+              { header: t('auth.name') },
+              { header: t('auth.phone') },
+              { header: t('customers.creditLimit'), numeric: true },
+              { header: t('customers.paid'), numeric: true },
+              { header: t('customers.balanceOwed'), numeric: true },
+              { header: t('common.dateAdded') },
+            ],
+            rows: rows.map((row) => [
+              row.customer.name,
+              row.customer.phone ?? '',
+              row.customer.credit_limit ?? 0,
+              row.paid,
+              row.outstanding,
+              formatRecordDateTime(row.customer.created_at),
+            ]),
+          })}
+        />
       </View>
 
       <FlatList
@@ -170,12 +199,24 @@ export default function CustomersScreen() {
                   <StatusBadge label={label} tone={tone} />
                 </View>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item.customer)} hitSlop={8}>
-                <Ionicons name="create-outline" size={20} color={colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => setDeleting(item.customer)} hitSlop={8}>
-                <Ionicons name="trash-outline" size={20} color={colors.danger} />
-              </TouchableOpacity>
+              <RowActionMenu
+                title={item.customer.name}
+                actions={[
+                  {
+                    label: t('payments.receivePayment'),
+                    icon: 'cash-outline',
+                    onPress: () => router.push({ pathname: '/payment/customer-payment', params: { customerId: item.customer.id } } as any),
+                  },
+                  {
+                    label: t('common.call'),
+                    icon: 'call-outline',
+                    hidden: !item.customer.phone,
+                    onPress: () => void Linking.openURL(`tel:${String(item.customer.phone).replace(/\s+/g, '')}`),
+                  },
+                  { label: t('common.edit'), icon: 'create-outline', onPress: () => openEdit(item.customer) },
+                  { label: t('common.delete'), icon: 'trash-outline', tone: 'danger', onPress: () => setDeleting(item.customer) },
+                ]}
+              />
             </View>
           );
         }}

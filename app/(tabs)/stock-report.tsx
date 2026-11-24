@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native
 import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ExportButton } from '@/components/ExportButton';
 import { Input } from '@/components/Input';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
@@ -47,7 +48,22 @@ export default function StockReportScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader title={t('stock.stockReport')} subtitle={t('stock.stockReportHint')} />
+      <ScreenHeader
+        title={t('stock.stockReport')}
+        subtitle={t('stock.stockReportHint')}
+        right={
+          <ExportButton
+            disabled={rows.length === 0}
+            build={() => ({
+              title: t('stock.stockReport'),
+              periodLabel: day,
+              summary: [{ label: t('stock.totalProductsCount'), value: rows.length }],
+              columns: [{ header: t('stock.productName') }, { header: t('stock.unit') }, { header: t('stock.currentStock'), numeric: true }],
+              rows: rows.map((row) => [row.name, row.unit, row.qty]),
+            })}
+          />
+        }
+      />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}

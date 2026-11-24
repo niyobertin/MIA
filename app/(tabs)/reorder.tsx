@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { router } from 'expo-router';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ExportButton } from '@/components/ExportButton';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { Button } from '@/components/Button';
@@ -16,7 +17,33 @@ export default function ReorderScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader title={t('stock.buySuggestions')} subtitle={t('stock.reorderHint')} />
+      <ScreenHeader
+        title={t('stock.buySuggestions')}
+        subtitle={t('stock.reorderHint')}
+        right={
+          <ExportButton
+            disabled={rows.length === 0}
+            build={() => ({
+              title: t('stock.buySuggestions'),
+              summary: [
+                { label: t('stock.productsToBuy'), value: rows.length },
+                { label: t('stock.outOfStock'), value: outCount },
+                { label: t('stock.estimatedCost'), value: totalCost },
+              ],
+              columns: [
+                { header: t('stock.productName') },
+                { header: t('stock.currentStock'), numeric: true },
+                { header: t('stock.reorderLevel'), numeric: true },
+                { header: t('stock.buyStock'), numeric: true },
+                { header: t('stock.unit') },
+                { header: t('stock.preferredSupplier') },
+                { header: t('stock.estimatedCost'), numeric: true },
+              ],
+              rows: rows.map((item) => [item.name, item.onHand, item.reorderLevel, item.suggested, item.unit, item.supplierName ?? '', item.estCost]),
+            })}
+          />
+        }
+      />
       {isLoading ? (
         <View style={styles.content}>
           <Skeleton height={90} style={styles.skel} />

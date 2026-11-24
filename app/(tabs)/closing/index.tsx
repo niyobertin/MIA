@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
 import { MoneyText } from '@/components/MoneyText';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 import { FormInput } from '@/components/FormInput';
 import { FormScrollView } from '@/components/FormScrollView';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -577,7 +577,41 @@ export default function ClosingScreen() {
         <View style={styles.historySection}>
           <Text style={styles.historyTitle}>{t('cash.previousDays')}</Text>
           <Text style={styles.historyHint}>{t('cash.previousDaysHint')}</Text>
-          <DateRangeBar value={historyDates.range} onChange={historyDates.setRange} count={history.length} />
+          <DateRangeBar
+            value={historyDates.range}
+            onChange={historyDates.setRange}
+            count={history.length}
+            onExport={() => ({
+              title: t('cash.previousDays'),
+              periodLabel: rangeLabel(historyDates.range, t),
+              summary: [
+                { label: t('cash.previousDays'), value: history.length },
+                { label: t('reports.totalSales'), value: history.reduce((sum, day) => sum + (day.total_sales ?? 0), 0) },
+                { label: t('reports.netProfit'), value: history.reduce((sum, day) => sum + (day.net_profit ?? 0), 0) },
+                { label: t('cash.cashVariance'), value: history.reduce((sum, day) => sum + (day.cash_variance ?? 0), 0) },
+              ],
+              columns: [
+                { header: t('cash.businessDate') },
+                { header: t('cash.closedStatus') },
+                { header: t('reports.totalSales'), numeric: true },
+                { header: t('reports.netProfit'), numeric: true },
+                { header: t('cash.openingCash'), numeric: true },
+                { header: t('cash.expectedCash'), numeric: true },
+                { header: t('cash.actualCash'), numeric: true },
+                { header: t('cash.cashVariance'), numeric: true },
+              ],
+              rows: history.map((day) => [
+                day.business_date?.slice(0, 10) ?? '',
+                day.status === 'open' ? t('cash.openStatus') : t('cash.closedStatus'),
+                day.total_sales ?? 0,
+                day.net_profit ?? 0,
+                day.opening_cash ?? 0,
+                day.expected_cash ?? 0,
+                day.status === 'open' ? '' : day.actual_cash ?? 0,
+                day.status === 'open' ? '' : day.cash_variance ?? 0,
+              ]),
+            })}
+          />
           {historyQuery.isLoading ? (
             <Skeleton height={72} style={styles.skel} />
           ) : history.length === 0 ? (

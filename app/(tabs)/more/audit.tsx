@@ -6,7 +6,7 @@ import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { useRecentAudit } from '@/hooks/useData';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 import { useAuthStore } from '@/stores/authStore';
 import { canSeeProfit } from '@/utils/permissions';
 
@@ -80,7 +80,24 @@ export default function AuditScreen() {
         refreshControl={<RefreshControl refreshing={!!isRefetching} onRefresh={() => refetch()} />}
         ListHeaderComponent={
           <View>
-          <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
+          <DateRangeBar
+            value={dates.range}
+            onChange={dates.setRange}
+            count={rows.length}
+            onExport={() => ({
+              title: t('settings.auditLog'),
+              periodLabel: rangeLabel(dates.range, t),
+              summary: [{ label: t('settings.auditLog'), value: rows.length }],
+              columns: [{ header: t('expenses.date') }, { header: t('common.actions') }, { header: t('auth.name') }, { header: t('users.role') }, { header: t('payments.notes') }],
+              rows: rows.map((item) => [
+                formatDateTime(String(item.created_at ?? '')),
+                getActionMeta(String(item.action ?? '')).label,
+                String(item.user_name ?? ''),
+                String(item.role ?? ''),
+                item.reason ? String(item.reason) : '',
+              ]),
+            })}
+          />
           <View style={styles.headerBox}>
             <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
             <Text style={styles.hint}>{t('settings.auditHint')}</Text>

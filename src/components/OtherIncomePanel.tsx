@@ -17,7 +17,7 @@ import { useCreatePayment, usePayments } from '@/hooks/useData';
 import { PAYMENT_METHODS } from '@/constants';
 import { Payment } from '@/types';
 import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 
 const INCOME_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -119,7 +119,18 @@ export function OtherIncomePanel() {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{t('expenses.recentIncome')}</Text>
-        <DateRangeBar value={dates.range} onChange={dates.setRange} count={shown.length} />
+        <DateRangeBar
+          value={dates.range}
+          onChange={dates.setRange}
+          count={shown.length}
+          onExport={() => ({
+            title: t('expenses.otherIncome'),
+            periodLabel: rangeLabel(dates.range, t),
+            summary: [{ label: t('expenses.otherIncome'), value: shown.reduce((sum, p) => sum + p.amount, 0) }],
+            columns: [{ header: t('expenses.date') }, { header: t('expenses.incomeSource') }, { header: t('expenses.receivedAs') }, { header: t('expenses.amount'), numeric: true }],
+            rows: shown.map((p) => [formatRecordDateTime(p.created_at || p.payment_date), p.notes ?? '', t(methodKey(p.payment_method) as any), p.amount]),
+          })}
+        />
         {shown.length === 0 ? (
           <EmptyState icon="trending-up-outline" title={t('expenses.noIncome')} />
         ) : (

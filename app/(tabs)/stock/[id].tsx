@@ -13,6 +13,7 @@ import { Button } from '@/components/Button';
 import { Input } from '@/components/Input';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { BottomSheet } from '@/components/SegmentedControl';
+import { RowActionMenu } from '@/components/RowActionMenu';
 import { AddProductSheet, AddProductData } from '@/components/AddProductSheet';
 import { getInitials, formatRecordDateTime, formatCurrency } from '@/utils/formatters';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
@@ -247,34 +248,14 @@ export default function ProductDetailScreen() {
                   </TouchableOpacity>
                 ) : null}
 
-                {product.track_inventory ? (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.actionBtnSecondary]}
-                    onPress={() => setShowAdjust(true)}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="swap-vertical" size={17} color={colors.ink} />
-                    <Text style={styles.actionBtnSecondaryText}>{t('stock.adjustStock')}</Text>
-                  </TouchableOpacity>
-                ) : null}
-
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.actionBtnSecondary]}
-                  onPress={() => setShowEdit(true)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="pencil" size={16} color={colors.ink} />
-                  <Text style={styles.actionBtnSecondaryText}>{t('common.edit')}</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.deleteIconButton}
-                  onPress={() => setShowDelete(true)}
-                  activeOpacity={0.8}
-                  accessibilityLabel={t('common.delete')}
-                >
-                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                </TouchableOpacity>
+                <RowActionMenu
+                  title={product.name}
+                  actions={[
+                    { label: t('stock.adjustStock'), icon: 'swap-vertical', hidden: !product.track_inventory, onPress: () => setShowAdjust(true) },
+                    { label: t('common.edit'), icon: 'pencil', onPress: () => setShowEdit(true) },
+                    { label: t('common.delete'), icon: 'trash-outline', tone: 'danger', onPress: () => setShowDelete(true) },
+                  ]}
+                />
               </View>
             ) : null}
 

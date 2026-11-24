@@ -10,7 +10,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { BottomSheet } from '@/components/SegmentedControl';
 import { EmptyState } from '@/components/EmptyState';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 import { showToast } from '@/stores/toastStore';
 import {
   useCustomers,
@@ -194,7 +194,33 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('payments.recentPayments')}</Text>
-          <DateRangeBar value={dates.range} onChange={dates.setRange} count={history.length} />
+          <DateRangeBar
+            value={dates.range}
+            onChange={dates.setRange}
+            count={history.length}
+            onExport={() => ({
+              title: isCustomer ? t('navigation.customerPayment') : t('navigation.supplierPayment'),
+              periodLabel: rangeLabel(dates.range, t),
+              summary: [
+                { label: t('payments.payments'), value: history.length },
+                { label: t('payments.amount'), value: history.reduce((sum, p) => sum + p.amount, 0) },
+              ],
+              columns: [
+                { header: t('expenses.date') },
+                { header: isCustomer ? t('customers.customers') : t('suppliers.suppliers') },
+                { header: t('payments.paymentMethod') },
+                { header: t('payments.notes') },
+                { header: t('payments.amount'), numeric: true },
+              ],
+              rows: history.map((p) => [
+                formatRecordDateTime(p.created_at || p.payment_date),
+                partyNameOf(p.party_id),
+                t(`common.${p.payment_method === 'mobile_money' ? 'mobileMoney' : p.payment_method}` as any),
+                p.notes ?? '',
+                p.amount,
+              ]),
+            })}
+          />
           {history.length === 0 ? (
             <EmptyState icon="receipt-outline" title={t('payments.noPayments')} />
           ) : (

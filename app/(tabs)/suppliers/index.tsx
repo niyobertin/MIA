@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, RefreshControl, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +8,9 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ContactsSwitcher } from '@/components/ContactsSwitcher';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
+import { RowActionMenu } from '@/components/RowActionMenu';
+import { formatRecordDateTime } from '@/utils/formatters';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -118,7 +120,18 @@ export default function SuppliersScreen() {
           onChangeText={setSearch}
           placeholder={t('suppliers.searchSuppliers')}
         />
-        <DateRangeBar value={dates.range} onChange={dates.setRange} count={filtered.length} />
+        <DateRangeBar
+          value={dates.range}
+          onChange={dates.setRange}
+          count={filtered.length}
+          onExport={() => ({
+            title: t('suppliers.suppliers'),
+            periodLabel: `${t('common.dateAdded')}: ${rangeLabel(dates.range, t)}`,
+            summary: [{ label: t('suppliers.suppliers'), value: filtered.length }],
+            columns: [{ header: t('auth.name') }, { header: t('auth.phone') }, { header: t('auth.email') }, { header: t('common.dateAdded') }],
+            rows: filtered.map((s) => [s.name, s.phone ?? '', s.email ?? '', formatRecordDateTime(s.created_at)]),
+          })}
+        />
       </View>
 
       <FlatList
@@ -163,12 +176,24 @@ export default function SuppliersScreen() {
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.faint} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item)} hitSlop={8}>
-              <Ionicons name="create-outline" size={20} color={colors.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => setDeleting(item)} hitSlop={8}>
-              <Ionicons name="trash-outline" size={20} color={colors.danger} />
-            </TouchableOpacity>
+            <RowActionMenu
+              title={item.name}
+              actions={[
+                {
+                  label: t('navigation.supplierPayment'),
+                  icon: 'cash-outline',
+                  onPress: () => router.push({ pathname: '/payment/supplier-payment', params: { supplierId: item.id } } as any),
+                },
+                {
+                  label: t('common.call'),
+                  icon: 'call-outline',
+                  hidden: !item.phone,
+                  onPress: () => void Linking.openURL(`tel:${String(item.phone).replace(/\s+/g, '')}`),
+                },
+                { label: t('common.edit'), icon: 'create-outline', onPress: () => openEdit(item) },
+                { label: t('common.delete'), icon: 'trash-outline', tone: 'danger', onPress: () => setDeleting(item) },
+              ]}
+            />
           </View>
         )}
       />

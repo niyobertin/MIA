@@ -40,7 +40,9 @@ import { formatTime, getTodayDateString, getYesterdayDateString } from '@/utils/
 import DailyRecordTable from '@/components/DailyRecordTable';
 import DailyRecordsSection from '@/components/DailyRecordsSection';
 import { computeDailyRecords } from '@/services/reports/dailyRecords';
-import { shareReportPdf } from '@/utils/reportExport';
+import { shareReportExcel, shareReportPdf, type ReportExportData } from '@/utils/reportExport';
+import { ExportButton } from '@/components/ExportButton';
+import type { ExportFormat } from '@/utils/listExport';
 import { showToast } from '@/stores/toastStore';
 import { seriesForPeriod } from '@/services/financial/books';
 
@@ -426,7 +428,7 @@ export default function ReportsScreen() {
     setPeriod('custom');
   };
 
-  const exportReport = async () => {
+  const exportReport = async (format: ExportFormat = 'pdf') => {
     if (!stats || !books) return;
     setExporting(true);
     try {
@@ -461,7 +463,7 @@ export default function ReportsScreen() {
         status: tx.status,
       }));
 
-      await shareReportPdf({
+      const reportData: ReportExportData = {
         businessName: business?.name ?? 'MIA',
         businessCode: business?.business_code,
         currency: business?.currency ?? 'RWF',
@@ -491,7 +493,9 @@ export default function ReportsScreen() {
         expenseItems: showProfit ? expenseItems : undefined,
         transactions: txRows,
         includeProfit: showProfit,
-      });
+      };
+      if (format === 'xlsx') await shareReportExcel(reportData);
+      else await shareReportPdf(reportData);
       showToast(t('reports.exportSuccess'), 'success');
     } catch {
       showToast(t('reports.exportFailed'), 'error');
@@ -551,19 +555,25 @@ export default function ReportsScreen() {
         subtitle={periodLabel}
         showBack={false}
         right={
-          <TouchableOpacity
-            onPress={exportReport}
+          <ExportButton
+            run={exportReport}
             disabled={!stats || exporting}
-            hitSlop={10}
-            style={styles.exportBtn}
-            accessibilityLabel={t('reports.exportReport')}
-          >
-            {exporting ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Ionicons name="share-outline" size={22} color={colors.primary} />
+            renderTrigger={(open) => (
+              <TouchableOpacity
+                onPress={open}
+                disabled={!stats || exporting}
+                hitSlop={10}
+                style={styles.exportBtn}
+                accessibilityLabel={t('reports.exportReport')}
+              >
+                {exporting ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="share-outline" size={22} color={colors.primary} />
+                )}
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          />
         }
       />
       <ScrollView
@@ -971,23 +981,29 @@ export default function ReportsScreen() {
               )}
             </View>
 
-            <TouchableOpacity
-              style={styles.exportCard}
-              onPress={exportReport}
+            <ExportButton
+              run={exportReport}
               disabled={!stats || exporting}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="document-text-outline" size={22} color={colors.primary} />
-              <View style={styles.exportInfo}>
-                <Text style={styles.exportTitle}>{t('reports.exportReport')}</Text>
-                <Text style={styles.exportSub}>{t('reports.exportHint')}</Text>
-              </View>
-              {exporting ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Ionicons name="share-outline" size={20} color={colors.primary} />
+              renderTrigger={(open) => (
+                <TouchableOpacity
+                  style={styles.exportCard}
+                  onPress={open}
+                  disabled={!stats || exporting}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="document-text-outline" size={22} color={colors.primary} />
+                  <View style={styles.exportInfo}>
+                    <Text style={styles.exportTitle}>{t('reports.exportReport')}</Text>
+                    <Text style={styles.exportSub}>{t('reports.exportHint')}</Text>
+                  </View>
+                  {exporting ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name="share-outline" size={20} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            />
 
             {/* Daily business records section */}
             <View style={{ marginTop: 16, marginBottom: 8 }}>

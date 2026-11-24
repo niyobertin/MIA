@@ -16,6 +16,7 @@ import { CustomerPicker, WaiterPicker } from '@/components/sale/PartyPicker';
 import { SaleDoneBanner } from '@/components/sale/SaleDoneBanner';
 import { SaleHistoryList, HistoryFilter } from '@/components/sale/SaleHistoryList';
 import { CustomPeriodSheet } from '@/components/home/CustomPeriodSheet';
+import { ExportButton } from '@/components/ExportButton';
 import { showToast } from '@/stores/toastStore';
 import {
   useProducts,
@@ -29,7 +30,7 @@ import {
 import { useSaleCheckout, PayMethod } from '@/hooks/useSaleCheckout';
 import { useSalesStore } from '@/stores/salesStore';
 import { useAuthStore } from '@/stores/authStore';
-import { getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
+import { formatRecordDateTime, getTodayDateString, getWeekStartDateString } from '@/utils/formatters';
 import { toLocalDateString } from '@/utils/periodBounds';
 import { Product } from '@/types';
 import { receiptFromBusiness, shareReceiptPdf } from '@/utils/receipt';
@@ -216,15 +217,52 @@ export default function NewSaleScreen() {
                 : t('sales.tapProductsHint')}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.headerIconButton}
-          onPress={() => router.push('/waiter-tabs' as any)}
-          accessibilityRole="button"
-          accessibilityLabel={t('navigation.waiterTabs')}
-          hitSlop={6}
-        >
-          <Ionicons name="people-circle-outline" size={24} color={colors.primary} />
-        </TouchableOpacity>
+        {isHistory ? (
+          <ExportButton
+            disabled={historySales.length === 0}
+            build={() => {
+              const active = historySales.filter((sale) => !sale.voided);
+              return {
+                title: t('sales.salesHistory'),
+                periodLabel: historySubtitle,
+                summary: [
+                  { label: t('sales.periodCount'), value: active.length },
+                  { label: t('sales.periodSales'), value: active.reduce((sum, sale) => sum + (sale.total_amount ?? 0), 0) },
+                  { label: t('sales.periodCredit'), value: active.reduce((sum, sale) => sum + Math.max(0, (sale.total_amount ?? 0) - (sale.paid_amount ?? 0)), 0) },
+                  { label: t('sales.periodVoided'), value: historySales.length - active.length },
+                ],
+                columns: [
+                  { header: '#' },
+                  { header: t('expenses.date') },
+                  { header: t('sales.customer') },
+                  { header: t('common.status') },
+                  { header: t('sales.total'), numeric: true },
+                  { header: t('sales.paid'), numeric: true },
+                  { header: t('customers.balanceOwed'), numeric: true },
+                ],
+                rows: historySales.map((sale) => [
+                  sale.voided ? `${sale.reference_number ?? ''} (${t('sales.voided')})` : sale.reference_number ?? '',
+                  formatRecordDateTime(sale.created_at || sale.sale_date),
+                  customerNameOf(sale.customer_id),
+                  t(`sales.${sale.payment_status}` as any),
+                  sale.total_amount ?? 0,
+                  sale.paid_amount ?? 0,
+                  sale.voided ? 0 : Math.max(0, (sale.total_amount ?? 0) - (sale.paid_amount ?? 0)),
+                ]),
+              };
+            }}
+          />
+        ) : (
+          <TouchableOpacity
+            style={styles.headerIconButton}
+            onPress={() => router.push('/waiter-tabs' as any)}
+            accessibilityRole="button"
+            accessibilityLabel={t('navigation.waiterTabs')}
+            hitSlop={6}
+          >
+            <Ionicons name="people-circle-outline" size={24} color={colors.primary} />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={styles.headerButton}
           onPress={() => setTab(isHistory ? 'new' : 'history')}

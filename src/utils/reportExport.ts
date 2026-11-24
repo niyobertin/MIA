@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as XLSX from 'xlsx';
 import { formatCurrency } from '@/services/financial/calculations';
+import { shareWorkbook } from '@/utils/listExport';
 
 export interface ReportExportData {
   businessName: string;
@@ -554,4 +556,68 @@ export async function shareReportPdf(data: ReportExportData): Promise<void> {
   }
 
   await Print.printAsync({ html });
+}
+
+function reportSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'report';
+}
+
+export function buildReportWorkbook(data: ReportExportData): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+  const add = (name: string, rows: (string | number | null | undefined)[][], widths: number[]) => {
+    const sheet = XLSX.utils.aoa_to_sheet(rows.map((row) => row.map((cell) => cell ?? '')));
+    sheet['!cols'] = widths.map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, sheet, name);
+  };
+
+  add('Summary', [
+    [data.businessName],
+    [`Business report · ${data.periodLabel}`],
+    [`Generated ${data.generatedAt} · Currency ${data.currency ?? 'RWF'}`],
+    [],
+    ['Figure', 'Value'],
+    ['Total sales', data.totalSales],
+    ['Items sold', data.itemsSold],
+    ...(data.includeProfit
+      ? [
+          ['Cost of goods sold', data.cogs ?? 0],
+          ['Gross profit', data.grossProfit ?? 0],
+          ['Net profit', data.netProfit ?? 0],
+        ]
+      : []),
+    ['Expenses', data.expenses],
+    ['Stock value', data.stockValue],
+  ], [34, 20]);
+
+  add('Top products', [
+    ['Product', 'Quantity sold', 'Sales', ...(data.includeProfit ? ['Profit', 'Margin %'] : [])],
+    ...data.topProducts.map((p) => [
+      p.productName,
+      p.quantitySold,
+      p.totalSales,
+      ...(data.includeProfit ? [p.totalProfit ?? 0, p.margin ?? 0] : []),
+    ]),
+  ], [32, 14, 16, 16, 12]);
+
+  add('Payments', [['Received as', 'Amount'], ...data.payments.map((p) => [p.label, p.amount])], [36, 18]);
+
+  if (data.expenseItems?.length) {
+    add('Expenses', [
+      ['Date', 'Category', 'Description', 'Paid with', 'Amount'],
+      ...data.expenseItems.map((e) => [e.date, e.category, e.description, e.paymentMethod, e.amount]),
+    ], [14, 16, 32, 14, 14]);
+  }
+
+  if (data.transactions?.length) {
+    add('Transactions', [
+      ['Date', 'Type', 'Details', 'Party', 'Status', 'Money in', 'Money out'],
+      ...data.transactions.map((tx) => [tx.date, tx.type, tx.title, tx.party, tx.status, tx.outflow ? '' : tx.amount, tx.outflow ? tx.amount : '']),
+    ], [18, 12, 30, 22, 12, 14, 14]);
+  }
+  return wb;
+}
+
+export async function shareReportExcel(data: ReportExportData): Promise<void> {
+  const stamp = new Date().toISOString().slice(0, 10);
+  await shareWorkbook(buildReportWorkbook(data), `${reportSlug(data.businessName)}-report-${stamp}.xlsx`, 'Export report');
 }

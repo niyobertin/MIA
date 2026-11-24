@@ -27,7 +27,8 @@ import { useReorderSuggestions } from '@/hooks/useReorderSuggestions';
 import { useAuthStore } from '@/stores/authStore';
 import { MoneyText } from '@/components/MoneyText';
 import { AddProductSheet } from '@/components/AddProductSheet';
-import { DateRangeFilter, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeFilter, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
+import { ExportButton } from '@/components/ExportButton';
 import {
   pickAndParseProductFile,
   shareProductImportTemplate,
@@ -284,6 +285,40 @@ export default function StockScreen() {
               </View>
             </TouchableOpacity>
           ) : null}
+          <ExportButton
+            disabled={filteredProducts.length === 0}
+            build={() => ({
+              title: t('stock.products'),
+              periodLabel: `${t('common.dateAdded')}: ${rangeLabel(addedDates.range, t)}`,
+              summary: [
+                { label: t('stock.totalProductsCount'), value: filteredProducts.length },
+                { label: t('stock.lowStockItems'), value: filteredProducts.filter((p) => p.track_inventory && (p.current_stock ?? 0) <= (p.reorder_level ?? 0)).length },
+                { label: t('stock.totalValuation'), value: filteredProducts.reduce((sum, p) => sum + Math.max(0, p.current_stock ?? 0) * (p.average_cost ?? 0), 0) },
+              ],
+              columns: [
+                { header: t('stock.productName') },
+                { header: t('stock.sku') },
+                { header: t('stock.category') },
+                { header: t('stock.currentStock'), numeric: true },
+                { header: t('stock.unit') },
+                { header: t('stock.reorderLevel'), numeric: true },
+                { header: t('stock.sellingPrice'), numeric: true },
+                { header: t('stock.averageCost'), numeric: true },
+                { header: t('stock.stockValue'), numeric: true },
+              ],
+              rows: filteredProducts.map((p) => [
+                p.name,
+                p.sku ?? '',
+                (categories ?? []).find((c) => c.id === p.category_id)?.name ?? '',
+                p.track_inventory ? p.current_stock ?? 0 : '',
+                p.unit ?? '',
+                p.track_inventory ? p.reorder_level ?? 0 : '',
+                p.selling_price,
+                p.average_cost ?? 0,
+                p.track_inventory ? Math.max(0, p.current_stock ?? 0) * (p.average_cost ?? 0) : '',
+              ]),
+            })}
+          />
           <SyncIndicator compact />
         </View>
       </View>
@@ -324,7 +359,7 @@ export default function StockScreen() {
             activeOpacity={0.8}
             accessibilityRole="button"
           >
-            <Ionicons name={tool.icon as any} size={18} color={colors.primary} />
+            <Ionicons name={tool.icon as any} size={16} color={colors.primary} />
             <Text style={styles.toolText} numberOfLines={1}>{tool.label}</Text>
           </TouchableOpacity>
         ))}
@@ -550,13 +585,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     minHeight: 44,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
     backgroundColor: colors.primarySoft,
     borderRadius: radius.md,
   },
-  toolText: { flexShrink: 1, fontSize: 13, fontWeight: '700', color: colors.primaryText },
+  toolText: { flexShrink: 1, fontSize: 12, fontWeight: '700', color: colors.primaryText },
   summaryBar: {
     flexDirection: 'row',
     alignItems: 'center',

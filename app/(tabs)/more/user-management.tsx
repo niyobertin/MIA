@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
-  Switch,
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,7 +18,9 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { userRepository } from '@/repositories/users/users';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
+import { RowActionMenu } from '@/components/RowActionMenu';
+import { formatRecordDateTime } from '@/utils/formatters';
 import { showToast } from '@/stores/toastStore';
 import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
@@ -164,7 +165,28 @@ export default function UserManagementScreen() {
           {t('users.addUser')}
         </Button>
 
-        <DateRangeBar value={userDates.range} onChange={userDates.setRange} count={shownUsers.length} />
+        <DateRangeBar
+          value={userDates.range}
+          onChange={userDates.setRange}
+          count={shownUsers.length}
+          onExport={() => ({
+            title: t('users.users'),
+            periodLabel: `${t('common.dateAdded')}: ${rangeLabel(userDates.range, t)}`,
+            summary: [
+              { label: t('users.users'), value: shownUsers.length },
+              { label: t('users.active'), value: shownUsers.filter((u) => u.active).length },
+            ],
+            columns: [{ header: t('users.name') }, { header: t('users.phone') }, { header: t('users.email') }, { header: t('users.role') }, { header: t('users.active') }, { header: t('common.dateAdded') }],
+            rows: shownUsers.map((u) => [
+              u.name,
+              u.phone ?? '',
+              u.email ?? '',
+              t(`users.${(u.role ?? 'STAFF').toLowerCase()}` as 'users.owner'),
+              u.active ? t('users.active') : t('users.inactive'),
+              formatRecordDateTime(u.created_at),
+            ]),
+          })}
+        />
         <View style={styles.usersList}>
           {shownUsers.map((user) => (
             <UserRow
@@ -226,20 +248,19 @@ function UserRow({
         {!user.active ? <Text style={styles.inactiveLabel}>{t('users.inactive')}</Text> : null}
       </View>
       <View style={styles.userActions}>
-        <TouchableOpacity onPress={() => onEdit(user)} hitSlop={8}>
-          <Ionicons name="create-outline" size={20} color={colors.primary} />
-        </TouchableOpacity>
-        <Switch
-          value={user.active}
-          disabled={locked}
-          onValueChange={(value) => onToggleActive(user.id, value)}
-          trackColor={{ false: colors.border, true: colors.primary }}
+        <RowActionMenu
+          title={user.name}
+          actions={[
+            { label: t('users.editUser'), icon: 'create-outline', onPress: () => onEdit(user) },
+            {
+              label: user.active ? t('users.deactivate') : t('users.reactivate'),
+              icon: user.active ? 'pause-circle-outline' : 'play-circle-outline',
+              hidden: locked,
+              onPress: () => onToggleActive(user.id, !user.active),
+            },
+            { label: t('common.delete'), icon: 'trash-outline', tone: 'danger', hidden: role === 'OWNER' || isSelf, onPress: () => onDelete(user.id) },
+          ]}
         />
-        {role !== 'OWNER' && !isSelf ? (
-          <TouchableOpacity onPress={() => onDelete(user.id)} hitSlop={8}>
-            <Ionicons name="trash-outline" size={18} color="#ef4444" />
-          </TouchableOpacity>
-        ) : null}
       </View>
     </View>
   );

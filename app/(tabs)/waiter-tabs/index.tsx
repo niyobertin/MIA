@@ -9,7 +9,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
+import { DateRangeBar, rangeLabel, useDateRange } from '@/components/DateRangeFilter';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { useWaiterTabs, useOpenDailyClosing } from '@/hooks/useData';
 import { WaiterTabStatus } from '@/types';
@@ -54,7 +54,36 @@ export default function WaiterTabsScreen() {
     <View style={styles.screen}>
       <ScreenHeader title={t('waiterTabs.title')} />
       <View style={styles.filterWrap}>
-        <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
+        <DateRangeBar
+          value={dates.range}
+          onChange={dates.setRange}
+          count={rows.length}
+          onExport={() => ({
+            title: t('waiterTabs.title'),
+            periodLabel: rangeLabel(dates.range, t),
+            summary: [
+              { label: t('waiterTabs.title'), value: rows.length },
+              { label: t('waiterTabs.balanceDue'), value: rows.reduce((sum, tab) => sum + (tab.balance_due ?? 0), 0) },
+              { label: t('waiterTabs.paidSoFar'), value: rows.reduce((sum, tab) => sum + (tab.paid_amount ?? 0), 0) },
+            ],
+            columns: [
+              { header: t('expenses.date') },
+              { header: t('waiterTabs.waiter') },
+              { header: t('waiterTabs.client') },
+              { header: t('waiterTabs.notes') },
+              { header: t('waiterTabs.paidSoFar'), numeric: true },
+              { header: t('waiterTabs.balanceDue'), numeric: true },
+            ],
+            rows: rows.map((tab) => [
+              formatRecordDateTime(tab.created_at),
+              tab.waiter_name ?? '',
+              tab.client_label ?? '',
+              tab.notes ?? '',
+              tab.paid_amount ?? 0,
+              tab.balance_due ?? 0,
+            ]),
+          })}
+        />
       </View>
       {isLoading ? (
         <View style={styles.pad}>
