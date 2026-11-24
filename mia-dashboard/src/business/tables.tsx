@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CalendarDays, CalendarRange, HandCoins, History, PackageSearch, PackageX, Plus, Users, Warehouse } from 'lucide-react';
+import { AlertTriangle, ArrowDownLeft, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, ArrowUpRight, Boxes, CalendarDays, CalendarRange, CircleCheck, CreditCard, HandCoins, History, PackageSearch, PackageX, Plus, Receipt, Scale, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
 import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, type Column } from '../ui/kit';
@@ -82,6 +82,14 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
         searchPlaceholder="Search reference or customer"
         rowKey={rowId}
         empty={unpaidOnly ? 'No unpaid sales.' : 'No sales yet.'}
+        stats={(s?: { count: number; total: number; paid: number; outstanding: number; unpaid_count: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={ShoppingCart} tone="green" label={unpaidOnly ? 'Unpaid sales' : 'Sales'} value={s?.count.toLocaleString()} hint={unpaidOnly ? 'In the chosen period' : s ? `${s.unpaid_count.toLocaleString()} not fully paid` : undefined} />
+            <MetricCard loading={!s} icon={Receipt} tone="blue" label="Total value" value={s ? money(s.total) : null} hint="Cancelled sales not counted" />
+            <MetricCard loading={!s} icon={CircleCheck} tone="green" label="Collected" value={s ? money(s.paid) : null} hint="Paid on these sales" />
+            <MetricCard loading={!s} icon={HandCoins} tone="amber" label="Still owed" value={s ? money(s.outstanding) : null} hint="By customers" />
+          </StatRow>
+        )}
         columns={[
           { header: 'Reference', cell: (row) => <span className="font-semibold text-slate-900">{row.reference_number ?? '—'}</span> },
           { header: 'Customer', cell: (row) => row.customer ?? 'Walk-in' },
@@ -100,6 +108,7 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
 
 export function Payments() {
   const me = useDashboard();
+  const money = (value: number) => formatMoney(value, me.business.currency);
   const own = !me.permissions.includes('paymentsAll');
   const filters = useListFilters({ sortOptions: [
     { value: 'date', label: 'Date', kind: 'date' },
@@ -111,6 +120,14 @@ export function Payments() {
       <PagedTable<Row>
         client={api} path="/dashboard/payments" queryKey="payments" rowKey={rowId} empty="No payments in this period."
         params={filters.params} toolbar={filters.controls}
+        stats={(s?: { count: number; money_in: number; money_out: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={CreditCard} tone="slate" label="Payments" value={s?.count.toLocaleString()} hint="In the chosen period" />
+            <MetricCard loading={!s} icon={ArrowDownLeft} tone="green" label="Money in" value={s ? money(s.money_in) : null} hint="Sales, customers, other income" />
+            <MetricCard loading={!s} icon={ArrowUpRight} tone="red" label="Money out" value={s ? money(s.money_out) : null} hint="Suppliers, expenses, withdrawals" />
+            <MetricCard loading={!s} icon={Scale} tone="blue" label="Net" value={s ? money(s.money_in - s.money_out) : null} valueTone={s && s.money_in - s.money_out < 0 ? 'bad' : 'default'} hint="Money in less money out" />
+          </StatRow>
+        )}
         columns={[
           { header: 'Type', cell: (row) => <span className="font-medium text-slate-900">{humanize(row.type)}</span> },
           { header: 'Method', cell: (row) => humanize(row.payment_method) },
@@ -331,6 +348,14 @@ export function Purchases() {
         client={api} path="/dashboard/purchases" queryKey="purchases" rowKey={rowId} empty="No stock-in in this period."
         searchPlaceholder="Search reference or supplier"
         params={filters.params} toolbar={filters.controls}
+        stats={(s?: { count: number; total: number; paid: number; owed: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={Truck} tone="green" label="Stock-ins" value={s?.count.toLocaleString()} hint="In the chosen period" />
+            <MetricCard loading={!s} icon={Receipt} tone="blue" label="Total bought" value={s ? formatMoney(s.total, me.business.currency) : null} hint="Cancelled stock-ins not counted" />
+            <MetricCard loading={!s} icon={CircleCheck} tone="green" label="Paid" value={s ? formatMoney(s.paid, me.business.currency) : null} hint="Paid to suppliers" />
+            <MetricCard loading={!s} icon={HandCoins} tone="amber" label="Still owed" value={s ? formatMoney(s.owed, me.business.currency) : null} hint="To suppliers" />
+          </StatRow>
+        )}
         columns={[
           { header: 'Reference', cell: (row) => <span className="font-semibold text-slate-900">{row.reference_number ?? '—'}</span> },
           { header: 'Supplier', cell: (row) => row.supplier ?? '—' },
@@ -360,6 +385,14 @@ export function Movements() {
         client={api} path="/dashboard/movements" queryKey="movements" rowKey={rowId} empty="No stock movements in this period."
         searchPlaceholder="Search product"
         params={filters.params} toolbar={filters.controls}
+        stats={(s?: { count: number; qty_in: number; qty_out: number; products: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={ArrowLeftRight} tone="slate" label="Movements" value={s?.count.toLocaleString()} hint="In the chosen period" />
+            <MetricCard loading={!s} icon={ArrowDownToLine} tone="green" label="Units in" value={s?.qty_in.toLocaleString()} hint="Stock-in, returns, increases" />
+            <MetricCard loading={!s} icon={ArrowUpFromLine} tone="red" label="Units out" value={s?.qty_out.toLocaleString()} hint="Sales, damage, decreases" />
+            <MetricCard loading={!s} icon={Boxes} tone="blue" label="Products moved" value={s?.products.toLocaleString()} hint="Different products" />
+          </StatRow>
+        )}
         columns={[
           { header: 'Product', cell: (row) => <span className="font-medium text-slate-900">{row.product ?? '—'}</span> },
           { header: 'Type', cell: (row) => humanize(row.type) },
@@ -393,10 +426,12 @@ export function StockReport() {
       <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={2} columns={2} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
         {(data) => (
           <div className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <StatRow>
+              <MetricCard icon={Boxes} tone="slate" label="Products tracked" value={data.rows.length.toLocaleString()} hint="Live stock right now" />
               <MetricCard icon={Warehouse} tone="blue" label="Stock value" value={money(data.total_value)} hint="At average cost" />
-              <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count} hint="At or below reorder level" />
-            </div>
+              <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count.toLocaleString()} hint="At or below reorder level" />
+              <MetricCard icon={PackageX} tone="red" label="Out of stock" value={data.rows.filter((row) => row.stock <= 0).length.toLocaleString()} hint="Nothing left to sell" />
+            </StatRow>
             <Card>
               <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>
               <DataTable

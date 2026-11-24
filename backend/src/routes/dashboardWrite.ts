@@ -554,10 +554,18 @@ dashboardWriteRouter.get('/waiter-tabs', can('waiterTabs'), async (req: Dashboar
        WHERE ${where} ORDER BY ${win.orderBy}, t.created_at DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM waiter_tabs t WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(t.paid_amount), 0) AS paid,
+              COALESCE(SUM(GREATEST(COALESCE((SELECT SUM(i.quantity_outstanding * i.selling_price) FROM waiter_tab_items i WHERE i.tab_id = t.id), 0) - t.paid_amount, 0)), 0) AS balance,
+              COUNT(DISTINCT t.waiter_user_id) AS waiters
+       FROM waiter_tabs t WHERE ${where}`,
+      params,
+    ),
   ]);
   res.json({
     total: num(count.total),
+    summary: { count: num(count.total), paid: num(count.paid), balance: num(count.balance), waiters: num(count.waiters) },
     rows: rows.map((r) => ({ ...r, paid_amount: num(r.paid_amount), total: num(r.total), balance: Math.max(0, num(r.total) - num(r.paid_amount)) })),
   });
 });

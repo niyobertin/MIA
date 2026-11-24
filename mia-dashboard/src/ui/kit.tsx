@@ -32,11 +32,11 @@ export function Card({ title, subtitle, icon: Icon, action, children, className 
 
 export function Stat({ label, value, hint, loading = false }: { label: string; value: ReactNode; hint?: ReactNode; loading?: boolean }) {
   return (
-    <div className={`${cardClass} p-5 min-w-0`}>
-      <div className="text-sm font-medium text-slate-500">{label}</div>
+    <div className={`${cardClass} @container min-w-0 p-4 sm:p-5`}>
+      <div className="text-xs font-medium leading-snug text-slate-500 sm:text-sm">{label}</div>
       {loading ? <div className="mt-2.5 space-y-2"><Bone className="h-6 w-28" /><Bone className="h-3 w-20" /></div> : (
         <>
-          <div className="mt-1.5 text-2xl font-extrabold tracking-tight text-slate-900 break-words tabular-nums">{value}</div>
+          <div className="mt-1 text-base font-extrabold leading-tight tracking-tight text-slate-900 tabular-nums [overflow-wrap:anywhere] @[10.5rem]:text-lg @[13rem]:text-xl @[16rem]:text-2xl">{value}</div>
           {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
         </>
       )}
@@ -50,11 +50,11 @@ export function PageHeader({ title, subtitle, action, icon: Icon, refreshing = f
       <div className="flex min-w-0 items-center gap-3.5">
         {Icon ? <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-soft text-brand sm:flex"><Icon size={22} aria-hidden /></span> : null}
         <div className="min-w-0">
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-ink">
+          <h1 className="flex items-center gap-2 text-xl font-extrabold tracking-tight text-ink sm:text-2xl">
             <span className="truncate">{title}</span>
             {refreshing ? <RefreshCw aria-label="Refreshing" size={15} className="shrink-0 animate-spin text-muted motion-reduce:animate-none" /> : null}
           </h1>
-          {subtitle ? <p className="mt-0.5 text-sm text-muted">{subtitle}</p> : null}
+          {subtitle ? <p className="mt-0.5 text-[13px] text-muted sm:text-sm">{subtitle}</p> : null}
         </div>
       </div>
       {action ? <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto">{action}</div> : null}
@@ -241,7 +241,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
   return (
     <div>
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-[13px] sm:text-sm">
         <thead>
           <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-xs font-semibold text-slate-500">
             {columns.map((column) => {
@@ -251,7 +251,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
                   key={column.header}
                   scope="col"
                   aria-sort={column.sortValue ? (direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none') : undefined}
-                  className={`whitespace-nowrap px-5 py-3 ${column.align === 'right' ? 'text-right' : ''}`}
+                  className={`whitespace-nowrap px-3 py-2.5 sm:px-5 sm:py-3 ${column.align === 'right' ? 'text-right' : ''}`}
                 >
                   {column.sortValue ? <SortHeader label={column.header} direction={direction} align={column.align} onClick={() => toggle(column)} /> : column.header}
                 </th>
@@ -263,7 +263,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
           {visible.map((row) => (
             <tr key={rowKey(row)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70">
               {columns.map((column) => (
-                <td key={column.header} className={`px-5 py-3 align-middle text-slate-700 ${column.align === 'right' ? 'text-right tabular-nums whitespace-nowrap' : ''}`}>{column.cell(row)}</td>
+                <td key={column.header} className={`px-3 py-2.5 align-middle sm:px-5 sm:py-3 text-slate-700 ${column.align === 'right' ? 'text-right tabular-nums whitespace-nowrap' : ''}`}>{column.cell(row)}</td>
               ))}
             </tr>
           ))}
@@ -275,7 +275,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
   );
 }
 
-export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom, toolbar }: {
+export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom, toolbar, stats }: {
   client: AxiosInstance;
   path: string;
   queryKey: string;
@@ -286,6 +286,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   empty?: string;
   rowsFrom?: (data: { rows: T[]; total?: number }) => T[];
   toolbar?: ReactNode;
+  stats?: (summary: any) => ReactNode;
 }) {
   const paramsKey = JSON.stringify(params ?? {});
   const [paging, setPaging] = useState({ key: paramsKey, page: 0 });
@@ -302,6 +303,8 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   });
   const total = query.data?.total ?? query.data?.rows.length ?? 0;
   return (
+    <>
+    {stats ? stats((query.data as { summary?: unknown } | undefined)?.summary) : null}
     <div className={`${cardClass} min-w-0 overflow-hidden`} aria-busy={query.isFetching || undefined}>
       <RefreshBar active={query.isFetching && !query.isLoading} />
       {searchPlaceholder || toolbar ? (
@@ -322,6 +325,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
       </div>
       <Pager page={page} pageSize={pageSize} total={total} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(0); }} />
     </div>
+    </>
   );
 }
 

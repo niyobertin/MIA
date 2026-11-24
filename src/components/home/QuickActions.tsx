@@ -10,14 +10,14 @@ export function QuickActions({
   onStockIn,
   onExpense,
   onDay,
-  onMore,
+  onPayment,
 }: {
   hasOpenDay: boolean;
   onSale: () => void;
   onStockIn: () => void;
   onExpense: () => void;
   onDay: () => void;
-  onMore: () => void;
+  onPayment: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -35,7 +35,7 @@ export function QuickActions({
           color="#7c3aed"
           onPress={onDay}
         />
-        <Tile icon="ellipsis-horizontal" label={t('dashboard.moreActions')} color={colors.muted} onPress={onMore} />
+        <Tile icon="cash-outline" label={t('dashboard.actionReceivePayment')} color={colors.primary} onPress={onPayment} />
       </View>
     </View>
   );

@@ -7,6 +7,7 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ContactsSwitcher } from '@/components/ContactsSwitcher';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -105,14 +106,8 @@ export default function SuppliersScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader
-        title={t('suppliers.suppliers')}
-        right={
-          <TouchableOpacity onPress={openCreate} hitSlop={10} accessibilityLabel={t('suppliers.addSupplier')}>
-            <Ionicons name="add-circle" size={28} color={colors.primary} />
-          </TouchableOpacity>
-        }
-      />
+      <ScreenHeader title={t('navigation.contacts')} />
+      <ContactsSwitcher active="suppliers" />
 
       <View style={styles.searchWrap}>
         <SearchBar

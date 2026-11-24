@@ -55,7 +55,7 @@ export function MetricCard({ icon: Icon, tone = 'green', label, value, hint, gro
   valueTone?: keyof typeof VALUE_TONES;
 }) {
   return (
-    <div className={`${surfaceCard} ${soft ? TONES[tone].soft : ''} flex min-w-0 items-start sm:min-h-[116px] gap-3.5 p-4 sm:gap-4 sm:p-5`} aria-busy={loading || undefined}>
+    <div className={`${surfaceCard} ${soft ? TONES[tone].soft : ''} @container flex min-w-0 items-start sm:min-h-[116px] gap-3.5 p-4 sm:gap-4 sm:p-5`} aria-busy={loading || undefined}>
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl sm:h-12 sm:w-12 sm:rounded-2xl ${TONES[tone].icon}`}><Icon size={22} aria-hidden /></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
@@ -66,7 +66,7 @@ export function MetricCard({ icon: Icon, tone = 'green', label, value, hint, gro
           <div className="space-y-2 pt-1.5"><Bone className="h-6 w-32 max-w-full" /><Bone className="h-3 w-24" /></div>
         ) : (
           <>
-            <div className={`mt-0.5 break-words text-xl font-extrabold leading-tight tracking-tight tabular-nums sm:text-2xl ${VALUE_TONES[valueTone]}`}>{value}</div>
+            <div className={`mt-0.5 text-lg font-extrabold leading-tight tracking-tight tabular-nums [overflow-wrap:anywhere] @[16rem]:text-xl @[19rem]:text-2xl ${VALUE_TONES[valueTone]}`}>{value}</div>
             <div className="mt-1 space-y-0.5">
               <Trend growth={growth} label={growthLabel} inverse={growthInverse} />
               {hint ? <div className="line-clamp-2 text-xs text-muted" title={typeof hint === 'string' ? hint : undefined}>{hint}</div> : null}

@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronRight, Home, LogOut, Menu, Search, X, type LucideIcon } from 'lucide-react';
+import { PageErrorBoundary } from './PageErrorBoundary';
 
-export type NavItem = { to: string; label: string; icon: LucideIcon; end?: boolean };
+export type NavSubpage = { to: string; label: string };
+export type NavItem = { to: string; label: string; icon: LucideIcon; end?: boolean; subpages?: NavSubpage[] };
+
+function pathMatches(pathname: string, path: string) {
+  return path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`);
+}
+
+function itemMatches(item: NavItem, pathname: string) {
+  if (item.subpages?.length) return item.subpages.some((page) => pathMatches(pathname, page.to));
+  return item.end || item.to === '/' ? pathname === item.to : pathMatches(pathname, item.to);
+}
 export type NavGroup = { label: string; items: NavItem[] };
 
 function initialsOf(name: string) {
@@ -24,8 +35,8 @@ export function useOutsideClose(open: boolean, close: () => void) {
 
 function findActive(groups: NavGroup[], pathname: string) {
   for (const group of groups) {
-    const item = group.items.find((entry) => (entry.end || entry.to === '/' ? pathname === entry.to : pathname === entry.to || pathname.startsWith(`${entry.to}/`)));
-    if (item) return { group, item };
+    const item = group.items.find((entry) => itemMatches(entry, pathname));
+    if (item) return { group, item, page: item.subpages && item.subpages.length > 1 ? item.subpages.find((sub) => pathMatches(pathname, sub.to)) : undefined };
   }
   return null;
 }
@@ -42,7 +53,14 @@ function Breadcrumbs({ groups }: { groups: NavGroup[] }) {
         {active ? (
           <>
             <li className="flex items-center gap-1.5 whitespace-nowrap text-muted"><ChevronRight size={14} className="text-slate-300" aria-hidden />{active.group.label}</li>
-            <li className="flex min-w-0 items-center gap-1.5"><ChevronRight size={14} className="shrink-0 text-slate-300" aria-hidden /><span aria-current="page" className="truncate font-semibold text-ink">{active.item.label}</span></li>
+            {active.page ? (
+              <>
+                <li className="flex items-center gap-1.5 whitespace-nowrap text-muted"><ChevronRight size={14} className="text-slate-300" aria-hidden /><Link to={active.item.to} className="hover:text-ink">{active.item.label}</Link></li>
+                <li className="flex min-w-0 items-center gap-1.5"><ChevronRight size={14} className="shrink-0 text-slate-300" aria-hidden /><span aria-current="page" className="truncate font-semibold text-ink">{active.page.label}</span></li>
+              </>
+            ) : (
+              <li className="flex min-w-0 items-center gap-1.5"><ChevronRight size={14} className="shrink-0 text-slate-300" aria-hidden /><span aria-current="page" className="truncate font-semibold text-ink">{active.item.label}</span></li>
+            )}
           </>
         ) : null}
       </ol>
@@ -68,7 +86,11 @@ function PageSearch({ groups }: { groups: NavGroup[] }) {
   }, [ref]);
   const results = useMemo(() => {
     const needle = term.trim().toLowerCase();
-    const all = groups.flatMap((group) => group.items.map((item) => ({ ...item, group: group.label })));
+    const all = groups.flatMap((group) => group.items.flatMap((item) => (
+      item.subpages && item.subpages.length > 1
+        ? item.subpages.map((page) => ({ to: page.to, label: page.label, icon: item.icon, group: item.label }))
+        : [{ to: item.to, label: item.label, icon: item.icon, group: group.label }]
+    )));
     return needle ? all.filter((item) => item.label.toLowerCase().includes(needle) || item.group.toLowerCase().includes(needle)) : all;
   }, [groups, term]);
   const go = (to: string) => { setOpen(false); setTerm(''); navigate(to); };
@@ -147,6 +169,7 @@ export function Shell({ brand, brandSub, groups, userName, userSub, userEmail, o
   headerActions?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
   return (
     <div className="min-h-screen bg-[#f8fafb] text-slate-800 font-sans antialiased">
       {open ? <button aria-label="Close menu" className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" onClick={() => setOpen(false)} /> : null}
@@ -174,7 +197,7 @@ export function Shell({ brand, brandSub, groups, userName, userSub, userEmail, o
                     to={item.to}
                     end={item.end}
                     onClick={() => setOpen(false)}
-                    className={({ isActive }) => `flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${isActive ? activeClass : inactiveClass}`}
+                    className={({ isActive }) => `flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${(item.subpages?.length ? itemMatches(item, pathname) : isActive) ? activeClass : inactiveClass}`}
                   >
                     <item.icon size={16} />
                     {item.label}
@@ -208,7 +231,9 @@ export function Shell({ brand, brandSub, groups, userName, userSub, userEmail, o
         </header>
         {banner}
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-8 sm:py-8">
-          <Outlet />
+          <PageErrorBoundary key={pathname}>
+            <Outlet />
+          </PageErrorBoundary>
         </main>
       </div>
     </div>

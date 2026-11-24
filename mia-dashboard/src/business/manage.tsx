@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, humanize } from '../lib/format';
 import { Badge, Button, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
+import { MetricCard } from '../ui/metrics';
+import { History, ShieldCheck, Undo2, UserCheck, UserRound, Users } from 'lucide-react';
+import { StatRow } from './tables';
 import { TableSkeleton } from '../ui/skeleton';
 import { useDashboard } from './BusinessApp';
 import { Select } from '../ui/Select';
@@ -42,6 +45,12 @@ export function Staff() {
   return (
     <>
       <PageHeader title="Staff & roles" subtitle={`New staff join with business code ${me.business.business_code} and start as Staff.`} />
+      <StatRow>
+        <MetricCard loading={!query.data} icon={Users} tone="slate" label="Staff" value={query.data?.rows.length.toLocaleString()} hint="Everyone on this business" />
+        <MetricCard loading={!query.data} icon={UserCheck} tone="green" label="Active" value={query.data?.rows.filter((row) => row.active).length.toLocaleString()} hint="Can sign in" />
+        <MetricCard loading={!query.data} icon={ShieldCheck} tone="blue" label="Managers" value={query.data?.rows.filter((row) => row.role === 'MANAGER' || row.role === 'OWNER').length.toLocaleString()} hint="Owner included" />
+        <MetricCard loading={!query.data} icon={UserRound} tone="violet" label="Cashiers & staff" value={query.data?.rows.filter((row) => row.role === 'CASHIER' || row.role === 'STAFF').length.toLocaleString()} hint="Day-to-day team" />
+      </StatRow>
       <Card>
         <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>
         <div className={query.isError ? 'p-4' : ''}>
@@ -86,6 +95,13 @@ export function Activity() {
           client={api} path="/dashboard/audit" queryKey="audit" rowKey={rowId} empty="No activity in this period."
           searchPlaceholder="Search action, item or person"
           params={filters.params} toolbar={filters.controls}
+          stats={(s?: { count: number; people: number; reversals: number }) => (
+            <StatRow>
+              <MetricCard loading={!s} icon={History} tone="slate" label="Actions" value={s?.count.toLocaleString()} hint="In the chosen period" />
+              <MetricCard loading={!s} icon={Users} tone="blue" label="People" value={s?.people.toLocaleString()} hint="Who did something" />
+              <MetricCard loading={!s} icon={Undo2} tone="amber" label="Cancellations" value={s?.reversals.toLocaleString()} hint="Voids, deletes, cancels" />
+            </StatRow>
+          )}
           columns={[
             { header: 'Action', cell: (row) => <span className="font-medium text-slate-900">{humanize(row.action)}</span> },
             { header: 'Item', cell: (row) => humanize(row.entity) },

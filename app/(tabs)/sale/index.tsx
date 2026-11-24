@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platfor
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
+import { router } from 'expo-router';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { Skeleton } from '@/components/Skeleton';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -202,6 +203,15 @@ export default function NewSaleScreen() {
           </Text>
         </View>
         <TouchableOpacity
+          style={styles.headerIconButton}
+          onPress={() => router.push('/waiter-tabs' as any)}
+          accessibilityRole="button"
+          accessibilityLabel={t('navigation.waiterTabs')}
+          hitSlop={6}
+        >
+          <Ionicons name="people-circle-outline" size={24} color={colors.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity
           style={styles.headerButton}
           onPress={() => setTab(isHistory ? 'new' : 'history')}
           accessibilityRole="button"
@@ -389,7 +399,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
   },
@@ -403,6 +413,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     minHeight: 44,
     borderRadius: radius.full,
+    backgroundColor: colors.primarySoft,
+  },
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: colors.primarySoft,
   },
   headerButtonText: { fontSize: 15, fontWeight: '700', color: colors.primary },

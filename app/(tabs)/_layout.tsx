@@ -43,19 +43,10 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="stock"
-          options={{
-            title: t('navigation.stock'),
-            tabBarIcon: ({ focused, color }) => (
-              <Ionicons name={focused ? 'cube' : 'cube-outline'} size={22} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
           name="sale"
           options={{
             title: t('navigation.sale'),
-            tabBarLabel: t('navigation.newSale'),
+            tabBarLabel: t('navigation.sell'),
             tabBarIcon: ({ focused }) => (
               <View
                 style={StyleSheet.flatten([
@@ -69,15 +60,11 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="waiter-tabs"
+          name="stock"
           options={{
-            title: t('navigation.waiter'),
+            title: t('navigation.stock'),
             tabBarIcon: ({ focused, color }) => (
-              <Ionicons
-                name={focused ? 'people-circle' : 'people-circle-outline'}
-                size={22}
-                color={color}
-              />
+              <Ionicons name={focused ? 'cube' : 'cube-outline'} size={22} color={color} />
             ),
           }}
         />
@@ -90,6 +77,7 @@ export default function TabsLayout() {
             ),
           }}
         />
+        <Tabs.Screen name="waiter-tabs" options={{ href: null }} />
         <Tabs.Screen name="reports" options={{ href: null }} />
         <Tabs.Screen name="closing" options={{ href: null }} />
         <Tabs.Screen name="stock-report" options={{ href: null }} />

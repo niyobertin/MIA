@@ -308,6 +308,25 @@ export default function StockScreen() {
         </View>
       </View>
 
+      <View style={styles.toolsRow}>
+        {[
+          { icon: 'arrow-down-circle-outline', label: t('navigation.stockIn'), path: '/stock-in' },
+          { icon: 'swap-horizontal', label: t('navigation.movements'), path: '/stock-movements' },
+          { icon: 'calendar-outline', label: t('navigation.stockByDate'), path: '/stock-report' },
+        ].map((tool) => (
+          <TouchableOpacity
+            key={tool.path}
+            style={styles.toolButton}
+            onPress={() => router.push(tool.path as any)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+          >
+            <Ionicons name={tool.icon as any} size={18} color={colors.primary} />
+            <Text style={styles.toolText} numberOfLines={1}>{tool.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {reorderRows.length > 0 ? (
         <Pressable
           style={({ pressed }) => [styles.reorderCard, pressed && styles.reorderCardPressed]}
@@ -514,6 +533,24 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
   },
+  toolsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  toolButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+  },
+  toolText: { flexShrink: 1, fontSize: 13, fontWeight: '700', color: colors.primaryText },
   summaryBar: {
     flexDirection: 'row',
     alignItems: 'center',

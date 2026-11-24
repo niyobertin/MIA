@@ -2,6 +2,7 @@ import { FormScrollView } from '@/components';
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 import { useTranslation } from 'react-i18next';
@@ -103,6 +104,12 @@ export default function HelpScreen() {
             title={t('guides.userManual')}
             desc={t('guides.userManualDesc')}
             onPress={() => Linking.openURL('https://mia.app/guides/manual.pdf')}
+          />
+          <GuideItem
+            icon="information-circle"
+            title={t('settings.about')}
+            desc={t('settings.appTagline')}
+            onPress={() => router.push('/more/about' as any)}
           />
         </View>
       </View>

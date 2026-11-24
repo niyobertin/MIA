@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ContactsSwitcher } from '@/components/ContactsSwitcher';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -97,7 +98,8 @@ export default function CustomersScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader title={t('customers.customers')} />
+      <ScreenHeader title={t('navigation.contacts')} />
+      <ContactsSwitcher active="customers" />
 
       <FlatList
         data={rows}

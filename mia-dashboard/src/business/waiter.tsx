@@ -9,7 +9,9 @@ import { Field, FormDialog, FormError, LIST_KEYS, MethodButtons, SelectField, Te
 import { useDashboard } from './BusinessApp';
 import { RowButton, useRowDialog } from './details';
 import { LinesEditor, type Line } from './stockIn';
-import { AddButton } from './tables';
+import { AddButton, StatRow } from './tables';
+import { MetricCard } from '../ui/metrics';
+import { CircleCheck, ClipboardList, HandCoins, Users } from 'lucide-react';
 import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
@@ -62,6 +64,14 @@ export function WaiterTabs() {
         toolbar={filters.controls}
         rowKey={(r) => String(r.id)}
         empty="No tabs here."
+        stats={(s?: { count: number; paid: number; balance: number; waiters: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={ClipboardList} tone="slate" label="Tabs" value={s?.count.toLocaleString()} hint="Matching the filters" />
+            <MetricCard loading={!s} icon={CircleCheck} tone="green" label="Paid so far" value={s ? money(s.paid) : null} hint="On these tabs" />
+            <MetricCard loading={!s} icon={HandCoins} tone="amber" label="Still to pay" value={s ? money(s.balance) : null} hint="By waiters" />
+            <MetricCard loading={!s} icon={Users} tone="blue" label="Waiters" value={s?.waiters.toLocaleString()} hint="With tabs here" />
+          </StatRow>
+        )}
         columns={[
           { header: 'Waiter', cell: (r) => <div><div className="font-semibold text-slate-900">{r.waiter ?? '—'}</div>{r.client_label ? <div className="text-xs font-medium text-emerald-700">Client: {r.client_label}</div> : null}</div> },
           { header: 'Status', cell: (r) => <Badge tone={STATUS[r.status]?.tone ?? 'neutral'}>{STATUS[r.status]?.label ?? r.status}</Badge> },

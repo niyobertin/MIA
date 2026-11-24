@@ -110,11 +110,26 @@ dashboardRouter.get('/sales', can('sales'), async (req: DashboardRequest, res) =
        ${from} WHERE ${where} ORDER BY ${win.orderBy}, s.sale_date DESC LIMIT $8 OFFSET $9`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(s.total_amount) FILTER (WHERE NOT s.voided), 0) AS sales_total,
+              COALESCE(SUM(LEAST(s.paid_amount, s.total_amount)) FILTER (WHERE NOT s.voided), 0) AS paid,
+              COALESCE(SUM(GREATEST(s.total_amount - s.paid_amount, 0)) FILTER (WHERE NOT s.voided), 0) AS outstanding,
+              COUNT(*) FILTER (WHERE NOT s.voided AND s.total_amount > s.paid_amount) AS unpaid_count
+       ${from} WHERE ${where}`,
+      params,
+    ),
   ]);
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, total_amount: num(row.total_amount), paid_amount: num(row.paid_amount) })),
+    summary: {
+      count: num(count.total),
+      total: num(count.sales_total),
+      paid: num(count.paid),
+      outstanding: num(count.outstanding),
+      unpaid_count: num(count.unpaid_count),
+    },
   });
 });
 
@@ -176,9 +191,19 @@ dashboardRouter.get('/payments', can('payments'), async (req: DashboardRequest, 
        WHERE ${where} ORDER BY ${win.orderBy}, p.payment_date DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM payments p WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.type IN ('sale_payment', 'customer_payment', 'other_income')), 0) AS money_in,
+              COALESCE(SUM(p.amount) FILTER (WHERE p.type IN ('supplier_payment', 'purchase_payment', 'expense_payment', 'withdrawal')), 0) AS money_out
+       FROM payments p WHERE ${where}`,
+      params,
+    ),
   ]);
-  res.json({ total: num(count.total), rows: rows.map((row) => ({ ...row, amount: num(row.amount) })) });
+  res.json({
+    total: num(count.total),
+    rows: rows.map((row) => ({ ...row, amount: num(row.amount) })),
+    summary: { count: num(count.total), money_in: num(count.money_in), money_out: num(count.money_out) },
+  });
 });
 
 dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest, res) => {
@@ -268,11 +293,19 @@ dashboardRouter.get('/purchases', can('purchases'), async (req: DashboardRequest
        ${from} WHERE ${where} ORDER BY ${win.orderBy}, p.purchase_date DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(p.total_amount) FILTER (WHERE p.status <> 'cancelled'), 0) AS purchases_total,
+              COALESCE(SUM(LEAST(p.paid_amount, p.total_amount)) FILTER (WHERE p.status <> 'cancelled'), 0) AS paid,
+              COALESCE(SUM(GREATEST(p.total_amount - p.paid_amount, 0)) FILTER (WHERE p.status <> 'cancelled'), 0) AS owed
+       ${from} WHERE ${where}`,
+      params,
+    ),
   ]);
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, total_amount: num(row.total_amount), paid_amount: num(row.paid_amount) })),
+    summary: { count: num(count.total), total: num(count.purchases_total), paid: num(count.paid), owed: num(count.owed) },
   });
 });
 
@@ -328,10 +361,18 @@ dashboardRouter.get('/movements', can('movements'), async (req: DashboardRequest
        ORDER BY ${win.orderBy}, m.occurred_at DESC LIMIT $6 OFFSET $7`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(m.new_quantity - m.previous_quantity) FILTER (WHERE m.new_quantity > m.previous_quantity), 0) AS qty_in,
+              COALESCE(SUM(m.previous_quantity - m.new_quantity) FILTER (WHERE m.new_quantity < m.previous_quantity), 0) AS qty_out,
+              COUNT(DISTINCT m.product_id) AS products
+       ${from} WHERE ${where}`,
+      params,
+    ),
   ]);
   res.json({
     total: num(count.total),
+    summary: { count: num(count.total), qty_in: num(count.qty_in), qty_out: num(count.qty_out), products: num(count.products) },
     rows: rows.map((row) => ({
       ...row,
       quantity: num(row.quantity),
@@ -464,9 +505,18 @@ dashboardRouter.get('/audit', can('audit'), async (req: DashboardRequest, res) =
        ${from} WHERE ${where} ORDER BY ${win.orderBy}, a.created_at DESC LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total ${from} WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total, COUNT(DISTINCT a.user_id) AS people,
+              COUNT(*) FILTER (WHERE a.action ILIKE '%void%' OR a.action ILIKE '%delete%' OR a.action ILIKE '%cancel%') AS reversals
+       ${from} WHERE ${where}`,
+      params,
+    ),
   ]);
-  res.json({ total: num(count.total), rows });
+  res.json({
+    total: num(count.total),
+    rows,
+    summary: { count: num(count.total), people: num(count.people), reversals: num(count.reversals) },
+  });
 });
 
 dashboardRouter.get('/support-access', can('supportAccess'), async (req: DashboardRequest, res) => {

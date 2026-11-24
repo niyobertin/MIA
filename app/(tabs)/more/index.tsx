@@ -9,7 +9,7 @@ import { Button } from '@/components/Button';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SyncIndicator } from '@/components/SyncIndicator';
 import { getInitials } from '@/utils/formatters';
-import { canManageBusiness, canManageUsers, canSeeProfit } from '@/utils/permissions';
+import { canCloseDay, canManageBusiness, canManageUsers, canSeeProfit } from '@/utils/permissions';
 import { useAuthStore } from '@/stores/authStore';
 import { useUIStore } from '@/stores/uiStore';
 import { APP_VERSION } from '@/constants';
@@ -29,9 +29,11 @@ export default function MoreScreen() {
 
   const operations = [
     { title: t('navigation.reports'), icon: 'analytics', screen: '/reports' },
-    { title: t('customers.customers'), icon: 'people', screen: '/customers' },
-    { title: t('suppliers.suppliers'), icon: 'business', screen: '/suppliers' },
-    { title: t('navigation.stockMovements'), icon: 'swap-horizontal', screen: '/stock-movements' },
+    ...(canCloseDay(user?.role)
+      ? [{ title: t('navigation.dayCash'), icon: 'sunny', screen: '/closing' }]
+      : []),
+    { title: t('navigation.contacts'), icon: 'people', screen: '/customers' },
+    { title: t('navigation.moneyInOut'), icon: 'wallet', screen: '/expense' },
   ];
 
   const menuItems = [
@@ -39,14 +41,12 @@ export default function MoreScreen() {
       ? [{ title: t('settings.business'), icon: 'storefront', screen: 'business-settings' }]
       : []),
     ...(canManageUsers(user?.role)
-      ? [{ title: t('settings.userManagement'), icon: 'people', screen: 'user-management' }]
+      ? [{ title: t('settings.userManagement'), icon: 'people-circle', screen: 'user-management' }]
       : []),
     { title: t('auth.changePin'), icon: 'keypad', screen: 'change-pin' },
-    { title: t('settings.sync'), icon: 'sync', screen: 'sync' },
     ...(canSeeProfit(user?.role)
       ? [{ title: t('settings.auditLog'), icon: 'list', screen: 'audit' }]
       : []),
-    { title: t('settings.about'), icon: 'information-circle', screen: 'about' },
     { title: t('settings.help'), icon: 'help-circle', screen: 'help' },
   ];
 
@@ -75,7 +75,7 @@ export default function MoreScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>{t('settings.operations')}</Text>
+        <Text style={styles.sectionTitle}>{t('navigation.business')}</Text>
         <View style={styles.menuList}>
           {operations.map((item, index) => (
             <Link key={item.screen} href={item.screen as any} asChild>
@@ -161,14 +161,18 @@ export default function MoreScreen() {
               </TouchableOpacity>
             </View>
           </View>
-          <View style={StyleSheet.flatten([styles.settingRow, styles.menuItemLast])}>
-            <View style={styles.settingLeft}>
+          <Link href={'/(tabs)/more/sync' as any} asChild>
+            <TouchableOpacity
+              style={StyleSheet.flatten([styles.menuItem, styles.menuItemLast])}
+              activeOpacity={0.7}
+            >
               <View style={styles.menuIcon}>
                 <SyncIndicator compact />
               </View>
               <Text style={styles.menuTitle}>{t('settings.syncStatus')}</Text>
-            </View>
-          </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.faint} />
+            </TouchableOpacity>
+          </Link>
         </View>
 
         <View style={styles.logoutWrap}>

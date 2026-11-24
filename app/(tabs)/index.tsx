@@ -10,7 +10,6 @@ import { FirstTimeGuide } from '@/components/FirstTimeGuide';
 import { DayStatusCard } from '@/components/home/DayStatusCard';
 import { TodayTotalsCard } from '@/components/home/TodayTotalsCard';
 import { QuickActions } from '@/components/home/QuickActions';
-import { MoreActionsSheet } from '@/components/home/MoreActionsSheet';
 import { HomeAlerts } from '@/components/home/HomeAlerts';
 import { PeriodSummary } from '@/components/home/PeriodSummary';
 import { DashPeriod, useHomeDashboard } from '@/hooks/useHomeDashboard';
@@ -29,7 +28,6 @@ export default function HomeScreen() {
   const { business, user } = useAuthStore();
   const dash = useHomeDashboard();
   const [refreshing, setRefreshing] = React.useState(false);
-  const [showMore, setShowMore] = React.useState(false);
   const [showDetails, setShowDetails] = React.useState(false);
 
   const firstName = user?.name?.split(' ')[0] ?? '';
@@ -102,7 +100,7 @@ export default function HomeScreen() {
               onStockIn={() => go('/stock-in')}
               onExpense={() => go('/expense')}
               onDay={() => go('/closing')}
-              onMore={() => setShowMore(true)}
+              onPayment={() => go('/payment/customer-payment')}
             />
             <HomeAlerts
               lowStockNames={dash.lowStock.map((p) => p.name)}
@@ -136,7 +134,6 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      <MoreActionsSheet visible={showMore} onClose={() => setShowMore(false)} onNavigate={go} />
     </View>
   );
 }
