@@ -1,5 +1,7 @@
 export const en = {
   common: {
+    dateFilter: 'Date',
+    itemCount: '{{count}} shown',
     pickDate: 'Pick a date',
     monthsLong: 'January,February,March,April,May,June,July,August,September,October,November,December',
     weekdaysShort: 'Mo,Tu,We,Th,Fr,Sa,Su',
@@ -498,6 +500,7 @@ export const en = {
     selectSupplier: 'Select Supplier',
   },
   expenses: {
+    periodTotal: 'Total for this period',
     otherIncome: 'Other income',
     addIncome: 'Record other income',
     todayIncome: "TODAY'S OTHER INCOME",

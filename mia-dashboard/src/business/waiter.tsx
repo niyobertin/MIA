@@ -7,11 +7,12 @@ import { DrawerSkeleton } from '../ui/skeleton';
 import { Select } from '../ui/Select';
 import { Field, FormDialog, FormError, LIST_KEYS, MethodButtons, SelectField, TextField, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
-import { RowButton, useRowDialog } from './details';
+import { useRowDialog } from './details';
 import { LinesEditor, type Line } from './stockIn';
 import { AddButton, StatRow } from './tables';
 import { MetricCard } from '../ui/metrics';
-import { CircleCheck, ClipboardList, HandCoins, Users } from 'lucide-react';
+import { CircleCheck, ClipboardList, Eye, HandCoins, Users } from 'lucide-react';
+import { ActionMenu } from '../ui/ActionMenu';
 import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
@@ -64,6 +65,13 @@ export function WaiterTabs() {
         toolbar={filters.controls}
         rowKey={(r) => String(r.id)}
         empty="No tabs here."
+        exportTitle="Waiter tabs"
+        exportStats={(s: { count: number; paid: number; balance: number; waiters: number }) => [
+          { label: 'Tabs', value: s.count, kind: 'count' },
+          { label: 'Paid so far', value: s.paid },
+          { label: 'Still to pay', value: s.balance },
+          { label: 'Waiters', value: s.waiters, kind: 'count' },
+        ]}
         stats={(s?: { count: number; paid: number; balance: number; waiters: number }) => (
           <StatRow>
             <MetricCard loading={!s} icon={ClipboardList} tone="slate" label="Tabs" value={s?.count.toLocaleString()} hint="Matching the filters" />
@@ -75,10 +83,10 @@ export function WaiterTabs() {
         columns={[
           { header: 'Waiter', cell: (r) => <div><div className="font-semibold text-slate-900">{r.waiter ?? '—'}</div>{r.client_label ? <div className="text-xs font-medium text-emerald-700">Client: {r.client_label}</div> : null}</div> },
           { header: 'Status', cell: (r) => <Badge tone={STATUS[r.status]?.tone ?? 'neutral'}>{STATUS[r.status]?.label ?? r.status}</Badge> },
-          { header: 'Total', align: 'right', cell: (r) => money(r.total) },
+          { header: 'Total', align: 'right', primary: true, cell: (r) => money(r.total) },
           { header: 'Still to pay', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)) },
           { header: 'Started', cell: (r) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(r.created_at)}</span> },
-          { header: 'Actions', align: 'right', cell: (r) => <RowButton label={`Open tab for ${r.waiter}`} onClick={() => open.open(String(r.id))}>Open</RowButton> },
+          { header: 'Actions', align: 'right', cell: (r) => <ActionMenu label={`Actions for ${r.waiter}'s tab`} actions={[{ label: 'Open tab', icon: Eye, onSelect: () => open.open(String(r.id)) }]} /> },
         ]}
       />
       {issuing ? <IssueDialog onClose={() => setIssuing(false)} /> : null}

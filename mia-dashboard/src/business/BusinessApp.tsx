@@ -6,6 +6,7 @@ import { Shell, type NavGroup } from '../ui/Shell';
 import { Button, ErrorNotice } from '../ui/kit';
 import { AppShellSkeleton } from '../ui/skeleton';
 import { AnnouncementBanner } from '../ui/AnnouncementBanner';
+import { ExportBrandContext } from '../ui/exportBrand';
 import { useMe, type Me } from './useMe';
 import { BusinessHeaderActions } from './HeaderActions';
 import { Overview } from './Overview';
@@ -213,5 +214,9 @@ function ShellWithContext({ data, groups, banner }: { data: Me; groups: NavGroup
 }
 
 function ContextProvider({ data, children }: { data: Me; children: ReactNode }) {
-  return <MeContext.Provider value={data}>{children}</MeContext.Provider>;
+  return (
+    <MeContext.Provider value={data}>
+      <ExportBrandContext.Provider value={{ businessName: data.business.name, currency: data.business.currency }}>{children}</ExportBrandContext.Provider>
+    </MeContext.Provider>
+  );
 }

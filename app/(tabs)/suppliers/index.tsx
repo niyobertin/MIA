@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ContactsSwitcher } from '@/components/ContactsSwitcher';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -34,8 +35,10 @@ export default function SuppliersScreen() {
   const [editing, setEditing] = React.useState<Supplier | null>(null);
   const [deleting, setDeleting] = React.useState<Supplier | null>(null);
 
+  const dates = useDateRange('all');
+  const filterByDate = dates.filter;
   const filtered = React.useMemo(() => {
-    const list = suppliers ?? [];
+    const list = filterByDate(suppliers ?? [], (s) => s.created_at);
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
@@ -44,7 +47,7 @@ export default function SuppliersScreen() {
         s.phone?.toLowerCase().includes(q) ||
         s.email?.toLowerCase().includes(q)
     );
-  }, [suppliers, search]);
+  }, [suppliers, search, filterByDate]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -115,6 +118,7 @@ export default function SuppliersScreen() {
           onChangeText={setSearch}
           placeholder={t('suppliers.searchSuppliers')}
         />
+        <DateRangeBar value={dates.range} onChange={dates.setRange} count={filtered.length} />
       </View>
 
       <FlatList

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Inbox, Lock, MoreHorizontal, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Inbox, Lock, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getErrorMessage, humanize } from '../../lib/format';
 import { platformApi } from '../../lib/platformAuth';
@@ -115,47 +115,7 @@ export function PlanBadge({ plan, name }: { plan: string; name?: string | null }
   return <span className={`inline-block whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold ${tone}`}>{name ?? humanize(plan)}</span>;
 }
 
-export type MenuAction = { label: string; icon?: LucideIcon; onSelect: () => void; tone?: 'danger'; hidden?: boolean; href?: string };
-
-export function ActionMenu({ label, actions }: { label: string; actions: MenuAction[] }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const visible = actions.filter((action) => !action.hidden);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', close);
-    const first = ref.current?.querySelector<HTMLElement>('[role="menuitem"]');
-    first?.focus();
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-  if (visible.length === 0) return null;
-  const onKey = (event: React.KeyboardEvent) => {
-    const items = [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
-    const index = items.indexOf(document.activeElement as HTMLElement);
-    if (event.key === 'Escape') { setOpen(false); ref.current?.querySelector<HTMLElement>('button')?.focus(); }
-    if (event.key === 'ArrowDown') { event.preventDefault(); items[(index + 1) % items.length]?.focus(); }
-    if (event.key === 'ArrowUp') { event.preventDefault(); items[(index - 1 + items.length) % items.length]?.focus(); }
-  };
-  return (
-    <div ref={ref} className="relative inline-block text-left" onKeyDown={onKey}>
-      <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-ink">
-        <MoreHorizontal size={18} />
-      </button>
-      {open ? (
-        <div role="menu" className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-line bg-white p-1.5 shadow-xl">
-          {visible.map((action) => {
-            const className = `flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium focus:bg-slate-100 focus:outline-none hover:bg-slate-50 ${action.tone === 'danger' ? 'text-rose-700' : 'text-ink'}`;
-            const content = <>{action.icon ? <action.icon size={15} className="shrink-0 opacity-70" /> : null}{action.label}</>;
-            return action.href
-              ? <Link key={action.label} role="menuitem" to={action.href} className={className} onClick={() => setOpen(false)}>{content}</Link>
-              : <button key={action.label} role="menuitem" type="button" className={className} onClick={() => { setOpen(false); action.onSelect(); }}>{content}</button>;
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+export { ActionMenu, type MenuAction } from '../../ui/ActionMenu';
 
 export function IconAction({ label, icon: Icon, onClick, href }: { label: string; icon: LucideIcon; onClick?: () => void; href?: string }) {
   const className = 'flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-ink';

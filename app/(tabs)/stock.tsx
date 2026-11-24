@@ -27,6 +27,7 @@ import { useReorderSuggestions } from '@/hooks/useReorderSuggestions';
 import { useAuthStore } from '@/stores/authStore';
 import { MoneyText } from '@/components/MoneyText';
 import { AddProductSheet } from '@/components/AddProductSheet';
+import { DateRangeFilter, useDateRange } from '@/components/DateRangeFilter';
 import {
   pickAndParseProductFile,
   shareProductImportTemplate,
@@ -134,8 +135,10 @@ export default function StockScreen() {
     return list;
   }, [products, categories, statusCounts, categoryCounts, t]);
 
+  const addedDates = useDateRange('all');
+  const filterByAdded = addedDates.filter;
   const filteredProducts = React.useMemo(() => {
-    let result = products ?? [];
+    let result = filterByAdded(products ?? [], (p) => p.created_at);
     if (liveQuery) {
       const q = liveQuery.toLowerCase();
       result = result.filter(
@@ -158,7 +161,7 @@ export default function StockScreen() {
       result = result.filter((p) => p.category_id === selectedCategory);
     }
     return result;
-  }, [products, liveQuery, selectedCategory]);
+  }, [products, liveQuery, selectedCategory, filterByAdded]);
 
   const stats = React.useMemo(() => {
     const list = products ?? [];
@@ -365,12 +368,15 @@ export default function StockScreen() {
         </Pressable>
       ) : null}
 
-      <View style={styles.searchWrap}>
-        <SearchBar
-          value={searchQuery}
-          onChangeText={onSearchChange}
-          placeholder={t('stock.searchProducts')}
-        />
+      <View style={StyleSheet.flatten([styles.searchWrap, styles.searchRow])}>
+        <View style={styles.searchFlex}>
+          <SearchBar
+            value={searchQuery}
+            onChangeText={onSearchChange}
+            placeholder={t('stock.searchProducts')}
+          />
+        </View>
+        <DateRangeFilter value={addedDates.range} onChange={addedDates.setRange} />
       </View>
 
       <FlatList
@@ -633,6 +639,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.sm,
   },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  searchFlex: { flex: 1, minWidth: 0 },
   chipList: {
     flexGrow: 0,
     flexShrink: 0,

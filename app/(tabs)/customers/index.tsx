@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ContactsSwitcher } from '@/components/ContactsSwitcher';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { PartyFormSheet, PartyFormData } from '@/components/PartyFormSheet';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -34,7 +35,8 @@ export default function CustomersScreen() {
   const [editing, setEditing] = React.useState<Customer | null>(null);
   const [deleting, setDeleting] = React.useState<Customer | null>(null);
 
-  const rows = data?.rows ?? [];
+  const dates = useDateRange('all');
+  const rows = dates.filter(data?.rows ?? [], (row) => row.customer.created_at);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -100,6 +102,9 @@ export default function CustomersScreen() {
     <View style={styles.screen}>
       <ScreenHeader title={t('navigation.contacts')} />
       <ContactsSwitcher active="customers" />
+      <View style={styles.filterWrap}>
+        <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
+      </View>
 
       <FlatList
         data={rows}
@@ -231,6 +236,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  filterWrap: { paddingHorizontal: spacing.lg },
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: 110,

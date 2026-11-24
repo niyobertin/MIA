@@ -5,7 +5,7 @@ import { Announcement, Business, BusinessPlatformState, SupportAccessGrant, User
 import { requireActiveUser, requireAuth } from '../middleware/auth';
 import { bizId, can, listWindow, windowWhere, type DashboardRequest } from './dashboardShared';
 import { dashboardWriteRouter } from './dashboardWrite';
-import { buildOverview, parsePeriodQuery, stockLevels } from '../lib/businessData';
+import { buildOverview, parsePeriodQuery, periodBounds, safeTimezone, stockLevels } from '../lib/businessData';
 import {
   dashboardPermissionsFor,
   hasDashboardPermission,
@@ -263,15 +263,56 @@ dashboardRouter.get('/stock-report', can('stockReport'), async (req: DashboardRe
     res.status(403).json({ error: 'Stock reports are turned off for this business.', code: 'FEATURE_DISABLED' });
     return;
   }
-  const rows = (await stockLevels(bizId(req))).filter((row) => row.track_inventory);
+  const rawPeriod = typeof req.query.period === 'string' ? req.query.period : 'all';
+  let rows = (await stockLevels(bizId(req))).filter((row) => row.track_inventory);
+  let window: { from: Date; to: Date } | null = null;
+  const moved = new Map<string, { opening: number; qty_in: number; qty_out: number }>();
+  if (rawPeriod !== 'all') {
+    const parsed = parsePeriodQuery(req.query as Record<string, unknown>);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const bounds = await periodBounds(parsed.period, safeTimezone(req.business?.timezone ?? 'Africa/Kigali'), parsed.custom);
+    window = { from: bounds.from, to: bounds.to };
+    const incoming = `m.type IN ('opening','purchase','return_in','adjustment_in')`;
+    const [later, newer] = await Promise.all([
+      q(
+        `SELECT m.product_id,
+                COALESCE(SUM(CASE WHEN ${incoming} THEN m.quantity ELSE -m.quantity END), 0) AS after_from,
+                COALESCE(SUM(CASE WHEN m.occurred_at >= $3 THEN (CASE WHEN ${incoming} THEN m.quantity ELSE -m.quantity END) ELSE 0 END), 0) AS after_to,
+                COALESCE(SUM(CASE WHEN m.occurred_at < $3 AND ${incoming} THEN m.quantity ELSE 0 END), 0) AS qty_in,
+                COALESCE(SUM(CASE WHEN m.occurred_at < $3 AND NOT (${incoming}) THEN m.quantity ELSE 0 END), 0) AS qty_out
+         FROM stock_movements m WHERE m.business_id = $1 AND m.occurred_at >= $2 GROUP BY m.product_id`,
+        [bizId(req), bounds.from, bounds.to],
+      ),
+      q(`SELECT id FROM products WHERE business_id = $1 AND created_at >= $2`, [bizId(req), bounds.to]),
+    ]);
+    const notYetAdded = new Set(newer.map((row) => String(row.id)));
+    const byProduct = new Map(later.map((row) => [String(row.product_id), row]));
+    rows = rows
+      .filter((row) => !notYetAdded.has(row.id))
+      .map((row) => {
+        const m = byProduct.get(row.id);
+        const closing = row.stock - num(m?.after_to);
+        moved.set(row.id, { opening: row.stock - num(m?.after_from), qty_in: num(m?.qty_in), qty_out: num(m?.qty_out) });
+        return { ...row, stock: closing };
+      });
+  }
   const items = rows.map((row) => ({
     ...row,
+    opening: moved.get(row.id)?.opening ?? row.stock,
+    qty_in: moved.get(row.id)?.qty_in ?? 0,
+    qty_out: moved.get(row.id)?.qty_out ?? 0,
     stock_value: row.average_cost * Math.max(row.stock, 0),
     low: row.active && row.stock <= row.reorder_level,
   }));
   res.json({
+    period: window ? { from: window.from, to: window.to } : null,
     total_value: items.reduce((sum, row) => sum + row.stock_value, 0),
     low_count: items.filter((row) => row.low).length,
+    qty_in: items.reduce((sum, row) => sum + row.qty_in, 0),
+    qty_out: items.reduce((sum, row) => sum + row.qty_out, 0),
     rows: items,
   });
 });
@@ -435,11 +476,20 @@ dashboardRouter.get('/reports/closings', can('reports'), async (req: DashboardRe
        ORDER BY ${win.orderBy}, business_date DESC, session_number DESC LIMIT $4 OFFSET $5`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM daily_closings WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(total_sales) FILTER (WHERE status = 'closed'), 0) AS sales,
+              COALESCE(SUM(net_profit) FILTER (WHERE status = 'closed'), 0) AS profit,
+              COALESCE(SUM(cash_variance) FILTER (WHERE status = 'closed'), 0) AS variance,
+              COUNT(*) FILTER (WHERE status = 'closed' AND cash_variance <> 0) AS short_days
+       FROM daily_closings WHERE ${where}`,
+      params,
+    ),
   ]);
   const money = ['total_sales', 'cogs', 'gross_profit', 'expenses', 'net_profit', 'expected_cash', 'actual_cash', 'cash_variance'];
   res.json({
     total: num(count.total),
+    summary: { count: num(count.total), sales: num(count.sales), profit: num(count.profit), variance: num(count.variance), short_days: num(count.short_days) },
     rows: rows.map((row) => ({ ...row, ...Object.fromEntries(money.map((key) => [key, num(row[key])])) })),
   });
 });

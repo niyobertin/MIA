@@ -4,7 +4,9 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardCheck, Moon, PlusCircle, ReceiptText, ShoppingCart, Sun, TrendingUp, Vault } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDate, formatDateTime, formatMoney } from '../lib/format';
-import { Amount, Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PageHeader } from '../ui/kit';
+import { Amount, Badge, Button, Card, DataTable, Dialog, ErrorNotice, inputClass, PagedTable, PageHeader } from '../ui/kit';
+import { useListFilters } from '../ui/ListFilters';
+import { StatRow } from './tables';
 import { FormError, LIST_KEYS, NumberField, TextField, useSave } from '../ui/forms';
 import { MetricCard, MetricGrid } from '../ui/metrics';
 import { Bone, KpiGridSkeleton, LoadingRegion } from '../ui/skeleton';
@@ -52,6 +54,7 @@ export function DayPage() {
       {day.isLoading ? <DaySkeleton /> : day.isError && !day.data ? <ErrorNotice error={day.error} onRetry={() => day.refetch()} /> : day.data ? (
         day.data.open ? <OpenDay data={day.data} /> : <ClosedDay canOpen={me.permissions.includes('dayOpen')} />
       ) : null}
+      {me.permissions.includes('reports') ? <PastDays /> : null}
     </>
   );
 }
@@ -340,5 +343,58 @@ function CloseDayDialog({ data, onClose }: { data: OpenDayData; onClose: () => v
         ) : null}
       </div>
     </Dialog>
+  );
+}
+
+function PastDays() {
+  const me = useDashboard();
+  const money = (value: number) => formatMoney(value, me.business.currency);
+  const filters = useListFilters({ defaultPeriod: { period: 'month' }, sortOptions: [
+    { value: 'date', label: 'Date', kind: 'date' },
+    { value: 'sales', label: 'Sales', kind: 'number' },
+    { value: 'profit', label: 'Net profit', kind: 'number' },
+  ] });
+  return (
+    <section className="mt-8">
+      <div className="mb-4">
+        <h2 className="text-lg font-extrabold tracking-tight text-ink">Past days</h2>
+        <p className="text-[13px] text-muted sm:text-sm">Every day you opened, with what was sold and how the cash count went.</p>
+      </div>
+      <PagedTable<Record<string, any>>
+        client={api}
+        path="/dashboard/reports/closings"
+        queryKey="closings"
+        rowKey={(row) => String(row.id)}
+        empty="No days in this period."
+        params={filters.params}
+        toolbar={filters.controls}
+        exportTitle="Past days"
+        exportStats={(s: { count: number; sales: number; profit: number; variance: number }) => [
+          { label: 'Days', value: s.count, kind: 'count' },
+          { label: 'Sales', value: s.sales },
+          { label: 'Net profit', value: s.profit },
+          { label: 'Cash over / short', value: s.variance },
+        ]}
+        stats={(s?: { count: number; sales: number; profit: number; variance: number; short_days: number }) => (
+          <StatRow>
+            <MetricCard loading={!s} icon={CalendarClock} tone="slate" label="Days" value={s?.count.toLocaleString()} hint="In the chosen period" />
+            <MetricCard loading={!s} icon={ShoppingCart} tone="green" label="Sales" value={s ? money(s.sales) : null} hint="Closed days only" />
+            <MetricCard loading={!s} icon={TrendingUp} tone="blue" label="Net profit" value={s ? money(s.profit) : null} valueTone={s && s.profit < 0 ? 'bad' : 'default'} hint="After expenses" />
+            <MetricCard loading={!s} icon={Vault} tone={s && s.variance !== 0 ? 'amber' : 'green'} label="Cash over / short" value={s ? money(s.variance) : null} valueTone={s && s.variance < 0 ? 'bad' : 'default'} hint={s ? `${s.short_days.toLocaleString()} days did not match` : undefined} />
+          </StatRow>
+        )}
+        columns={[
+          { header: 'Date', cell: (row) => <span className="whitespace-nowrap font-semibold text-slate-900">{formatDate(row.business_date)}</span> },
+          { header: 'Day no.', align: 'right', cell: (row) => row.session_number },
+          { header: 'Status', cell: (row) => <Badge tone={row.status === 'closed' ? 'good' : 'info'}>{row.status === 'closed' ? 'Closed' : 'Open'}</Badge> },
+          { header: 'Sales', align: 'right', cell: (row) => money(row.total_sales) },
+          { header: 'Expenses', align: 'right', cell: (row) => money(row.expenses) },
+          { header: 'Net profit', align: 'right', cell: (row) => <Amount value={row.net_profit} format={money} signed /> },
+          { header: 'Expected cash', align: 'right', cell: (row) => money(row.expected_cash) },
+          { header: 'Counted cash', align: 'right', cell: (row) => (row.status === 'closed' ? money(row.actual_cash) : '—') },
+          { header: 'Over / short', align: 'right', cell: (row) => (row.status === 'closed' ? <Amount value={row.cash_variance} format={money} signed /> : '—') },
+        ]}
+      />
+    </section>
   );
 }

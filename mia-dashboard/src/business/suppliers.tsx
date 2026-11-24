@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatMoney } from '../lib/format';
-import { Building2, HandCoins } from 'lucide-react';
+import { Ban, Building2, HandCoins, Pencil, Phone, RotateCcw } from 'lucide-react';
+import { ActionMenu } from '../ui/ActionMenu';
 import { Badge, PagedTable, PageHeader } from '../ui/kit';
 import { MetricCard } from '../ui/metrics';
-import { LIST_KEYS, useSave } from '../ui/forms';
+import { FormError, LIST_KEYS, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
-import { RowButton, useRowDialog } from './details';
+import { useRowDialog } from './details';
 import { PartyPaymentDialog, SupplierDialog } from './partyForms';
 import { AddButton, StatRow } from './tables';
 import { useListFilters } from '../ui/ListFilters';
@@ -42,6 +43,11 @@ export function Suppliers() {
         client={api}
         path="/dashboard/suppliers"
         queryKey="suppliers"
+        exportTitle="Suppliers"
+        exportStats={(s: { active: number; owed: number }) => [
+          { label: 'Suppliers', value: s.active, kind: 'count' },
+          { label: 'You owe suppliers', value: s.owed },
+        ]}
         rowKey={(r) => String(r.id)}
         searchPlaceholder="Search name or phone"
         empty="No suppliers found."
@@ -52,19 +58,16 @@ export function Suppliers() {
           { header: 'Phone', cell: (r) => r.phone ?? '—' },
           { header: 'You owe', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)) },
           { header: 'Actions', align: 'right', cell: (r) => (
-            <div className="flex justify-end gap-1.5">
-              {r.phone ? <a href={`tel:${String(r.phone).replace(/\s+/g, '')}`} className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Call</a> : null}
-              {canPay && r.balance > 0 ? <RowButton label={`Pay ${r.name}`} onClick={() => pay.open(r)}>Pay</RowButton> : null}
-              {canWrite ? <RowButton label={`Edit ${r.name}`} onClick={() => edit.open(r)}>Edit</RowButton> : null}
-              {canDeactivate ? (
-                <RowButton label={`${r.active ? 'Deactivate' : 'Reactivate'} ${r.name}`} onClick={() => toggle.mutate({ path: `/dashboard/suppliers/${r.id}`, body: { active: !r.active } })}>
-                  {r.active ? 'Deactivate' : 'Reactivate'}
-                </RowButton>
-              ) : null}
-            </div>
+            <ActionMenu label={`Actions for ${r.name}`} actions={[
+              { label: 'Pay supplier', icon: HandCoins, onSelect: () => pay.open(r), hidden: !(canPay && r.balance > 0) },
+              { label: 'Call', icon: Phone, onSelect: () => { window.location.href = `tel:${String(r.phone).replace(/\s+/g, '')}`; }, hidden: !r.phone },
+              { label: 'Edit', icon: Pencil, onSelect: () => edit.open(r), hidden: !canWrite },
+              { label: r.active ? 'Deactivate' : 'Reactivate', icon: r.active ? Ban : RotateCcw, tone: r.active ? 'danger' : undefined, hidden: !canDeactivate, disabled: toggle.isPending, onSelect: () => toggle.mutate({ path: `/dashboard/suppliers/${r.id}`, body: { active: !r.active } }) },
+            ]} />
           ) },
         ]}
       />
+      {toggle.error ? <div className="mt-3"><FormError error={toggle.error} /></div> : null}
       {edit.row ? <SupplierDialog supplier={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
       {pay.row ? <PartyPaymentDialog kind="supplier" party={pay.row} onClose={pay.close} /> : null}
     </>

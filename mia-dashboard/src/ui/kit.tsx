@@ -1,12 +1,16 @@
 import { useState, type ButtonHTMLAttributes, type FormEvent, type ReactNode } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { AxiosInstance } from 'axios';
-import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Inbox, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Inbox, RefreshCw, Search, X, type LucideIcon } from 'lucide-react';
 import { getErrorMessage } from '../lib/format';
 import { Select } from './Select';
 import { surfaceCard } from './tokens';
 import { Bone, RefreshBar, TableSkeleton } from './skeleton';
 import { sortRows, type SortDirection } from './sorting';
+import { ExportMenu } from './ExportMenu';
+import { useExportBrand } from './exportBrand';
+import { periodFromParams, rowsToTable } from '../lib/exportData';
+import type { PdfStat } from '../lib/pdf';
 
 export const cardClass = surfaceCard;
 
@@ -141,10 +145,12 @@ export function QueryBoundary<T>({ query, children, skeleton }: { query: UseQuer
   return <>{query.data !== undefined ? children(query.data) : null}</>;
 }
 
-export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right'; sortValue?: (row: T) => unknown };
+export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right'; sortValue?: (row: T) => unknown; primary?: boolean };
 export type TableSort = { column: string; direction: SortDirection };
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const EXPORT_BATCH = 200;
+const EXPORT_ROW_LIMIT = 5000;
 
 function PageSizePicker({ pageSize, onPageSize }: { pageSize: number; onPageSize: (size: number) => void }) {
   return (
@@ -240,7 +246,10 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
   };
   return (
     <div>
-    <div className="overflow-x-auto">
+    <ul className="divide-y divide-slate-100 md:hidden" aria-label="Items">
+      {visible.map((row) => <MobileRowCard key={rowKey(row)} row={row} columns={columns} />)}
+    </ul>
+    <div className="hidden overflow-x-auto md:block">
       <table className="w-full text-[13px] sm:text-sm">
         <thead>
           <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-xs font-semibold text-slate-500">
@@ -275,7 +284,53 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
   );
 }
 
-export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom, toolbar, stats }: {
+const ACTION_HEADERS = new Set(['', 'actions', 'action', 'manage']);
+
+function MobileRowCard<T>({ row, columns }: { row: T; columns: Column<T>[] }) {
+  const [open, setOpen] = useState(false);
+  const actions = columns.find((column) => ACTION_HEADERS.has(column.header.trim().toLowerCase()));
+  const fields = columns.filter((column) => column !== actions);
+  const [title, ...rest] = fields;
+  const headline = rest.find((column) => column.primary) ?? [...rest].reverse().find((column) => column.align === 'right');
+  const subtitle = rest.find((column) => column !== headline && column.align !== 'right');
+  const details = rest.filter((column) => column !== headline && column !== subtitle);
+  if (!title) return null;
+  return (
+    <li className={`relative ${open ? 'bg-slate-50/70' : ''}`}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-start gap-3 px-4 py-3.5 text-left focus:outline-none focus-visible:bg-slate-50 ${actions ? 'pr-14' : ''}`}
+      >
+        <div className="min-w-0 flex-1 text-sm text-slate-700 [overflow-wrap:anywhere]">
+          {title.cell(row)}
+          {subtitle ? <div className="mt-0.5 text-xs text-slate-500">{subtitle.cell(row)}</div> : null}
+        </div>
+        {headline ? (
+          <div className="shrink-0 text-right">
+            <div className="text-[11px] font-medium text-slate-400">{headline.header}</div>
+            <div className="text-sm font-semibold tabular-nums text-ink">{headline.cell(row)}</div>
+          </div>
+        ) : null}
+        {details.length > 0 ? <ChevronDown size={16} aria-hidden className={`mt-0.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} /> : null}
+      </button>
+      {actions ? <div className="absolute right-2 top-2">{actions.cell(row)}</div> : null}
+      {open && details.length > 0 ? (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 px-4 pb-4 text-sm">
+          {details.map((column) => (
+            <div key={column.header} className={`min-w-0 ${column.align === 'right' ? 'text-right' : ''}`}>
+              <dt className="text-[11px] font-medium text-slate-400">{column.header}</dt>
+              <dd className="mt-0.5 text-slate-700 [overflow-wrap:anywhere]">{column.cell(row)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </li>
+  );
+}
+
+export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchPlaceholder, params, empty, rowsFrom, toolbar, stats, exportTitle, exportStats }: {
   client: AxiosInstance;
   path: string;
   queryKey: string;
@@ -287,7 +342,10 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   rowsFrom?: (data: { rows: T[]; total?: number }) => T[];
   toolbar?: ReactNode;
   stats?: (summary: any) => ReactNode;
+  exportTitle?: string;
+  exportStats?: (summary: any) => PdfStat[];
 }) {
+  const brand = useExportBrand();
   const paramsKey = JSON.stringify(params ?? {});
   const [paging, setPaging] = useState({ key: paramsKey, page: 0 });
   const page = paging.key === paramsKey ? paging.page : 0;
@@ -302,12 +360,34 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? query.data?.rows.length ?? 0;
+  const buildExport = async () => {
+    const all: T[] = [];
+    let summary: unknown;
+    for (let offset = 0; offset < EXPORT_ROW_LIMIT; offset += EXPORT_BATCH) {
+      const { data } = await client.get<{ rows: T[]; total?: number; summary?: unknown }>(path, {
+        params: { ...params, ...(search ? { q: search } : {}), limit: EXPORT_BATCH, offset },
+      });
+      if (offset === 0) summary = data.summary;
+      const batch = rowsFrom ? rowsFrom(data) : data.rows;
+      all.push(...batch);
+      if (data.rows.length < EXPORT_BATCH || all.length >= (data.total ?? Infinity)) break;
+    }
+    return {
+      businessName: brand.businessName,
+      currency: brand.currency,
+      title: exportTitle ?? 'Export',
+      period: periodFromParams(params),
+      stats: exportStats && summary ? exportStats(summary) : [],
+      tables: [await rowsToTable(search ? `${exportTitle} · “${search}”` : exportTitle ?? 'Rows', columns, all)],
+    };
+  };
+  const exportButton = exportTitle ? <ExportMenu build={buildExport} disabled={total === 0} /> : null;
   return (
     <>
     {stats ? stats((query.data as { summary?: unknown } | undefined)?.summary) : null}
     <div className={`${cardClass} min-w-0 overflow-hidden`} aria-busy={query.isFetching || undefined}>
       <RefreshBar active={query.isFetching && !query.isLoading} />
-      {searchPlaceholder || toolbar ? (
+      {searchPlaceholder || toolbar || exportButton ? (
         <div className="flex flex-col gap-3 p-4 border-b border-slate-100 lg:flex-row lg:items-center lg:justify-between">
           {searchPlaceholder ? (
             <div className="relative w-full lg:max-w-sm">
@@ -315,7 +395,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
               <input aria-label={searchPlaceholder} placeholder={searchPlaceholder} value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} className={`${inputClass} pl-9`} />
             </div>
           ) : <span className="hidden lg:block" />}
-          {toolbar}
+          {toolbar || exportButton ? <div className="flex flex-wrap items-center gap-2">{toolbar}{exportButton}</div> : null}
         </div>
       ) : null}
       <div className={query.isError ? 'p-4' : ''}>

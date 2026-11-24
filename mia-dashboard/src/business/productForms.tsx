@@ -5,6 +5,8 @@ import { Badge, Button, DataTable, Dialog, QueryBoundary } from '../ui/kit';
 import { TableSkeleton } from '../ui/skeleton';
 import { CheckField, FormDialog, FormError, LIST_KEYS, NumberField, SelectField, TextField, useFormState, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
+import { Eye, EyeOff, Pencil } from 'lucide-react';
+import { ActionMenu } from '../ui/ActionMenu';
 
 type Row = Record<string, any>;
 type Category = { id: string; name: string; description: string | null; active: boolean; products: number };
@@ -143,12 +145,10 @@ export function CategoriesDialog({ onClose }: { onClose: () => void }) {
               { header: 'Products', align: 'right', cell: (r) => r.products },
               { header: 'Status', cell: (r) => (r.active ? <Badge tone="good">Active</Badge> : <Badge>Hidden</Badge>) },
               { header: 'Actions', align: 'right', cell: (r) => (
-                <div className="flex justify-end gap-1.5">
-                  <Button className="!px-2.5 !py-1.5 !text-xs" onClick={() => setEditing(r)}>Rename</Button>
-                  <Button className="!px-2.5 !py-1.5 !text-xs" disabled={update.isPending} onClick={() => update.mutate({ path: `/dashboard/categories/${r.id}`, body: { active: !r.active } })}>
-                    {r.active ? 'Hide' : 'Show'}
-                  </Button>
-                </div>
+                <ActionMenu label={`Actions for ${r.name}`} actions={[
+                  { label: 'Rename', icon: Pencil, onSelect: () => setEditing(r) },
+                  { label: r.active ? 'Hide category' : 'Show category', icon: r.active ? EyeOff : Eye, disabled: update.isPending, onSelect: () => update.mutate({ path: `/dashboard/categories/${r.id}`, body: { active: !r.active } }) },
+                ]} />
               ) },
             ]}
           />

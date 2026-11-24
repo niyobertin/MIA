@@ -3,16 +3,17 @@ import { CalendarRange } from 'lucide-react';
 import { Select } from './Select';
 import { Button, inputClass } from './kit';
 
-export type PresetPeriod = 'all' | 'today' | 'yesterday' | '7d' | '30d' | '90d';
+export type PresetPeriod = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'year' | '7d' | '30d' | '90d';
 export type PeriodValue = { period: PresetPeriod } | { period: 'custom'; from: string; to: string };
 
 const PRESETS: { value: PresetPeriod; label: string }[] = [
   { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: '7d', label: 'Last 7 days' },
-  { value: '30d', label: 'Last 30 days' },
-  { value: '90d', label: 'Last 90 days' },
+  { value: 'week', label: 'This week' },
+  { value: 'month', label: 'This month' },
+  { value: 'year', label: 'This year' },
 ];
+
+const LEGACY: Partial<Record<PresetPeriod, string>> = { yesterday: 'Yesterday', '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days' };
 
 const MAX_DAYS = 366;
 
@@ -62,7 +63,8 @@ export function PeriodFilter({ value, onChange, includeAll = false, className = 
   }, [panelOpen]);
 
   const customLabel = value.period === 'custom' ? `${shortDay(value.from)} – ${shortDay(value.to)}` : 'Custom range…';
-  const options = [...(includeAll ? [{ value: 'all' as const, label: 'All time' }] : []), ...PRESETS, { value: 'custom' as const, label: customLabel }];
+  const legacy = value.period !== 'custom' && LEGACY[value.period] ? [{ value: value.period, label: LEGACY[value.period]! }] : [];
+  const options = [...(includeAll ? [{ value: 'all' as const, label: 'All time' }] : []), ...PRESETS, ...legacy, { value: 'custom' as const, label: customLabel }];
 
   const apply = () => {
     const issue = rangeProblem(from, to, today);

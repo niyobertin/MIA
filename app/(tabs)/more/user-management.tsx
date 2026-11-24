@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { userRepository } from '@/repositories/users/users';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { showToast } from '@/stores/toastStore';
 import { queueSync } from '@/services/sync/queue';
 import { User, UserRole } from '@/types';
@@ -66,6 +67,8 @@ export default function UserManagementScreen() {
     queryFn: () => userRepository.findAll(business!.id),
     enabled: !!business?.id,
   });
+  const userDates = useDateRange('all');
+  const shownUsers = userDates.filter(users, (u) => u.created_at);
 
   const handleSaved = async () => {
     setShowForm(false);
@@ -161,8 +164,9 @@ export default function UserManagementScreen() {
           {t('users.addUser')}
         </Button>
 
+        <DateRangeBar value={userDates.range} onChange={userDates.setRange} count={shownUsers.length} />
         <View style={styles.usersList}>
-          {users.map((user) => (
+          {shownUsers.map((user) => (
             <UserRow
               key={user.id}
               user={user}

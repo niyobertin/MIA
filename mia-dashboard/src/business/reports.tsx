@@ -1,45 +1,16 @@
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { CalendarCheck, CreditCard, FileDown, FileText, HandCoins, LineChart, PieChart, ReceiptText, Scale, ShoppingCart, TrendingUp, Trophy, Wallet } from 'lucide-react';
+import { CalendarCheck, CreditCard, FileText, HandCoins, LineChart, PieChart, ReceiptText, Scale, ShoppingCart, TrendingUp, Trophy, Wallet } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDate, formatDay, formatMoney, formatNumber, humanize } from '../lib/format';
-import { exportReportPdf } from '../lib/pdf';
+import { ExportMenu } from '../ui/ExportMenu';
 import { EXPENSES_COLOR, methodLabel, SALES_COLOR, summaryPdfInput, type ReportSummary } from './reportPdf';
 import { BarList, ChartCard, CurveChart, DonutChart } from '../ui/charts';
-import { Amount, Badge, Button, Card, DataTable, ErrorNotice, PageHeader, type Column } from '../ui/kit';
+import { Amount, Badge, Card, DataTable, ErrorNotice, PageHeader, type Column } from '../ui/kit';
 import { MetricCard, MetricGrid } from '../ui/metrics';
 import { ChartCardSkeleton, TableSectionSkeleton } from '../ui/skeleton';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
-
-export function ExportPdfButton({ onExport, disabled }: { onExport: () => Promise<unknown>; disabled?: boolean }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <Button
-        type="button"
-        disabled={disabled || busy}
-        className="inline-flex items-center gap-2"
-        onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            await onExport();
-          } catch (caught) {
-            setError(caught);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <FileDown size={16} aria-hidden />
-        {busy ? 'Preparing…' : 'Export PDF'}
-      </Button>
-      {error ? <ErrorNotice error={error} /> : null}
-    </div>
-  );
-}
 
 type Money = (value: number) => string;
 type Closing = ReportSummary['closings'][number];
@@ -197,7 +168,7 @@ function ReportContent({ data, currency }: { data?: ReportSummary; currency: str
 
 export function Reports() {
   const me = useDashboard();
-  const [period, setPeriod] = useState<PeriodValue>({ period: '30d' });
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'month' });
   const query = useQuery({
     queryKey: ['report-summary', me.user.id, period],
     queryFn: async () => (await api.get<ReportSummary>('/dashboard/reports/summary', { params: period })).data,
@@ -213,7 +184,7 @@ export function Reports() {
         action={(
           <>
             <PeriodFilter value={period} onChange={setPeriod} className="w-full sm:w-56" />
-            <ExportPdfButton disabled={!query.data || query.isPlaceholderData} onExport={() => exportReportPdf(summaryPdfInput(query.data!, me.business.name, me.business.currency, period))} />
+            <ExportMenu disabled={!query.data || query.isPlaceholderData} build={() => summaryPdfInput(query.data!, me.business.name, me.business.currency, period)} />
           </>
         )}
       />

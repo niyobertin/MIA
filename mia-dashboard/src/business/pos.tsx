@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Check, CheckCircle2, Minus, Plus, Search, ShoppingCart, Trash2 } from 'lucide-react';
@@ -45,6 +45,9 @@ export function NewSale() {
     return (products.data ?? []).filter((p) => !term || p.name.toLowerCase().includes(term));
   }, [products.data, search]);
   const total = cart.reduce((s, l) => s + l.quantity * l.price, 0);
+  const itemCount = cart.reduce((n, l) => n + l.quantity, 0);
+  const cartRef = useRef<HTMLDivElement>(null);
+  const showCart = () => cartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const inCart = (id: string) => cart.find((l) => l.product.id === id)?.quantity ?? 0;
 
   const add = (product: ProductOption) => {
@@ -106,14 +109,32 @@ export function NewSale() {
 
   return (
     <>
-      <PageHeader title="New sale" subtitle="Tap products to add them, then choose how the customer paid." />
+      <PageHeader
+        title="New sale"
+        subtitle="Tap products to add them, then choose how the customer paid."
+        action={(
+          <button
+            type="button"
+            onClick={showCart}
+            aria-label={itemCount ? `Cart, ${itemCount} ${itemCount === 1 ? 'item' : 'items'} selected` : 'Cart is empty'}
+            className="relative ml-auto flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 lg:hidden"
+          >
+            <ShoppingCart size={20} aria-hidden />
+            {itemCount ? (
+              <span key={itemCount} className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 animate-[cart-pop_.25s_ease-out] items-center justify-center rounded-full border-2 border-white bg-emerald-600 px-1 text-[11px] font-bold leading-none text-white motion-reduce:animate-none">
+                {itemCount > 99 ? '99+' : itemCount}
+              </span>
+            ) : null}
+          </button>
+        )}
+      />
       {done ? (
         <div role="status" className="mb-4 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
           <CheckCircle2 className="shrink-0" aria-hidden />
           <span className="font-semibold">Sale saved · {done.reference} · {money(done.total)}</span>
         </div>
       ) : null}
-      <div className="grid gap-6 lg:grid-cols-[1fr_22rem] xl:grid-cols-[1fr_24rem]">
+      <div className={`grid gap-6 lg:grid-cols-[1fr_22rem] lg:pb-0 xl:grid-cols-[1fr_24rem] ${itemCount ? 'pb-24' : ''}`}>
         <div>
           <div className="relative mb-4">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
@@ -169,7 +190,8 @@ export function NewSale() {
           )}
         </div>
 
-        <Card className="h-fit lg:sticky lg:top-4">
+        <div ref={cartRef} id="cart" className="h-fit scroll-mt-20 lg:sticky lg:top-20">
+        <Card>
           <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 font-bold text-slate-900">
             <ShoppingCart size={18} aria-hidden />Cart
             {cart.length ? <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">{cart.reduce((n, l) => n + l.quantity, 0)} items</span> : null}
@@ -224,7 +246,26 @@ export function NewSale() {
             </Button>
           </div>
         </Card>
+        </div>
       </div>
+
+      {itemCount ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 pt-3 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+          <div className="mx-auto flex max-w-3xl items-center gap-3">
+            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700" aria-hidden>
+              <ShoppingCart size={20} />
+              <span key={itemCount} className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 animate-[cart-pop_.25s_ease-out] items-center justify-center rounded-full border-2 border-white bg-emerald-600 px-1 text-[11px] font-bold leading-none text-white motion-reduce:animate-none">
+                {itemCount > 99 ? '99+' : itemCount}
+              </span>
+            </span>
+            <div className="min-w-0 flex-1" aria-live="polite">
+              <div className="text-xs font-medium text-slate-500">{itemCount} {itemCount === 1 ? 'item' : 'items'} selected</div>
+              <div className="truncate text-base font-extrabold tabular-nums text-slate-900">{money(total)}</div>
+            </div>
+            <Button tone="primary" className="shrink-0 !px-4 !py-2.5" onClick={showCart}>View cart</Button>
+          </div>
+        </div>
+      ) : null}
 
       {belowCost ? (
         <Dialog title="Sell below cost?" onClose={() => setBelowCost(null)}>

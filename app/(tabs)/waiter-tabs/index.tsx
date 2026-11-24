@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { FloatingActionButton } from '@/components/FloatingActionButton';
 import { useWaiterTabs, useOpenDailyClosing } from '@/hooks/useData';
 import { WaiterTabStatus } from '@/types';
@@ -27,7 +28,8 @@ export default function WaiterTabsScreen() {
   const { t } = useTranslation();
   const { data, isLoading, refetch, isRefetching } = useWaiterTabs();
   const openDay = useOpenDailyClosing();
-  const rows = data ?? [];
+  const dates = useDateRange('all');
+  const rows = dates.filter(data ?? [], (tab) => tab.created_at);
 
   const statusLabel = (status: WaiterTabStatus) => {
     const map: Record<WaiterTabStatus, string> = {
@@ -51,6 +53,9 @@ export default function WaiterTabsScreen() {
   return (
     <View style={styles.screen}>
       <ScreenHeader title={t('waiterTabs.title')} />
+      <View style={styles.filterWrap}>
+        <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
+      </View>
       {isLoading ? (
         <View style={styles.pad}>
           <Skeleton height={72} />
@@ -139,6 +144,7 @@ export default function WaiterTabsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   pad: { padding: spacing.md },
+  filterWrap: { paddingHorizontal: spacing.md },
   list: { padding: spacing.md, paddingBottom: 100 },
   emptyWrap: { flexGrow: 1, justifyContent: 'center', padding: spacing.lg },
   card: {

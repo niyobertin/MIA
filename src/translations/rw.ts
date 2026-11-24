@@ -1,5 +1,7 @@
 export const rw = {
   common: {
+    dateFilter: 'Itariki',
+    itemCount: '{{count}} zigaragara',
     pickDate: 'Hitamo itariki',
     monthsLong: 'Mutarama,Gashyantare,Werurwe,Mata,Gicurasi,Kamena,Nyakanga,Kanama,Nzeri,Ukwakira,Ugushyingo,Ukuboza',
     weekdaysShort: 'Mbe,Kab,Gtu,Kne,Gnu,Gdt,Cyu',
@@ -498,6 +500,7 @@ export const rw = {
     selectSupplier: 'Hitamo Umuhafi',
   },
   expenses: {
+    periodTotal: 'Igiteranyo cy’iki gihe',
     otherIncome: 'Andi mafaranga yinjiye',
     addIncome: 'Andika andi mafaranga yinjiye',
     todayIncome: 'ANDI MAFARANGA YINJIYE UYU MUNSI',

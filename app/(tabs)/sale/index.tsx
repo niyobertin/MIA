@@ -15,6 +15,7 @@ import { PaymentSheet } from '@/components/sale/PaymentSheet';
 import { CustomerPicker, WaiterPicker } from '@/components/sale/PartyPicker';
 import { SaleDoneBanner } from '@/components/sale/SaleDoneBanner';
 import { SaleHistoryList, HistoryFilter } from '@/components/sale/SaleHistoryList';
+import { CustomPeriodSheet } from '@/components/home/CustomPeriodSheet';
 import { showToast } from '@/stores/toastStore';
 import {
   useProducts,
@@ -129,6 +130,15 @@ export default function NewSaleScreen() {
   const activeOpen = openClosingQuery.data?.status === 'open' ? openClosingQuery.data : null;
   const openDayStart = activeOpen?.business_date?.slice(0, 10) ?? null;
   const [historyFilterChoice, setHistoryFilterChoice] = React.useState<HistoryFilter | null>(null);
+  const [customRange, setCustomRange] = React.useState<{ start: string; end: string } | null>(null);
+  const [showCustomRange, setShowCustomRange] = React.useState(false);
+  const chooseHistoryFilter = (next: HistoryFilter) => {
+    if (next === 'custom') {
+      setShowCustomRange(true);
+      return;
+    }
+    setHistoryFilterChoice(next);
+  };
   const historyFilter: HistoryFilter =
     historyFilterChoice === 'openDay' && !openDayStart
       ? 'today'
@@ -144,10 +154,14 @@ export default function NewSaleScreen() {
         return { start: getWeekStartDateString(), end: today };
       case 'month':
         return { start: monthStartIso(), end: today };
+      case 'year':
+        return { start: `${today.slice(0, 4)}-01-01`, end: today };
+      case 'custom':
+        return customRange ?? { start: today, end: today };
       case 'all':
         return undefined;
     }
-  }, [historyFilter, openDayStart, today]);
+  }, [historyFilter, openDayStart, today, customRange]);
 
   const historyQuery = useSales(historyRange);
   const historySales = [...(historyQuery.data ?? [])].sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
@@ -232,7 +246,7 @@ export default function NewSaleScreen() {
           showDate={showHistoryDate}
           filter={historyFilter}
           hasOpenDay={!!openDayStart}
-          onFilterChange={setHistoryFilterChoice}
+          onFilterChange={chooseHistoryFilter}
           customerNameOf={customerNameOf}
           productNameOf={productNameOf}
           voiding={voidSaleMutation.isPending}
@@ -389,6 +403,15 @@ export default function NewSaleScreen() {
         }}
       />
 
+      <CustomPeriodSheet
+        visible={showCustomRange}
+        onClose={() => setShowCustomRange(false)}
+        onApply={(start, end) => {
+          setCustomRange({ start, end });
+          setHistoryFilterChoice('custom');
+          setShowCustomRange(false);
+        }}
+      />
     </KeyboardAvoidingView>
   );
 }

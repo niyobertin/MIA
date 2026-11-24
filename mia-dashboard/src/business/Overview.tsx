@@ -10,8 +10,8 @@ import { MetricCard, MetricGrid, percentChange } from '../ui/metrics';
 import { ChartCardSkeleton, TableSectionSkeleton } from '../ui/skeleton';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
-import { exportReportPdf } from '../lib/pdf';
-import { ExportPdfButton } from './reports';
+import type { ReportPdfInput } from '../lib/pdf';
+import { ExportMenu } from '../ui/ExportMenu';
 
 export type OverviewData = {
   kpis: {
@@ -164,9 +164,9 @@ export function OverviewContent({ data, currency }: { data?: OverviewData; curre
   );
 }
 
-function exportOverviewPdf(data: OverviewData, businessName: string, currency: string, period: PeriodValue) {
+function overviewReportInput(data: OverviewData, businessName: string, currency: string, period: PeriodValue): ReportPdfInput {
   const { kpis } = data;
-  return exportReportPdf({
+  return ({
     businessName,
     currency,
     period,
@@ -193,7 +193,7 @@ function exportOverviewPdf(data: OverviewData, businessName: string, currency: s
 
 export function Overview() {
   const me = useDashboard();
-  const [period, setPeriod] = useState<PeriodValue>({ period: '7d' });
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'week' });
   const query = useQuery({
     queryKey: ['overview', me.user.id, period],
     queryFn: async () => (await api.get<OverviewData>('/dashboard/overview', { params: period })).data,
@@ -210,7 +210,7 @@ export function Overview() {
         action={(
           <>
             <PeriodFilter value={period} onChange={setPeriod} className="w-full sm:w-56" />
-            <ExportPdfButton disabled={!query.data || query.isPlaceholderData} onExport={() => exportOverviewPdf(query.data!, me.business.name, me.business.currency, period)} />
+            <ExportMenu disabled={!query.data || query.isPlaceholderData} build={() => overviewReportInput(query.data!, me.business.name, me.business.currency, period)} />
           </>
         )}
       />

@@ -1,19 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/auth';
 import { formatDateTime, humanize } from '../lib/format';
-import { Badge, Button, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
+import { Badge, Card, DataTable, ErrorNotice, PagedTable, PageHeader, QueryBoundary } from '../ui/kit';
 import { MetricCard } from '../ui/metrics';
-import { History, ShieldCheck, Undo2, UserCheck, UserRound, Users } from 'lucide-react';
+import { Ban, History, RotateCcw, ShieldCheck, Undo2, UserCheck, UserRound, Users } from 'lucide-react';
+import { ActionMenu } from '../ui/ActionMenu';
+import { ExportMenu } from '../ui/ExportMenu';
+import { rowsToTable } from '../lib/exportData';
+import type { Column } from '../ui/kit';
 import { StatRow } from './tables';
 import { TableSkeleton } from '../ui/skeleton';
 import { useDashboard } from './BusinessApp';
-import { Select } from '../ui/Select';
 import { useListFilters } from '../ui/ListFilters';
 
 export { Reports } from './reports';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
+
+const ROLE_CHOICES = [
+  { value: 'MANAGER', label: 'Manager', icon: ShieldCheck },
+  { value: 'CASHIER', label: 'Cashier', icon: UserRound },
+  { value: 'STAFF', label: 'Staff', icon: Users },
+];
 
 function StaffControls({ row }: { row: Row }) {
   const client = useQueryClient();
@@ -24,8 +33,10 @@ function StaffControls({ row }: { row: Row }) {
   return (
     <div className="flex items-center justify-end gap-2">
       {mutation.isError ? <ErrorNotice error={mutation.error} /> : null}
-      <Select ariaLabel={`Role for ${row.name}`} size="sm" className="w-32" value={row.role ?? 'STAFF'} disabled={mutation.isPending} onChange={(role) => mutation.mutate({ role })} options={[{ value: 'MANAGER', label: 'Manager' }, { value: 'CASHIER', label: 'Cashier' }, { value: 'STAFF', label: 'Staff' }]} />
-      <Button className="!px-2.5 !py-1.5 !text-xs" disabled={mutation.isPending} onClick={() => mutation.mutate({ active: !row.active })}>{row.active ? 'Deactivate' : 'Reactivate'}</Button>
+      <ActionMenu label={`Actions for ${row.name}`} actions={[
+        ...ROLE_CHOICES.map((choice) => ({ label: `Make ${choice.label.toLowerCase()}`, icon: choice.icon, hidden: (row.role ?? 'STAFF') === choice.value, disabled: mutation.isPending, onSelect: () => mutation.mutate({ role: choice.value }) })),
+        { label: row.active ? 'Deactivate' : 'Reactivate', icon: row.active ? Ban : RotateCcw, tone: row.active ? 'danger' as const : undefined, disabled: mutation.isPending, onSelect: () => mutation.mutate({ active: !row.active }) },
+      ]} />
     </div>
   );
 }
@@ -42,6 +53,30 @@ export function Staff() {
     queryKey: ['staff', me.user.id],
     queryFn: async () => (await api.get<{ rows: Row[] }>('/dashboard/staff')).data,
   });
+  const staffRows = (rows: Row[]) => filters.apply(rows, (row) => row.created_at, { name: (row) => row.name, role: (row) => row.role, date: (row) => row.created_at });
+  const staffColumns: Column<Row>[] = [
+                  { header: 'Name', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.email}</div></div> },
+                  { header: 'Role', cell: (row) => <Badge tone={row.role === 'OWNER' ? 'good' : 'neutral'}>{humanize(row.role)}</Badge> },
+                  { header: 'Status', cell: (row) => !row.active ? <Badge tone="bad">Deactivated</Badge> : row.locked ? <Badge tone="warn">Locked</Badge> : <Badge tone="good">Active</Badge> },
+                  { header: 'Joined', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{row.created_at ? formatDateTime(row.created_at) : '—'}</span> },
+                  ...(canManage ? [{ header: 'Manage', align: 'right' as const, cell: (row: Row) => (row.role === 'OWNER' || row.id === me.user.id ? <span className="text-xs text-slate-400">—</span> : <StaffControls row={row} />) }] : []),
+  ];
+  const exportStaff = async () => {
+    const rows = query.data?.rows ?? [];
+    return {
+      businessName: me.business.name,
+      currency: me.business.currency,
+      title: 'Staff & roles',
+      period: filters.period,
+      stats: [
+        { label: 'Staff', value: rows.length, kind: 'count' as const },
+        { label: 'Active', value: rows.filter((row) => row.active).length, kind: 'count' as const },
+        { label: 'Managers', value: rows.filter((row) => row.role === 'MANAGER' || row.role === 'OWNER').length, kind: 'count' as const },
+        { label: 'Cashiers & staff', value: rows.filter((row) => row.role === 'CASHIER' || row.role === 'STAFF').length, kind: 'count' as const },
+      ],
+      tables: [await rowsToTable('Staff', staffColumns, staffRows(rows))],
+    };
+  };
   return (
     <>
       <PageHeader title="Staff & roles" subtitle={`New staff join with business code ${me.business.business_code} and start as Staff.`} />
@@ -52,21 +87,15 @@ export function Staff() {
         <MetricCard loading={!query.data} icon={UserRound} tone="violet" label="Cashiers & staff" value={query.data?.rows.filter((row) => row.role === 'CASHIER' || row.role === 'STAFF').length.toLocaleString()} hint="Day-to-day team" />
       </StatRow>
       <Card>
-        <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-100 p-4">{filters.controls}<ExportMenu build={exportStaff} disabled={!query.data} /></div>
         <div className={query.isError ? 'p-4' : ''}>
           <QueryBoundary query={query} skeleton={<TableSkeleton rows={6} columns={[{ header: 'Name' }, { header: 'Role' }, { header: 'Status' }, { header: 'Joined' }, ...(canManage ? [{ header: 'Manage', align: 'right' as const }] : [])]} />}>
             {(data) => (
               <DataTable
-                rows={filters.apply(data.rows, (row) => row.created_at, { name: (row) => row.name, role: (row) => row.role, date: (row) => row.created_at })}
+                rows={staffRows(data.rows)}
                 rowKey={rowId}
                 empty={filters.period.period === 'all' ? 'No staff yet.' : 'No staff joined in this period.'}
-                columns={[
-                  { header: 'Name', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.email}</div></div> },
-                  { header: 'Role', cell: (row) => <Badge tone={row.role === 'OWNER' ? 'good' : 'neutral'}>{humanize(row.role)}</Badge> },
-                  { header: 'Status', cell: (row) => !row.active ? <Badge tone="bad">Deactivated</Badge> : row.locked ? <Badge tone="warn">Locked</Badge> : <Badge tone="good">Active</Badge> },
-                  { header: 'Joined', cell: (row) => <span className="whitespace-nowrap text-xs text-slate-500">{row.created_at ? formatDateTime(row.created_at) : '—'}</span> },
-                  ...(canManage ? [{ header: 'Manage', align: 'right' as const, cell: (row: Row) => (row.role === 'OWNER' || row.id === me.user.id ? <span className="text-xs text-slate-400">—</span> : <StaffControls row={row} />) }] : []),
-                ]}
+                columns={staffColumns}
               />
             )}
           </QueryBoundary>
@@ -94,6 +123,12 @@ export function Activity() {
         <PagedTable<Row>
           client={api} path="/dashboard/audit" queryKey="audit" rowKey={rowId} empty="No activity in this period."
           searchPlaceholder="Search action, item or person"
+          exportTitle="Activity log"
+          exportStats={(s: { count: number; people: number; reversals: number }) => [
+            { label: 'Actions', value: s.count, kind: 'count' },
+            { label: 'People', value: s.people, kind: 'count' },
+            { label: 'Cancellations', value: s.reversals, kind: 'count' },
+          ]}
           params={filters.params} toolbar={filters.controls}
           stats={(s?: { count: number; people: number; reversals: number }) => (
             <StatRow>

@@ -1,18 +1,22 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowDownLeft, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, ArrowUpRight, Boxes, CalendarDays, CalendarRange, CircleCheck, CreditCard, HandCoins, History, PackageSearch, PackageX, Plus, Receipt, Scale, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
+import { AlertTriangle, Ban, Eye, HandCoins as Pay, Pencil, Phone, RotateCcw, ScrollText, SlidersHorizontal, ArrowDownLeft, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, ArrowUpRight, Boxes, CalendarDays, CalendarRange, CircleCheck, CreditCard, HandCoins, History, PackageSearch, PackageX, Plus, Receipt, Scale, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
 import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, type Column } from '../ui/kit';
 import { MetricCard } from '../ui/metrics';
+import { ActionMenu } from '../ui/ActionMenu';
+import { ExportMenu } from '../ui/ExportMenu';
+import { rowsToTable } from '../lib/exportData';
 import { KpiGridSkeleton, TableSkeleton } from '../ui/skeleton';
-import { LIST_KEYS, useSave } from '../ui/forms';
+import { FormError, LIST_KEYS, useSave } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
-import { CustomerSalesDialog, ProductHistoryDialog, PurchaseDetailDialog, RowButton, SaleDetailDialog, useRowDialog } from './details';
+import { CustomerSalesDialog, ProductHistoryDialog, PurchaseDetailDialog, SaleDetailDialog, useRowDialog } from './details';
 import { AdjustStockDialog, CategoriesDialog, ProductDialog } from './productForms';
 import { CustomerDialog, EXPENSE_CATEGORIES, ExpenseDialog, PartyPaymentDialog } from './partyForms';
 import { StockInDialog } from './stockIn';
+import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useListFilters } from '../ui/ListFilters';
 
 type Row = Record<string, any>;
@@ -46,13 +50,8 @@ export function StatRow({ children }: { children: React.ReactNode }) {
   return <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{children}</div>;
 }
 
-function ToggleActive({ path, active, label }: { path: string; active: boolean; label: string }) {
-  const save = useSave('patch', LIST_KEYS);
-  return (
-    <RowButton label={`${active ? 'Deactivate' : 'Reactivate'} ${label}`} onClick={() => save.mutate({ path, body: { active: !active } })}>
-      {save.isPending ? '…' : active ? 'Deactivate' : 'Reactivate'}
-    </RowButton>
-  );
+function callNumber(phone: unknown) {
+  window.location.href = `tel:${String(phone).replace(/\s+/g, '')}`;
 }
 
 export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
@@ -80,6 +79,13 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
         params={{ status: unpaidOnly ? 'unpaid' : 'all', ...filters.params }}
         toolbar={filters.controls}
         searchPlaceholder="Search reference or customer"
+        exportTitle={unpaidOnly ? 'Unpaid sales' : 'Sales'}
+        exportStats={(s: { count: number; total: number; paid: number; outstanding: number }) => [
+          { label: 'Sales', value: s.count, kind: 'count' },
+          { label: 'Total value', value: s.total },
+          { label: 'Collected', value: s.paid },
+          { label: 'Still owed', value: s.outstanding },
+        ]}
         rowKey={rowId}
         empty={unpaidOnly ? 'No unpaid sales.' : 'No sales yet.'}
         stats={(s?: { count: number; total: number; paid: number; outstanding: number; unpaid_count: number }) => (
@@ -95,10 +101,10 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
           { header: 'Customer', cell: (row) => row.customer ?? 'Walk-in' },
           { header: 'Recorded by', cell: (row) => row.cashier ?? '—' },
           { header: 'Status', cell: (row) => row.voided ? <Badge tone="bad">Voided</Badge> : <Badge tone={STATUS_TONE[row.payment_status] ?? 'neutral'}>{humanize(row.payment_status)}</Badge> },
-          { header: 'Total', align: 'right', cell: (row) => money(row.total_amount) },
+          { header: 'Total', align: 'right', primary: true, cell: (row) => money(row.total_amount) },
           { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)) },
           { header: 'Date', cell: (row) => dateCell(row.sale_date) },
-          { header: 'Actions', align: 'right', cell: (row) => <RowButton label={`View sale ${row.reference_number ?? ''}`} onClick={() => detail.open(String(row.id))}>View</RowButton> },
+          { header: 'Actions', align: 'right', cell: (row) => <ActionMenu label={`Actions for sale ${row.reference_number ?? ''}`} actions={[{ label: 'View sale', icon: Eye, onSelect: () => detail.open(String(row.id)) }]} /> },
         ]}
       />
       {detail.row ? <SaleDetailDialog saleId={detail.row} onClose={detail.close} /> : null}
@@ -119,6 +125,13 @@ export function Payments() {
       <PageHeader title="Payments" subtitle={own ? 'Payments you recorded.' : undefined} />
       <PagedTable<Row>
         client={api} path="/dashboard/payments" queryKey="payments" rowKey={rowId} empty="No payments in this period."
+        exportTitle="Payments"
+        exportStats={(s: { count: number; money_in: number; money_out: number }) => [
+          { label: 'Payments', value: s.count, kind: 'count' },
+          { label: 'Money in', value: s.money_in },
+          { label: 'Money out', value: s.money_out },
+          { label: 'Net', value: s.money_in - s.money_out },
+        ]}
         params={filters.params} toolbar={filters.controls}
         stats={(s?: { count: number; money_in: number; money_out: number }) => (
           <StatRow>
@@ -149,6 +162,7 @@ export function Customers() {
   const canWrite = me.permissions.includes('customersWrite');
   const canPay = me.permissions.includes('paymentsWrite');
   const canDeactivate = canWrite && me.user.role !== 'CASHIER';
+  const toggle = useSave('patch', LIST_KEYS);
   const summary = useSummary<{ active: number; owed: number; debtors: number }>('customers', '/dashboard/customers');
   const filters = useListFilters({ defaultSort: 'name', defaultDirection: 'asc', sortOptions: [
     { value: 'name', label: 'Name', kind: 'text' },
@@ -165,6 +179,12 @@ export function Customers() {
       </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/customers" queryKey="customers" rowKey={rowId} searchPlaceholder="Search name or phone" empty="No customers found."
+        exportTitle="Customers"
+        exportStats={(s: { active: number; owed: number; debtors: number }) => [
+          { label: 'Customers', value: s.active, kind: 'count' },
+          { label: 'Owed to you', value: s.owed },
+          { label: 'Customers who owe', value: s.debtors, kind: 'count' },
+        ]}
         params={filters.params} toolbar={filters.controls}
         columns={[
           { header: 'Name', cell: (row) => <div><span className="font-semibold text-slate-900">{row.name}</span>{row.active === false ? <span className="ml-2"><Badge>Inactive</Badge></span> : null}</div> },
@@ -173,16 +193,17 @@ export function Customers() {
           { header: 'Balance owed', align: 'right', cell: (row) => row.balance > 0 ? <span className="font-semibold text-rose-700">{money(row.balance)}</span> : money(0) },
           { header: 'Added', cell: (row) => dateCell(row.created_at) },
           { header: 'Actions', align: 'right', cell: (row) => (
-            <div className="flex justify-end gap-1.5">
-              {row.phone ? <a href={`tel:${String(row.phone).replace(/\s+/g, '')}`} className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Call</a> : null}
-              <RowButton label={`Sales to ${row.name}`} onClick={() => detail.open(row)}>Sales</RowButton>
-              {canPay && row.balance > 0 ? <RowButton label={`Take payment from ${row.name}`} onClick={() => pay.open(row)}>Take payment</RowButton> : null}
-              {canWrite ? <RowButton label={`Edit ${row.name}`} onClick={() => edit.open(row)}>Edit</RowButton> : null}
-              {canDeactivate ? <ToggleActive path={`/dashboard/customers/${row.id}`} active={row.active !== false} label={row.name} /> : null}
-            </div>
+            <ActionMenu label={`Actions for ${row.name}`} actions={[
+              { label: 'Sales history', icon: ScrollText, onSelect: () => detail.open(row) },
+              { label: 'Take payment', icon: Pay, onSelect: () => pay.open(row), hidden: !(canPay && row.balance > 0) },
+              { label: 'Call', icon: Phone, onSelect: () => callNumber(row.phone), hidden: !row.phone },
+              { label: 'Edit', icon: Pencil, onSelect: () => edit.open(row), hidden: !canWrite },
+              { label: row.active !== false ? 'Deactivate' : 'Reactivate', icon: row.active !== false ? Ban : RotateCcw, tone: row.active !== false ? 'danger' : undefined, hidden: !canDeactivate, disabled: toggle.isPending, onSelect: () => toggle.mutate({ path: `/dashboard/customers/${row.id}`, body: { active: row.active === false } }) },
+            ]} />
           ) },
         ]}
       />
+      {toggle.error ? <div className="mt-3"><FormError error={toggle.error} /></div> : null}
       {detail.row ? <CustomerSalesDialog customer={detail.row} onClose={detail.close} /> : null}
       {edit.row ? <CustomerDialog customer={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
       {pay.row ? <PartyPaymentDialog kind="customer" party={pay.row} onClose={pay.close} /> : null}
@@ -217,6 +238,7 @@ export function Expenses() {
       </StatRow>
       <PagedTable<Row>
         client={api} path="/dashboard/expenses" queryKey="expenses" rowKey={rowId} empty="No expenses in this period."
+        exportTitle="Expenses"
         searchPlaceholder="Search description or category"
         params={filters.params} toolbar={filters.controls}
         columns={[
@@ -226,7 +248,7 @@ export function Expenses() {
           { header: 'Recorded by', cell: (row) => row.recorded_by ?? '—' },
           { header: 'Amount', align: 'right', cell: (row) => money(row.amount) },
           { header: 'Date', cell: (row) => dateCell(row.expense_date) },
-          ...(canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => row.editable ? <RowButton label="Edit expense" onClick={() => edit.open(row)}>Edit</RowButton> : <span className="text-xs text-slate-400">Closed day</span> }] : []),
+          ...(canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => row.editable ? <ActionMenu label="Expense actions" actions={[{ label: 'Edit expense', icon: Pencil, onSelect: () => edit.open(row) }]} /> : <span className="text-xs text-slate-400">Closed day</span> }] : []),
         ]}
       />
       {edit.row ? <ExpenseDialog expense={edit.row === 'new' ? undefined : edit.row} onClose={edit.close} /> : null}
@@ -259,6 +281,40 @@ export function Products() {
     queryFn: async () => (await api.get<{ rows: Row[]; summary: { active: number; low_stock: number; out_of_stock: number; stock_value?: number } }>('/dashboard/products')).data,
   });
   const summary = query.data?.summary;
+  const toggle = useSave('patch', LIST_KEYS);
+  const visibleRows = (rows: Row[]) => filters.apply(
+    rows.filter((row) => (showHidden || row.active) && matchesSearch(row, search, ['name', 'sku', 'barcode', 'category'])),
+    (row) => row.created_at,
+    { name: (row) => row.name, stock: (row) => (row.track_inventory ? row.stock : null), price: (row) => row.selling_price, category: (row) => row.category, date: (row) => row.created_at },
+  );
+  const productColumns: Column<Row>[] = [
+                  { header: 'Product', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}{row.active ? null : <span className="ml-2"><Badge>Inactive</Badge></span>}</div><div className="text-xs text-slate-500">{row.sku ?? ''}</div></div> },
+                  { header: 'Category', cell: (row) => row.category ?? '—' },
+                  { header: 'In stock', align: 'right', primary: true, cell: (row) => row.track_inventory ? <Badge tone={row.stock <= row.reorder_level ? 'warn' : 'neutral'}>{row.stock} {row.unit}</Badge> : '—' },
+                  { header: 'Selling price', align: 'right', cell: (row) => money(row.selling_price) },
+                  ...(showCosts ? [{ header: 'Average cost', align: 'right' as const, cell: (row: Row) => money(row.average_cost) }] : []),
+                  ...(canSeeHistory || canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => (
+                    <ActionMenu label={`Actions for ${row.name}`} actions={[
+                      { label: 'Edit product', icon: Pencil, onSelect: () => edit.open(row), hidden: !canWrite },
+                      { label: 'Adjust stock', icon: SlidersHorizontal, onSelect: () => adjust.open(row), hidden: !(canAdjust && row.track_inventory && row.active) },
+                      { label: 'Stock history', icon: History, onSelect: () => history.open(row), hidden: !canSeeHistory },
+                      { label: row.active ? 'Deactivate' : 'Reactivate', icon: row.active ? Ban : RotateCcw, tone: row.active ? 'danger' : undefined, hidden: !canWrite, disabled: toggle.isPending, onSelect: () => toggle.mutate({ path: `/dashboard/products/${row.id}`, body: { active: !row.active } }) },
+                    ]} />
+                  ) }] : []),
+  ];
+  const exportProducts = async () => ({
+    businessName: me.business.name,
+    currency: me.business.currency,
+    title: 'Products',
+    period: filters.period,
+    stats: summary ? [
+      { label: 'Products', value: summary.active, kind: 'count' as const },
+      { label: 'Running low', value: summary.low_stock, kind: 'count' as const },
+      { label: 'Out of stock', value: summary.out_of_stock, kind: 'count' as const },
+      ...(showCosts && summary.stock_value != null ? [{ label: 'Stock value', value: summary.stock_value }] : []),
+    ] : [],
+    tables: [await rowsToTable('Products', productColumns, visibleRows(query.data?.rows ?? []))],
+  });
   return (
     <>
       <PageHeader
@@ -286,34 +342,17 @@ export function Products() {
               Show deactivated
             </label>
           </div>
-          {filters.controls}
+          <div className="flex flex-wrap items-center gap-2">{filters.controls}<ExportMenu build={exportProducts} disabled={!query.data} /></div>
         </div>
+        {toggle.error ? <div className="px-4 pt-4"><FormError error={toggle.error} /></div> : null}
         <div className={query.isError ? 'p-4' : ''}>
           <QueryBoundary query={query} skeleton={<TableSkeleton rows={8} columns={[{ header: 'Product' }, { header: 'Category' }, { header: 'In stock', align: 'right' }, { header: 'Selling price', align: 'right' }, ...(showCosts ? [{ header: 'Average cost', align: 'right' as const }] : []), { header: 'Actions', align: 'right' }]} />}>
             {(data) => (
               <DataTable
-                rows={filters.apply(
-                  data.rows.filter((row) => (showHidden || row.active) && matchesSearch(row, search, ['name', 'sku', 'barcode', 'category'])),
-                  (row) => row.created_at,
-                  { name: (row) => row.name, stock: (row) => (row.track_inventory ? row.stock : null), price: (row) => row.selling_price, category: (row) => row.category, date: (row) => row.created_at },
-                )}
+                rows={visibleRows(data.rows)}
                 rowKey={rowId}
                 empty={search || filters.period.period !== 'all' ? 'No products match these filters.' : 'No products yet.'}
-                columns={[
-                  { header: 'Product', cell: (row) => <div><div className="font-semibold text-slate-900">{row.name}{row.active ? null : <span className="ml-2"><Badge>Inactive</Badge></span>}</div><div className="text-xs text-slate-500">{row.sku ?? ''}</div></div> },
-                  { header: 'Category', cell: (row) => row.category ?? '—' },
-                  { header: 'In stock', align: 'right', cell: (row) => row.track_inventory ? <Badge tone={row.stock <= row.reorder_level ? 'warn' : 'neutral'}>{row.stock} {row.unit}</Badge> : '—' },
-                  { header: 'Selling price', align: 'right', cell: (row) => money(row.selling_price) },
-                  ...(showCosts ? [{ header: 'Average cost', align: 'right' as const, cell: (row: Row) => money(row.average_cost) }] : []),
-                  ...(canSeeHistory || canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => (
-                    <div className="flex justify-end gap-1.5">
-                      {canWrite ? <RowButton label={`Edit ${row.name}`} onClick={() => edit.open(row)}>Edit</RowButton> : null}
-                      {canAdjust && row.track_inventory && row.active ? <RowButton label={`Adjust stock for ${row.name}`} onClick={() => adjust.open(row)}>Adjust</RowButton> : null}
-                      {canSeeHistory ? <RowButton label={`Stock history for ${row.name}`} onClick={() => history.open(row)}>History</RowButton> : null}
-                      {canWrite ? <ToggleActive path={`/dashboard/products/${row.id}`} active={row.active} label={row.name} /> : null}
-                    </div>
-                  ) }] : []),
-                ]}
+                columns={productColumns}
               />
             )}
           </QueryBoundary>
@@ -346,6 +385,13 @@ export function Purchases() {
       />
       <PagedTable<Row>
         client={api} path="/dashboard/purchases" queryKey="purchases" rowKey={rowId} empty="No stock-in in this period."
+        exportTitle="Stock-in"
+        exportStats={(s: { count: number; total: number; paid: number; owed: number }) => [
+          { label: 'Stock-ins', value: s.count, kind: 'count' },
+          { label: 'Total bought', value: s.total },
+          { label: 'Paid', value: s.paid },
+          { label: 'Still owed', value: s.owed },
+        ]}
         searchPlaceholder="Search reference or supplier"
         params={filters.params} toolbar={filters.controls}
         stats={(s?: { count: number; total: number; paid: number; owed: number }) => (
@@ -360,10 +406,10 @@ export function Purchases() {
           { header: 'Reference', cell: (row) => <span className="font-semibold text-slate-900">{row.reference_number ?? '—'}</span> },
           { header: 'Supplier', cell: (row) => row.supplier ?? '—' },
           { header: 'Status', cell: (row) => <Badge>{humanize(row.status)}</Badge> },
-          { header: 'Total', align: 'right', cell: (row) => formatMoney(row.total_amount, me.business.currency) },
+          { header: 'Total', align: 'right', primary: true, cell: (row) => formatMoney(row.total_amount, me.business.currency) },
           { header: 'Paid', align: 'right', cell: (row) => formatMoney(row.paid_amount, me.business.currency) },
           { header: 'Date', cell: (row) => dateCell(row.purchase_date) },
-          { header: 'Actions', align: 'right', cell: (row) => <RowButton label={`View stock-in ${row.reference_number ?? ''}`} onClick={() => detail.open(String(row.id))}>View</RowButton> },
+          { header: 'Actions', align: 'right', cell: (row) => <ActionMenu label={`Actions for stock-in ${row.reference_number ?? ''}`} actions={[{ label: 'View stock-in', icon: Eye, onSelect: () => detail.open(String(row.id)) }]} /> },
         ]}
       />
       {detail.row ? <PurchaseDetailDialog purchaseId={detail.row} onClose={detail.close} /> : null}
@@ -383,6 +429,13 @@ export function Movements() {
       <PageHeader title="Stock movements" />
       <PagedTable<Row>
         client={api} path="/dashboard/movements" queryKey="movements" rowKey={rowId} empty="No stock movements in this period."
+        exportTitle="Stock movements"
+        exportStats={(s: { count: number; qty_in: number; qty_out: number; products: number }) => [
+          { label: 'Movements', value: s.count, kind: 'count' },
+          { label: 'Units in', value: s.qty_in, kind: 'count' },
+          { label: 'Units out', value: s.qty_out, kind: 'count' },
+          { label: 'Products moved', value: s.products, kind: 'count' },
+        ]}
         searchPlaceholder="Search product"
         params={filters.params} toolbar={filters.controls}
         stats={(s?: { count: number; qty_in: number; qty_out: number; products: number }) => (
@@ -406,46 +459,69 @@ export function Movements() {
   );
 }
 
-const STOCK_REPORT_SKELETON: Pick<Column<unknown>, 'header' | 'align'>[] = [{ header: 'Product' }, { header: 'In stock', align: 'right' }, { header: 'Reorder at', align: 'right' }, { header: 'Average cost', align: 'right' }, { header: 'Value', align: 'right' }];
+const STOCK_REPORT_SKELETON: Pick<Column<unknown>, 'header' | 'align'>[] = [{ header: 'Product' }, { header: 'Opening', align: 'right' }, { header: 'In', align: 'right' }, { header: 'Out', align: 'right' }, { header: 'Closing', align: 'right' }, { header: 'Value', align: 'right' }];
 
 export function StockReport() {
   const me = useDashboard();
   const money = (value: number) => formatMoney(value, me.business.currency);
+  const [period, setPeriod] = useState<PeriodValue>({ period: 'today' });
+  const params = period.period === 'custom' ? { period: 'custom', from: period.from, to: period.to } : { period: period.period };
   const query = useQuery({
-    queryKey: ['stock-report', me.user.id],
-    queryFn: async () => (await api.get<{ total_value: number; low_count: number; rows: Row[] }>('/dashboard/stock-report')).data,
+    queryKey: ['stock-report', me.user.id, params],
+    queryFn: async () => (await api.get<{ total_value: number; low_count: number; qty_in: number; qty_out: number; rows: Row[] }>('/dashboard/stock-report', { params })).data,
+    placeholderData: keepPreviousData,
   });
   const filters = useListFilters({ withPeriod: false, defaultSort: 'value', sortOptions: [
     { value: 'value', label: 'Value', kind: 'number' },
-    { value: 'stock', label: 'In stock', kind: 'number' },
+    { value: 'stock', label: 'Closing stock', kind: 'number' },
+    { value: 'moved', label: 'Units sold / out', kind: 'number' },
     { value: 'name', label: 'Name', kind: 'text' },
   ] });
+  const columns: Column<Row>[] = [
+    { header: 'Product', cell: (row) => <span className="font-semibold text-slate-900">{row.name}</span> },
+    { header: 'Opening', align: 'right', cell: (row) => `${row.opening} ${row.unit}` },
+    { header: 'In', align: 'right', cell: (row) => (row.qty_in > 0 ? <span className="text-emerald-700">+{row.qty_in}</span> : 0) },
+    { header: 'Out', align: 'right', cell: (row) => (row.qty_out > 0 ? <span className="text-rose-700">−{row.qty_out}</span> : 0) },
+    { header: 'Closing', align: 'right', primary: true, cell: (row) => row.low ? <Badge tone="warn">{row.stock} {row.unit}</Badge> : `${row.stock} ${row.unit}` },
+    { header: 'Reorder at', align: 'right', cell: (row) => row.reorder_level },
+    { header: 'Average cost', align: 'right', cell: (row) => money(row.average_cost) },
+    { header: 'Value', align: 'right', cell: (row) => money(row.stock_value) },
+  ];
+  const sorted = (rows: Row[]) => filters.apply(rows, () => null, { value: (row) => row.stock_value, stock: (row) => row.stock, moved: (row) => row.qty_out, name: (row) => row.name });
+  const exportStock = async () => {
+    const data = query.data!;
+    return {
+      businessName: me.business.name,
+      currency: me.business.currency,
+      title: 'Stock report',
+      period,
+      stats: [
+        { label: 'Products tracked', value: data.rows.length, kind: 'count' as const },
+        { label: 'Closing stock value', value: data.total_value },
+        { label: 'Units in', value: data.qty_in, kind: 'count' as const },
+        { label: 'Units out', value: data.qty_out, kind: 'count' as const },
+        { label: 'Low-stock items', value: data.low_count, kind: 'count' as const },
+      ],
+      tables: [await rowsToTable('Stock', columns, sorted(data.rows))],
+    };
+  };
   return (
     <>
-      <PageHeader title="Stock report" />
-      <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={2} columns={2} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
+      <PageHeader title="Stock report" subtitle="Opening stock, what came in and went out, and closing stock for the period. Values use today's average cost." />
+      <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={4} columns={4} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
         {(data) => (
           <div className="space-y-6">
             <StatRow>
-              <MetricCard icon={Boxes} tone="slate" label="Products tracked" value={data.rows.length.toLocaleString()} hint="Live stock right now" />
-              <MetricCard icon={Warehouse} tone="blue" label="Stock value" value={money(data.total_value)} hint="At average cost" />
-              <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count.toLocaleString()} hint="At or below reorder level" />
-              <MetricCard icon={PackageX} tone="red" label="Out of stock" value={data.rows.filter((row) => row.stock <= 0).length.toLocaleString()} hint="Nothing left to sell" />
+              <MetricCard icon={Warehouse} tone="blue" label="Closing stock value" value={money(data.total_value)} hint={`${data.rows.length.toLocaleString()} products · at average cost`} />
+              <MetricCard icon={ArrowDownToLine} tone="green" label="Units in" value={data.qty_in.toLocaleString()} hint="Stock-in, returns, increases" />
+              <MetricCard icon={ArrowUpFromLine} tone="red" label="Units out" value={data.qty_out.toLocaleString()} hint="Sales, damage, decreases" />
+              <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count.toLocaleString()} hint={`${data.rows.filter((row) => row.stock <= 0).length.toLocaleString()} out of stock`} />
             </StatRow>
             <Card>
-              <div className="flex justify-end border-b border-slate-100 p-4">{filters.controls}</div>
-              <DataTable
-                rows={filters.apply(data.rows, () => null, { value: (row) => row.stock_value, stock: (row) => row.stock, name: (row) => row.name })}
-                rowKey={rowId}
-                empty="No tracked products yet."
-                columns={[
-                  { header: 'Product', cell: (row) => <span className="font-semibold text-slate-900">{row.name}</span> },
-                  { header: 'In stock', align: 'right', cell: (row) => row.low ? <Badge tone="warn">{row.stock} {row.unit}</Badge> : `${row.stock} ${row.unit}` },
-                  { header: 'Reorder at', align: 'right', cell: (row) => row.reorder_level },
-                  { header: 'Average cost', align: 'right', cell: (row) => money(row.average_cost) },
-                  { header: 'Value', align: 'right', cell: (row) => money(row.stock_value) },
-                ]}
-              />
+              <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-end">
+                <div className="flex flex-wrap items-center gap-2"><PeriodFilter value={period} onChange={setPeriod} className="w-44" />{filters.controls}<ExportMenu build={exportStock} /></div>
+              </div>
+              <DataTable rows={sorted(data.rows)} rowKey={rowId} empty="No tracked products in this period." columns={columns} />
             </Card>
           </div>
         )}

@@ -10,6 +10,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { BottomSheet } from '@/components/SegmentedControl';
 import { EmptyState } from '@/components/EmptyState';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { showToast } from '@/stores/toastStore';
 import {
   useCustomers,
@@ -67,10 +68,11 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
 
   const selected = parties.find((p) => p.id === partyId) ?? null;
   const typeFilter = isCustomer ? 'customer_payment' : 'supplier_payment';
-  const history = (payments ?? [])
-    .filter((p) => p.type === typeFilter)
+  const dates = useDateRange('week');
+  const history = dates
+    .filter((payments ?? []).filter((p) => p.type === typeFilter), (p) => p.payment_date)
     .sort((a, b) => (b.created_at > a.created_at ? 1 : -1))
-    .slice(0, 10);
+    .slice(0, 100);
 
   const partyNameOf = (id: string | null) => parties.find((p) => p.id === id)?.name ?? '—';
 
@@ -192,6 +194,7 @@ export function PartyPaymentScreen({ kind, initialPartyId }: PartyPaymentProps) 
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{t('payments.recentPayments')}</Text>
+          <DateRangeBar value={dates.range} onChange={dates.setRange} count={history.length} />
           {history.length === 0 ? (
             <EmptyState icon="receipt-outline" title={t('payments.noPayments')} />
           ) : (

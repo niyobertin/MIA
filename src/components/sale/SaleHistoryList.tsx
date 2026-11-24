@@ -12,7 +12,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { useSaleItems } from '@/hooks/useData';
 import { formatNumber, formatRecordDateTime } from '@/utils/formatters';
 
-export type HistoryFilter = 'openDay' | 'today' | 'week' | 'month' | 'all';
+export type HistoryFilter = 'openDay' | 'today' | 'week' | 'month' | 'year' | 'custom' | 'all';
 
 export type HistorySale = {
   id: string;
@@ -59,7 +59,9 @@ export function SaleHistoryList({
     { value: 'today', label: t('reports.today') },
     { value: 'week', label: t('reports.thisWeek') },
     { value: 'month', label: t('reports.thisMonth') },
+    { value: 'year', label: t('dashboard.thisYear') },
     { value: 'all', label: t('sales.allTime') },
+    { value: 'custom', label: t('reports.customRange') },
   ];
 
   const stats = React.useMemo(() => {

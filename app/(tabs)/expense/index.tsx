@@ -13,6 +13,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { OtherIncomePanel } from '@/components/OtherIncomePanel';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { showToast } from '@/stores/toastStore';
 import {
   useCreateExpense,
@@ -64,6 +65,7 @@ export default function ExpenseScreen() {
   const [editing, setEditing] = React.useState<Expense | null>(null);
   const [deleting, setDeleting] = React.useState<Expense | null>(null);
   const [mode, setMode] = React.useState<'expense' | 'income'>('expense');
+  const dates = useDateRange('month');
 
   const { control, handleSubmit, watch, reset, setValue } = useForm<ExpenseForm>({
     resolver: zodResolver(expenseSchema),
@@ -80,9 +82,10 @@ export default function ExpenseScreen() {
   const todayTotal = expenses
     .filter((e) => e.expense_date.slice(0, 10) === today)
     .reduce((sum, e) => sum + e.amount, 0);
-  const recent = [...expenses]
-    .sort((a, b) => (b.created_at > a.created_at ? 1 : -1))
-    .slice(0, 50);
+  const recent = dates
+    .filter(expenses, (e) => e.expense_date)
+    .sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+  const recentTotal = recent.reduce((sum, e) => sum + e.amount, 0);
 
   const resetForm = () => {
     setEditing(null);
@@ -254,6 +257,13 @@ export default function ExpenseScreen() {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('expenses.recentExpenses')}</Text>
+            <DateRangeBar value={dates.range} onChange={dates.setRange} count={recent.length} />
+            {recent.length > 0 ? (
+              <View style={styles.periodTotal}>
+                <Text style={styles.periodTotalLabel}>{t('expenses.periodTotal')}</Text>
+                <MoneyText amount={recentTotal} size={16} weight="800" color={colors.ink} />
+              </View>
+            ) : null}
               {recent.length === 0 ? (
                 <EmptyState icon="wallet-outline" title={t('expenses.noExpenses')} />
               ) : (
@@ -328,6 +338,8 @@ const styles = StyleSheet.create({
     paddingBottom: 110,
     gap: spacing.md,
   },
+  periodTotal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.xs },
+  periodTotalLabel: { fontSize: 13, fontWeight: '600', color: colors.muted },
   hero: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,

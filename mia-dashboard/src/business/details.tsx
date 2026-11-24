@@ -6,6 +6,8 @@ import { Badge, Button, DataTable, Dialog, PagedTable, QueryBoundary, ReasonActi
 import { DrawerSkeleton } from '../ui/skeleton';
 import { LIST_KEYS } from '../ui/forms';
 import { useDashboard } from './BusinessApp';
+import { ActionMenu } from '../ui/ActionMenu';
+import { Eye } from 'lucide-react';
 
 type Row = Record<string, any>;
 const rowId = (row: Row) => String(row.id);
@@ -151,7 +153,7 @@ export function CustomerSalesDialog({ customer, onClose }: { customer: Row; onCl
           { header: 'Status', cell: (row) => row.voided ? <Badge tone="bad">Voided</Badge> : <Badge tone={STATUS_TONE[row.payment_status] ?? 'neutral'}>{humanize(row.payment_status)}</Badge> },
           { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)) },
           { header: 'Date', cell: (row) => dateCell(row.sale_date) },
-          { header: '', align: 'right', cell: (row) => <RowButton onClick={() => sale.open(String(row.id))}>View</RowButton> },
+          { header: '', align: 'right', cell: (row) => <ActionMenu label={`Actions for sale ${row.reference_number ?? ''}`} actions={[{ label: 'View sale', icon: Eye, onSelect: () => sale.open(String(row.id)) }]} /> },
         ]}
       />
       {sale.row ? <SaleDetailDialog saleId={sale.row} onClose={sale.close} /> : null}

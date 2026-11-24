@@ -6,6 +6,7 @@ import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { useRecentAudit } from '@/hooks/useData';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { useAuthStore } from '@/stores/authStore';
 import { canSeeProfit } from '@/utils/permissions';
 
@@ -58,7 +59,9 @@ function getInitial(name: string): string {
 export default function AuditScreen() {
   const { t } = useTranslation();
   const { user } = useAuthStore();
-  const { data, isLoading, refetch, isRefetching } = useRecentAudit(100);
+  const dates = useDateRange('week');
+  const { data, isLoading, refetch, isRefetching } = useRecentAudit(1000);
+  const rows = dates.filter((data ?? []) as Record<string, unknown>[], (item) => (item.created_at as string | undefined) ?? null);
 
   if (!canSeeProfit(user?.role)) {
     return (
@@ -71,14 +74,17 @@ export default function AuditScreen() {
   return (
     <View style={styles.screen}>
       <FlatList
-        data={(data ?? []) as Array<Record<string, unknown>>}
+        data={rows}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={!!isRefetching} onRefresh={() => refetch()} />}
         ListHeaderComponent={
+          <View>
+          <DateRangeBar value={dates.range} onChange={dates.setRange} count={rows.length} />
           <View style={styles.headerBox}>
             <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
             <Text style={styles.hint}>{t('settings.auditHint')}</Text>
+          </View>
           </View>
         }
         ListEmptyComponent={

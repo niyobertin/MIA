@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { Button } from '@/components/Button';
 import { MoneyText } from '@/components/MoneyText';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { FormInput } from '@/components/FormInput';
 import { FormScrollView } from '@/components/FormScrollView';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -77,7 +78,8 @@ export default function ClosingScreen() {
   const recordCountMutation = useRecordCount();
   const adjustStockMutation = useAdjustStock();
   const latestClosingQuery = useLatestClosing();
-  const historyQuery = useDailyClosingHistory();
+  const historyQuery = useDailyClosingHistory(400);
+  const historyDates = useDateRange('month');
   const detailQuery = useDailyClosingById(selectedId);
   const detailLinesQuery = useDayStockLines({
     closingId: selectedId,
@@ -86,7 +88,7 @@ export default function ClosingScreen() {
 
   const needsStart = !activeOpen;
   const lastClosed = latestClosingQuery.data;
-  const history = historyQuery.data ?? [];
+  const history = historyDates.filter(historyQuery.data ?? [], (day) => day.business_date);
 
   const { control, handleSubmit, watch, setValue } = useForm<DayForm>({
     defaultValues: {
@@ -575,6 +577,7 @@ export default function ClosingScreen() {
         <View style={styles.historySection}>
           <Text style={styles.historyTitle}>{t('cash.previousDays')}</Text>
           <Text style={styles.historyHint}>{t('cash.previousDaysHint')}</Text>
+          <DateRangeBar value={historyDates.range} onChange={historyDates.setRange} count={history.length} />
           {historyQuery.isLoading ? (
             <Skeleton height={72} style={styles.skel} />
           ) : history.length === 0 ? (

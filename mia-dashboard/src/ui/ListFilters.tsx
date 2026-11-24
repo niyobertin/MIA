@@ -31,6 +31,14 @@ export function periodDays(period: PeriodValue, now = new Date()): { from: strin
     }
     case 'today':
       return { from: today, to: today };
+    case 'week': {
+      const back = (now.getDay() + 6) % 7;
+      return { from: isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - back)), to: today };
+    }
+    case 'month':
+      return { from: isoDay(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+    case 'year':
+      return { from: isoDay(new Date(now.getFullYear(), 0, 1)), to: today };
     default: {
       const days = period.period === '7d' ? 7 : period.period === '30d' ? 30 : 90;
       return { from: isoDay(new Date(now.getTime() - (days - 1) * DAY)), to: today };

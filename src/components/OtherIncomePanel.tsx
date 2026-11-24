@@ -17,6 +17,7 @@ import { useCreatePayment, usePayments } from '@/hooks/useData';
 import { PAYMENT_METHODS } from '@/constants';
 import { Payment } from '@/types';
 import { getTodayDateString, formatRecordDateTime } from '@/utils/formatters';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 
 const INCOME_METHODS = PAYMENT_METHODS.filter((p) => p.value !== 'credit');
 
@@ -36,6 +37,7 @@ export function OtherIncomePanel() {
   const paymentsQuery = usePayments();
   const createPayment = useCreatePayment();
   const [showConfirm, setShowConfirm] = React.useState(false);
+  const dates = useDateRange('month');
 
   const { control, handleSubmit, watch, reset } = useForm<IncomeForm>({
     resolver: zodResolver(incomeSchema),
@@ -46,6 +48,8 @@ export function OtherIncomePanel() {
   const todayTotal = income
     .filter((p) => p.payment_date.slice(0, 10) === today)
     .reduce((sum, p) => sum + p.amount, 0);
+
+  const shown = dates.filter(income, (p) => p.payment_date);
 
   const doSave = async () => {
     const data = watch();
@@ -115,10 +119,11 @@ export function OtherIncomePanel() {
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{t('expenses.recentIncome')}</Text>
-        {income.length === 0 ? (
+        <DateRangeBar value={dates.range} onChange={dates.setRange} count={shown.length} />
+        {shown.length === 0 ? (
           <EmptyState icon="trending-up-outline" title={t('expenses.noIncome')} />
         ) : (
-          income.slice(0, 50).map((p) => (
+          shown.map((p) => (
             <View key={p.id} style={styles.row}>
               <View style={styles.rowInfo}>
                 <Text style={styles.rowTitle} numberOfLines={1}>

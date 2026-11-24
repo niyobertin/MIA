@@ -6,6 +6,7 @@ import { colors, radius, spacing, shadows } from '@/theme/tokens';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Input } from '@/components/Input';
 import { FilterChip } from '@/components/FilterChip';
+import { DateRangeBar, useDateRange } from '@/components/DateRangeFilter';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/Skeleton';
 import { STOCK_MOVEMENT_TYPES } from '@/constants';
@@ -21,8 +22,9 @@ export default function StockMovementsScreen() {
   const { t } = useTranslation();
   const { language } = useUIStore();
   const today = getTodayDateString();
-  const [startDate, setStartDate] = React.useState(today);
-  const [endDate, setEndDate] = React.useState(today);
+  const dates = useDateRange('today');
+  const startDate = dates.range.preset === 'all' ? '2000-01-01' : dates.range.start;
+  const endDate = dates.range.preset === 'all' ? today : dates.range.end;
   const [productId, setProductId] = React.useState('');
   const [type, setType] = React.useState('');
   const [userId, setUserId] = React.useState('');
@@ -62,14 +64,7 @@ export default function StockMovementsScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View style={styles.dateRow}>
-          <View style={styles.dateItem}>
-            <Input label={t('stock.fromDate')} value={startDate} onChangeText={setStartDate} autoCapitalize="none" />
-          </View>
-          <View style={styles.dateItem}>
-            <Input label={t('stock.toDate')} value={endDate} onChangeText={setEndDate} autoCapitalize="none" />
-          </View>
-        </View>
+        <DateRangeBar value={dates.range} onChange={dates.setRange} count={history.data?.length} />
 
         <TouchableOpacity
           style={styles.filterToggle}

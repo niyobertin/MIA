@@ -1,6 +1,6 @@
 import { AppDataSource } from '../data-source';
 
-export type Period = 'today' | 'yesterday' | '7d' | '30d' | '90d' | 'custom';
+export type Period = 'today' | 'yesterday' | 'week' | 'month' | 'year' | '7d' | '30d' | '90d' | 'custom';
 export type CustomRange = { from: string; to: string };
 
 const q = (sql: string, params: unknown[] = []) => AppDataSource.query(sql, params) as Promise<any[]>;
@@ -13,7 +13,7 @@ const MAX_CUSTOM_DAYS = 366;
 export function parsePeriodQuery(query: Record<string, unknown>): { period: Period; custom?: CustomRange } | { error: string } {
   const raw = typeof query.period === 'string' ? query.period : '7d';
   if (raw !== 'custom') {
-    const allowed = ['today', 'yesterday', '7d', '30d', '90d'];
+    const allowed = ['today', 'yesterday', 'week', 'month', 'year', '7d', '30d', '90d'];
     return { period: (allowed.includes(raw) ? raw : '7d') as Period };
   }
   const from = typeof query.from === 'string' ? query.from : '';
@@ -49,11 +49,18 @@ export async function periodBounds(period: Period, timezone: string, custom?: Cu
     return { from, to, days: Math.max(1, Math.round((to.getTime() - from.getTime()) / day)) };
   }
   const [row] = await q(
-    `SELECT (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1) AS today_start`,
+    `SELECT (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1) AS today_start,
+            (date_trunc('week', now() AT TIME ZONE $1) AT TIME ZONE $1) AS week_start,
+            (date_trunc('month', now() AT TIME ZONE $1) AT TIME ZONE $1) AS month_start,
+            (date_trunc('year', now() AT TIME ZONE $1) AT TIME ZONE $1) AS year_start`,
     [timezone],
   );
   const todayStart = new Date(row.today_start);
   const tomorrow = new Date(todayStart.getTime() + day);
+  if (period === 'week' || period === 'month' || period === 'year') {
+    const from = new Date(row[`${period}_start`]);
+    return { from, to: tomorrow, days: Math.max(1, Math.round((tomorrow.getTime() - from.getTime()) / day)) };
+  }
   const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '90d' ? 90 : 1;
   if (period === 'yesterday') {
     return { from: new Date(todayStart.getTime() - day), to: todayStart, days };
