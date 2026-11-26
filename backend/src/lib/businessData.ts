@@ -223,6 +223,7 @@ export async function buildOverview(businessId: string, timezone: string, period
       outstanding: num(outstandingRow[0].total),
       low_stock_count: lowStock.length,
       stock_value: tracked.reduce((sum, item) => sum + item.average_cost * Math.max(item.stock, 0), 0),
+      stock_sale_value: tracked.reduce((sum, item) => sum + item.selling_price * Math.max(item.stock, 0), 0),
     },
     trend,
     categories: categoryRows.map((row) => ({ category: row.category as string, total: num(row.total) })),

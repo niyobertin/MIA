@@ -6,7 +6,7 @@ import { formatDate, formatDay, formatMoney, formatNumber, humanize } from '../l
 import { ExportMenu } from '../ui/ExportMenu';
 import { EXPENSES_COLOR, methodLabel, SALES_COLOR, summaryPdfInput, type ReportSummary } from './reportPdf';
 import { BarList, ChartCard, CurveChart, DonutChart } from '../ui/charts';
-import { Amount, Badge, Card, DataTable, ErrorNotice, PageHeader, type Column } from '../ui/kit';
+import { Amount, Badge, Card, DataTable, ErrorNotice, PageHeader, sumBy, type Column } from '../ui/kit';
 import { MetricCard, MetricGrid } from '../ui/metrics';
 import { ChartCardSkeleton, TableSectionSkeleton } from '../ui/skeleton';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
@@ -21,11 +21,11 @@ function closingColumns(money: Money): Column<Closing>[] {
   return [
     { header: 'Date', sortValue: (row) => `${row.business_date}#${String(row.session_number).padStart(4, '0')}`, cell: (row) => <div className="whitespace-nowrap"><div className="font-semibold text-slate-900">{formatDate(row.business_date)}</div><div className="text-xs text-slate-500">Day #{row.session_number}</div></div> },
     { header: 'Status', sortValue: (row) => row.status, cell: (row) => <Badge tone={row.status === 'closed' ? 'good' : 'info'}>{humanize(row.status)}</Badge> },
-    { header: 'Sales', align: 'right', sortValue: (row) => row.total_sales, cell: (row) => <Amount value={row.total_sales} format={money} strong /> },
-    { header: 'Gross profit', align: 'right', sortValue: (row) => row.gross_profit, cell: (row) => <Amount value={row.gross_profit} format={money} signed /> },
-    { header: 'Expenses', align: 'right', sortValue: (row) => row.expenses, cell: (row) => <Amount value={row.expenses} format={money} /> },
-    { header: 'Net profit', align: 'right', sortValue: (row) => row.net_profit, cell: (row) => <Amount value={row.net_profit} format={money} signed /> },
-    { header: 'Cash variance', align: 'right', sortValue: (row) => row.cash_variance, cell: (row) => <Amount value={row.cash_variance} format={money} signed /> },
+    { header: 'Sales', align: 'right', sortValue: (row) => row.total_sales, cell: (row) => <Amount value={row.total_sales} format={money} strong />, total: (rows) => <Amount value={sumBy(rows, (row) => row.total_sales)} format={money} strong /> },
+    { header: 'Gross profit', align: 'right', sortValue: (row) => row.gross_profit, cell: (row) => <Amount value={row.gross_profit} format={money} signed />, total: (rows) => <Amount value={sumBy(rows, (row) => row.gross_profit)} format={money} signed /> },
+    { header: 'Expenses', align: 'right', sortValue: (row) => row.expenses, cell: (row) => <Amount value={row.expenses} format={money} />, total: (rows) => <Amount value={sumBy(rows, (row) => row.expenses)} format={money} /> },
+    { header: 'Net profit', align: 'right', sortValue: (row) => row.net_profit, cell: (row) => <Amount value={row.net_profit} format={money} signed />, total: (rows) => <Amount value={sumBy(rows, (row) => row.net_profit)} format={money} signed /> },
+    { header: 'Cash variance', align: 'right', sortValue: (row) => row.cash_variance, cell: (row) => <Amount value={row.cash_variance} format={money} signed />, total: (rows) => <Amount value={sumBy(rows, (row) => row.cash_variance)} format={money} signed /> },
   ];
 }
 
@@ -87,9 +87,9 @@ function ReportCharts({ data, money }: { data?: ReportSummary; money: Money }) {
             <DataTable pageSize={0} rows={data.daily} rowKey={(row) => row.day} empty="No activity in this period." defaultSort={{ column: 'Day', direction: 'desc' }}
               columns={[
                 { header: 'Day', sortValue: (row) => row.day, cell: (row) => formatDay(row.day) },
-                { header: 'Sales', align: 'right', sortValue: (row) => row.sales, cell: (row) => money(row.sales) },
-                { header: 'Expenses', align: 'right', sortValue: (row) => row.expenses, cell: (row) => money(row.expenses) },
-                { header: 'Difference', align: 'right', sortValue: (row) => row.sales - row.expenses, cell: (row) => <Amount value={row.sales - row.expenses} format={money} signed /> },
+                { header: 'Sales', align: 'right', sortValue: (row) => row.sales, cell: (row) => money(row.sales), total: (rows) => money(sumBy(rows, (row) => row.sales)) },
+                { header: 'Expenses', align: 'right', sortValue: (row) => row.expenses, cell: (row) => money(row.expenses), total: (rows) => money(sumBy(rows, (row) => row.expenses)) },
+                { header: 'Difference', align: 'right', sortValue: (row) => row.sales - row.expenses, cell: (row) => <Amount value={row.sales - row.expenses} format={money} signed />, total: (rows) => <Amount value={sumBy(rows, (row) => row.sales - row.expenses)} format={money} signed /> },
               ]} />
           )}
         />
@@ -101,9 +101,9 @@ function ReportCharts({ data, money }: { data?: ReportSummary; money: Money }) {
             <DataTable pageSize={0} rows={data.payment_methods} rowKey={(row) => row.method} empty="No payments in this period."
               columns={[
                 { header: 'Method', cell: (row) => <span className="font-medium text-slate-900">{methodLabel(row.method)}</span> },
-                { header: 'Payments', align: 'right', sortValue: (row) => row.count, cell: (row) => formatNumber(row.count) },
-                { header: 'Amount', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total) },
-                { header: 'Share', align: 'right', cell: (row) => share(row.total, collected) },
+                { header: 'Payments', align: 'right', sortValue: (row) => row.count, cell: (row) => formatNumber(row.count), total: (rows) => formatNumber(sumBy(rows, (row) => row.count)) },
+                { header: 'Amount', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total), total: (rows) => money(sumBy(rows, (row) => row.total)) },
+                { header: 'Share', align: 'right', cell: (row) => share(row.total, collected), total: (rows) => share(sumBy(rows, (row) => row.total), collected) },
               ]} />
           )}
         />
@@ -117,8 +117,8 @@ function ReportCharts({ data, money }: { data?: ReportSummary; money: Money }) {
             <DataTable pageSize={0} rows={data.products} rowKey={(row) => row.product} empty="No sales in this period."
               columns={[
                 { header: 'Product', sortValue: (row) => row.product, cell: (row) => <span className="font-medium text-slate-900">{row.product}</span> },
-                { header: 'Quantity', align: 'right', sortValue: (row) => row.quantity, cell: (row) => formatNumber(row.quantity) },
-                { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total) },
+                { header: 'Quantity', align: 'right', sortValue: (row) => row.quantity, cell: (row) => formatNumber(row.quantity), total: (rows) => formatNumber(sumBy(rows, (row) => row.quantity)) },
+                { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total), total: (rows) => money(sumBy(rows, (row) => row.total)) },
               ]} />
           )}
         />
@@ -130,8 +130,8 @@ function ReportCharts({ data, money }: { data?: ReportSummary; money: Money }) {
             <DataTable pageSize={0} rows={data.categories} rowKey={(row) => row.category} empty="No sales in this period."
               columns={[
                 { header: 'Category', sortValue: (row) => row.category, cell: (row) => <span className="font-medium text-slate-900">{row.category}</span> },
-                { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total) },
-                { header: 'Share', align: 'right', cell: (row) => share(row.total, categoryTotal) },
+                { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total), total: (rows) => money(sumBy(rows, (row) => row.total)) },
+                { header: 'Share', align: 'right', cell: (row) => share(row.total, categoryTotal), total: (rows) => share(sumBy(rows, (row) => row.total), categoryTotal) },
               ]} />
           )}
         />

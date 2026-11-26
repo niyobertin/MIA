@@ -229,7 +229,14 @@ dashboardWriteRouter.get('/suppliers', can('suppliers'), async (req: DashboardRe
        FROM suppliers s WHERE ${where} ORDER BY s.active DESC, ${win.orderBy}, s.name LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM suppliers s WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM((SELECT SUM(p.total_amount - p.paid_amount) FROM purchases p
+                            WHERE p.supplier_id = s.id AND p.business_id = s.business_id AND p.status <> 'cancelled'
+                              AND p.total_amount > p.paid_amount)), 0) AS balance
+       FROM suppliers s WHERE ${where}`,
+      params,
+    ),
     q(
       `SELECT COUNT(*) FILTER (WHERE active) AS active_count,
               COALESCE((SELECT SUM(total_amount - paid_amount) FROM purchases WHERE business_id = $1 AND status <> 'cancelled' AND total_amount > paid_amount), 0) AS owed
@@ -240,6 +247,7 @@ dashboardWriteRouter.get('/suppliers', can('suppliers'), async (req: DashboardRe
   res.json({
     total: num(count.total),
     rows: rows.map((r) => ({ ...r, balance: num(r.balance) })),
+    totals: { balance: num(count.balance) },
     summary: { active: num(summary.active_count), owed: num(summary.owed) },
   });
 });
@@ -557,6 +565,7 @@ dashboardWriteRouter.get('/waiter-tabs', can('waiterTabs'), async (req: Dashboar
     q(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(t.paid_amount), 0) AS paid,
+              COALESCE(SUM(COALESCE((SELECT SUM(i.quantity_outstanding * i.selling_price) FROM waiter_tab_items i WHERE i.tab_id = t.id), 0)), 0) AS total_amount,
               COALESCE(SUM(GREATEST(COALESCE((SELECT SUM(i.quantity_outstanding * i.selling_price) FROM waiter_tab_items i WHERE i.tab_id = t.id), 0) - t.paid_amount, 0)), 0) AS balance,
               COUNT(DISTINCT t.waiter_user_id) AS waiters
        FROM waiter_tabs t WHERE ${where}`,
@@ -567,6 +576,7 @@ dashboardWriteRouter.get('/waiter-tabs', can('waiterTabs'), async (req: Dashboar
     total: num(count.total),
     summary: { count: num(count.total), paid: num(count.paid), balance: num(count.balance), waiters: num(count.waiters) },
     rows: rows.map((r) => ({ ...r, paid_amount: num(r.paid_amount), total: num(r.total), balance: Math.max(0, num(r.total) - num(r.paid_amount)) })),
+    totals: { total: num(count.total_amount), balance: num(count.balance) },
   });
 });
 

@@ -83,8 +83,8 @@ export function WaiterTabs() {
         columns={[
           { header: 'Waiter', cell: (r) => <div><div className="font-semibold text-slate-900">{r.waiter ?? '—'}</div>{r.client_label ? <div className="text-xs font-medium text-emerald-700">Client: {r.client_label}</div> : null}</div> },
           { header: 'Status', cell: (r) => <Badge tone={STATUS[r.status]?.tone ?? 'neutral'}>{STATUS[r.status]?.label ?? r.status}</Badge> },
-          { header: 'Total', align: 'right', primary: true, cell: (r) => money(r.total) },
-          { header: 'Still to pay', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)) },
+          { header: 'Total', align: 'right', primary: true, cell: (r) => money(r.total), total: (_, t) => money(t?.total ?? 0) },
+          { header: 'Still to pay', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)), total: (_, t) => <span className="text-rose-700">{money(t?.balance ?? 0)}</span> },
           { header: 'Started', cell: (r) => <span className="whitespace-nowrap text-xs text-slate-500">{formatDateTime(r.created_at)}</span> },
           { header: 'Actions', align: 'right', cell: (r) => <ActionMenu label={`Actions for ${r.waiter}'s tab`} actions={[{ label: 'Open tab', icon: Eye, onSelect: () => open.open(String(r.id)) }]} /> },
         ]}

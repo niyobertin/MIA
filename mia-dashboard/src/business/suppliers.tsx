@@ -56,7 +56,7 @@ export function Suppliers() {
         columns={[
           { header: 'Name', cell: (r) => <div><span className="font-semibold text-slate-900">{r.name}</span>{r.active ? null : <span className="ml-2"><Badge>Inactive</Badge></span>}</div> },
           { header: 'Phone', cell: (r) => r.phone ?? '—' },
-          { header: 'You owe', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)) },
+          { header: 'You owe', align: 'right', cell: (r) => (r.balance > 0 ? <span className="font-semibold text-rose-700">{money(r.balance)}</span> : money(0)), total: (_, t) => <span className="text-rose-700">{money(t?.balance ?? 0)}</span> },
           { header: 'Actions', align: 'right', cell: (r) => (
             <ActionMenu label={`Actions for ${r.name}`} actions={[
               { label: 'Pay supplier', icon: HandCoins, onSelect: () => pay.open(r), hidden: !(canPay && r.balance > 0) },

@@ -4,8 +4,8 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Ban, Eye, HandCoins as Pay, Pencil, Phone, RotateCcw, ScrollText, SlidersHorizontal, ArrowDownLeft, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, ArrowUpRight, Boxes, CalendarDays, CalendarRange, CircleCheck, CreditCard, HandCoins, History, PackageSearch, PackageX, Plus, Receipt, Scale, ShoppingCart, Truck, Users, Warehouse } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatMoney, humanize } from '../lib/format';
-import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, type Column } from '../ui/kit';
-import { MetricCard } from '../ui/metrics';
+import { Badge, Button, Card, DataTable, inputClass, PagedTable, PageHeader, QueryBoundary, sumBy, type Column } from '../ui/kit';
+import { MetricCard, MetricGrid, StockValueCards } from '../ui/metrics';
 import { ActionMenu } from '../ui/ActionMenu';
 import { ExportMenu } from '../ui/ExportMenu';
 import { rowsToTable } from '../lib/exportData';
@@ -101,8 +101,8 @@ export function Sales({ unpaidOnly = false }: { unpaidOnly?: boolean }) {
           { header: 'Customer', cell: (row) => row.customer ?? 'Walk-in' },
           { header: 'Recorded by', cell: (row) => row.cashier ?? '—' },
           { header: 'Status', cell: (row) => row.voided ? <Badge tone="bad">Voided</Badge> : <Badge tone={STATUS_TONE[row.payment_status] ?? 'neutral'}>{humanize(row.payment_status)}</Badge> },
-          { header: 'Total', align: 'right', primary: true, cell: (row) => money(row.total_amount) },
-          { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)) },
+          { header: 'Total', align: 'right', primary: true, cell: (row) => money(row.total_amount), total: (_, t) => money(t?.total_amount ?? 0) },
+          { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)), total: (_, t) => money(t?.balance ?? 0) },
           { header: 'Date', cell: (row) => dateCell(row.sale_date) },
           { header: 'Actions', align: 'right', cell: (row) => <ActionMenu label={`Actions for sale ${row.reference_number ?? ''}`} actions={[{ label: 'View sale', icon: Eye, onSelect: () => detail.open(String(row.id)) }]} /> },
         ]}
@@ -145,7 +145,7 @@ export function Payments() {
           { header: 'Type', cell: (row) => <span className="font-medium text-slate-900">{humanize(row.type)}</span> },
           { header: 'Method', cell: (row) => humanize(row.payment_method) },
           { header: 'Recorded by', cell: (row) => row.recorded_by ?? '—' },
-          { header: 'Amount', align: 'right', cell: (row) => formatMoney(row.amount, me.business.currency) },
+          { header: 'Amount', align: 'right', cell: (row) => formatMoney(row.amount, me.business.currency), total: (_, t) => formatMoney(t?.amount ?? 0, me.business.currency) },
           { header: 'Date', cell: (row) => dateCell(row.payment_date) },
         ]}
       />
@@ -190,7 +190,7 @@ export function Customers() {
           { header: 'Name', cell: (row) => <div><span className="font-semibold text-slate-900">{row.name}</span>{row.active === false ? <span className="ml-2"><Badge>Inactive</Badge></span> : null}</div> },
           { header: 'Phone', cell: (row) => row.phone ?? '—' },
           { header: 'Credit limit', align: 'right', cell: (row) => money(row.credit_limit) },
-          { header: 'Balance owed', align: 'right', cell: (row) => row.balance > 0 ? <span className="font-semibold text-rose-700">{money(row.balance)}</span> : money(0) },
+          { header: 'Balance owed', align: 'right', cell: (row) => row.balance > 0 ? <span className="font-semibold text-rose-700">{money(row.balance)}</span> : money(0), total: (_, t) => <span className="text-rose-700">{money(t?.balance ?? 0)}</span> },
           { header: 'Added', cell: (row) => dateCell(row.created_at) },
           { header: 'Actions', align: 'right', cell: (row) => (
             <ActionMenu label={`Actions for ${row.name}`} actions={[
@@ -246,7 +246,7 @@ export function Expenses() {
           { header: 'Description', cell: (row) => row.description ?? '—' },
           { header: 'Method', cell: (row) => humanize(row.payment_method) },
           { header: 'Recorded by', cell: (row) => row.recorded_by ?? '—' },
-          { header: 'Amount', align: 'right', cell: (row) => money(row.amount) },
+          { header: 'Amount', align: 'right', cell: (row) => money(row.amount), total: (_, t) => money(t?.amount ?? 0) },
           { header: 'Date', cell: (row) => dateCell(row.expense_date) },
           ...(canWrite ? [{ header: 'Actions', align: 'right' as const, cell: (row: Row) => row.editable ? <ActionMenu label="Expense actions" actions={[{ label: 'Edit expense', icon: Pencil, onSelect: () => edit.open(row) }]} /> : <span className="text-xs text-slate-400">Closed day</span> }] : []),
         ]}
@@ -278,7 +278,7 @@ export function Products() {
   ] });
   const query = useQuery({
     queryKey: ['products', me.user.id],
-    queryFn: async () => (await api.get<{ rows: Row[]; summary: { active: number; low_stock: number; out_of_stock: number; stock_value?: number } }>('/dashboard/products')).data,
+    queryFn: async () => (await api.get<{ rows: Row[]; summary: { active: number; low_stock: number; out_of_stock: number; stock_value?: number; stock_sale_value?: number } }>('/dashboard/products')).data,
   });
   const summary = query.data?.summary;
   const toggle = useSave('patch', LIST_KEYS);
@@ -331,7 +331,12 @@ export function Products() {
         <MetricCard loading={!summary} icon={PackageSearch} tone="green" label="Products" value={summary?.active} hint="Active" />
         <MetricCard loading={!summary} icon={AlertTriangle} tone="amber" label="Running low" value={summary?.low_stock} hint="At or below the warning level" />
         <MetricCard loading={!summary} icon={PackageX} tone="red" label="Out of stock" value={summary?.out_of_stock} hint="Nothing left to sell" />
-        {showCosts ? <MetricCard loading={!summary} icon={Warehouse} tone="blue" label="Stock value" value={summary?.stock_value != null ? money(summary.stock_value) : '—'} hint="At average cost" /> : null}
+        {showCosts ? (
+          <MetricCard loading={!summary} icon={Warehouse} tone="blue" label="Stock value" value={summary?.stock_value != null ? money(summary.stock_value) : '—'}
+            hint={summary?.stock_value != null && summary.stock_sale_value != null ? `At cost · sells for ${money(summary.stock_sale_value)} (profit ${money(summary.stock_sale_value - summary.stock_value)})` : 'At average cost'} />
+        ) : (
+          <MetricCard loading={!summary} icon={Warehouse} tone="blue" label="Stock value" value={summary?.stock_sale_value != null ? money(summary.stock_sale_value) : '—'} hint="At selling price" />
+        )}
       </StatRow>
       <Card>
         <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -406,8 +411,8 @@ export function Purchases() {
           { header: 'Reference', cell: (row) => <span className="font-semibold text-slate-900">{row.reference_number ?? '—'}</span> },
           { header: 'Supplier', cell: (row) => row.supplier ?? '—' },
           { header: 'Status', cell: (row) => <Badge>{humanize(row.status)}</Badge> },
-          { header: 'Total', align: 'right', primary: true, cell: (row) => formatMoney(row.total_amount, me.business.currency) },
-          { header: 'Paid', align: 'right', cell: (row) => formatMoney(row.paid_amount, me.business.currency) },
+          { header: 'Total', align: 'right', primary: true, cell: (row) => formatMoney(row.total_amount, me.business.currency), total: (_, t) => formatMoney(t?.total_amount ?? 0, me.business.currency) },
+          { header: 'Paid', align: 'right', cell: (row) => formatMoney(row.paid_amount, me.business.currency), total: (_, t) => formatMoney(t?.paid_amount ?? 0, me.business.currency) },
           { header: 'Date', cell: (row) => dateCell(row.purchase_date) },
           { header: 'Actions', align: 'right', cell: (row) => <ActionMenu label={`Actions for stock-in ${row.reference_number ?? ''}`} actions={[{ label: 'View stock-in', icon: Eye, onSelect: () => detail.open(String(row.id)) }]} /> },
         ]}
@@ -459,7 +464,7 @@ export function Movements() {
   );
 }
 
-const STOCK_REPORT_SKELETON: Pick<Column<unknown>, 'header' | 'align'>[] = [{ header: 'Product' }, { header: 'Opening', align: 'right' }, { header: 'In', align: 'right' }, { header: 'Out', align: 'right' }, { header: 'Closing', align: 'right' }, { header: 'Value', align: 'right' }];
+const STOCK_REPORT_SKELETON: Pick<Column<unknown>, 'header' | 'align'>[] = [{ header: 'Product' }, { header: 'Opening', align: 'right' }, { header: 'In', align: 'right' }, { header: 'Out', align: 'right' }, { header: 'Closing', align: 'right' }, { header: 'Value at cost', align: 'right' }, { header: 'Value at selling price', align: 'right' }, { header: 'Expected profit', align: 'right' }];
 
 export function StockReport() {
   const me = useDashboard();
@@ -468,11 +473,13 @@ export function StockReport() {
   const params = period.period === 'custom' ? { period: 'custom', from: period.from, to: period.to } : { period: period.period };
   const query = useQuery({
     queryKey: ['stock-report', me.user.id, params],
-    queryFn: async () => (await api.get<{ total_value: number; low_count: number; qty_in: number; qty_out: number; rows: Row[] }>('/dashboard/stock-report', { params })).data,
+    queryFn: async () => (await api.get<{ total_value: number; total_sale_value: number; low_count: number; qty_in: number; qty_out: number; rows: Row[] }>('/dashboard/stock-report', { params })).data,
     placeholderData: keepPreviousData,
   });
   const filters = useListFilters({ withPeriod: false, defaultSort: 'value', sortOptions: [
-    { value: 'value', label: 'Value', kind: 'number' },
+    { value: 'value', label: 'Value at cost', kind: 'number' },
+    { value: 'sale', label: 'Value at selling price', kind: 'number' },
+    { value: 'profit', label: 'Expected profit', kind: 'number' },
     { value: 'stock', label: 'Closing stock', kind: 'number' },
     { value: 'moved', label: 'Units sold / out', kind: 'number' },
     { value: 'name', label: 'Name', kind: 'text' },
@@ -485,9 +492,12 @@ export function StockReport() {
     { header: 'Closing', align: 'right', primary: true, cell: (row) => row.low ? <Badge tone="warn">{row.stock} {row.unit}</Badge> : `${row.stock} ${row.unit}` },
     { header: 'Reorder at', align: 'right', cell: (row) => row.reorder_level },
     { header: 'Average cost', align: 'right', cell: (row) => money(row.average_cost) },
-    { header: 'Value', align: 'right', cell: (row) => money(row.stock_value) },
+    { header: 'Selling price', align: 'right', cell: (row) => money(row.selling_price) },
+    { header: 'Value at cost', align: 'right', cell: (row) => money(row.stock_value), total: (rows) => money(sumBy(rows, (row) => row.stock_value)) },
+    { header: 'Value at selling price', align: 'right', cell: (row) => money(row.sale_value), total: (rows) => money(sumBy(rows, (row) => row.sale_value)) },
+    { header: 'Expected profit', align: 'right', cell: (row) => <span className={row.sale_value - row.stock_value < 0 ? 'font-semibold text-red-700' : ''}>{money(row.sale_value - row.stock_value)}</span>, total: (rows) => money(sumBy(rows, (row) => row.sale_value - row.stock_value)) },
   ];
-  const sorted = (rows: Row[]) => filters.apply(rows, () => null, { value: (row) => row.stock_value, stock: (row) => row.stock, moved: (row) => row.qty_out, name: (row) => row.name });
+  const sorted = (rows: Row[]) => filters.apply(rows, () => null, { value: (row) => row.stock_value, sale: (row) => row.sale_value, profit: (row) => row.sale_value - row.stock_value, stock: (row) => row.stock, moved: (row) => row.qty_out, name: (row) => row.name });
   const exportStock = async () => {
     const data = query.data!;
     return {
@@ -497,7 +507,9 @@ export function StockReport() {
       period,
       stats: [
         { label: 'Products tracked', value: data.rows.length, kind: 'count' as const },
-        { label: 'Closing stock value', value: data.total_value },
+        { label: 'Stock value at cost', value: data.total_value },
+        { label: 'Stock value at selling price', value: data.total_sale_value },
+        { label: 'Expected profit on stock', value: data.total_sale_value - data.total_value },
         { label: 'Units in', value: data.qty_in, kind: 'count' as const },
         { label: 'Units out', value: data.qty_out, kind: 'count' as const },
         { label: 'Low-stock items', value: data.low_count, kind: 'count' as const },
@@ -507,16 +519,16 @@ export function StockReport() {
   };
   return (
     <>
-      <PageHeader title="Stock report" subtitle="Opening stock, what came in and went out, and closing stock for the period. Values use today's average cost." />
-      <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={4} columns={4} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
+      <PageHeader title="Stock report" subtitle="Opening stock, what came in and went out, and closing stock for the period. Values use today's average cost and selling price." />
+      <QueryBoundary query={query} skeleton={<div className="space-y-6"><KpiGridSkeleton count={3} columns={3} /><KpiGridSkeleton count={3} columns={3} /><Card><TableSkeleton rows={8} columns={STOCK_REPORT_SKELETON} /></Card></div>}>
         {(data) => (
           <div className="space-y-6">
-            <StatRow>
-              <MetricCard icon={Warehouse} tone="blue" label="Closing stock value" value={money(data.total_value)} hint={`${data.rows.length.toLocaleString()} products · at average cost`} />
+            <StockValueCards cost={data.total_value} sale={data.total_sale_value} money={money} />
+            <MetricGrid columns={3}>
               <MetricCard icon={ArrowDownToLine} tone="green" label="Units in" value={data.qty_in.toLocaleString()} hint="Stock-in, returns, increases" />
               <MetricCard icon={ArrowUpFromLine} tone="red" label="Units out" value={data.qty_out.toLocaleString()} hint="Sales, damage, decreases" />
               <MetricCard icon={AlertTriangle} tone={data.low_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={data.low_count.toLocaleString()} hint={`${data.rows.filter((row) => row.stock <= 0).length.toLocaleString()} out of stock`} />
-            </StatRow>
+            </MetricGrid>
             <Card>
               <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-end">
                 <div className="flex flex-wrap items-center gap-2"><PeriodFilter value={period} onChange={setPeriod} className="w-44" />{filters.controls}<ExportMenu build={exportStock} /></div>

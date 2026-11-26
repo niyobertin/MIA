@@ -313,6 +313,10 @@ function SupportRecords({ org, grant, onRequest }: { org: OrgDetail; grant: Gran
                       <td className="px-5 py-2.5 text-right tabular-nums">{formatMoney(row.total_amount, org.business.currency)}</td>
                     </tr>
                   ))}</tbody>
+                  <tfoot><tr className="border-t-2 border-line bg-slate-50/80 font-semibold text-ink">
+                    <td className="px-5 py-3" colSpan={4}>Total <span className="text-xs font-medium text-muted">({data.rows.length} {data.rows.length === 1 ? 'sale' : 'sales'} shown, voided left out)</span></td>
+                    <td className="px-5 py-3 text-right tabular-nums">{formatMoney(data.rows.reduce((sum: number, row: { voided?: boolean; total_amount: number }) => sum + (row.voided ? 0 : Number(row.total_amount) || 0), 0), org.business.currency)}</td>
+                  </tr></tfoot>
                 </table>
               </div>
             )}

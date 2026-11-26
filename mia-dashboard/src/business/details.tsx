@@ -151,7 +151,7 @@ export function CustomerSalesDialog({ customer, onClose }: { customer: Row; onCl
         columns={[
           { header: 'Reference', cell: (row) => <span className="font-semibold text-slate-900">{row.reference_number ?? '—'}</span> },
           { header: 'Status', cell: (row) => row.voided ? <Badge tone="bad">Voided</Badge> : <Badge tone={STATUS_TONE[row.payment_status] ?? 'neutral'}>{humanize(row.payment_status)}</Badge> },
-          { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)) },
+          { header: 'Balance', align: 'right', cell: (row) => row.voided ? '—' : money(Math.max(0, row.total_amount - row.paid_amount)), total: (_, t) => money(t?.balance ?? 0) },
           { header: 'Date', cell: (row) => dateCell(row.sale_date) },
           { header: '', align: 'right', cell: (row) => <ActionMenu label={`Actions for sale ${row.reference_number ?? ''}`} actions={[{ label: 'View sale', icon: Eye, onSelect: () => sale.open(String(row.id)) }]} /> },
         ]}

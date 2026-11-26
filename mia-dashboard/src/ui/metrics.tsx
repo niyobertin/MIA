@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowUp, Tags, TrendingUp, Warehouse, type LucideIcon } from 'lucide-react';
 import { surfaceCard, TONES, type Tone } from './tokens';
 import { Bone } from './skeleton';
 
@@ -81,4 +81,19 @@ export function MetricCard({ icon: Icon, tone = 'green', label, value, hint, gro
 export function MetricGrid({ children, columns = 4, className = '' }: { children: ReactNode; columns?: 2 | 3 | 4; className?: string }) {
   const cols = columns === 4 ? 'xl:grid-cols-4' : columns === 3 ? 'lg:grid-cols-3' : '';
   return <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${cols} ${className}`}>{children}</div>;
+}
+
+export function StockValueCards({ loading = false, cost, sale, money, children }: { loading?: boolean; cost?: number; sale?: number; money: (value: number) => string; children?: ReactNode }) {
+  const ready = cost != null && sale != null;
+  const profit = ready ? sale - cost : 0;
+  const margin = ready && sale > 0 ? Math.round((profit / sale) * 1000) / 10 : null;
+  return (
+    <MetricGrid columns={children ? 4 : 3}>
+      <MetricCard loading={loading} icon={Warehouse} tone="blue" label="Stock value at cost" value={ready ? money(cost) : '—'} hint="What the stock on hand cost you" />
+      <MetricCard loading={loading} icon={Tags} tone="green" label="Stock value at selling price" value={ready ? money(sale) : '—'} hint="What it brings in if all of it sells" />
+      <MetricCard loading={loading} icon={TrendingUp} tone={profit < 0 ? 'red' : 'violet'} label="Expected profit on stock" value={ready ? money(profit) : '—'} valueTone={profit < 0 ? 'bad' : 'default'}
+        hint={margin != null ? `${margin}% of the selling value` : 'Selling value less cost'} />
+      {children}
+    </MetricGrid>
+  );
 }

@@ -5,8 +5,8 @@ import { AlertTriangle, ArrowLeftRight, ArrowRight, Boxes, ClipboardList, HandCo
 import { api } from '../lib/auth';
 import { formatDateTime, formatDay, formatMoney, formatNumber, humanize } from '../lib/format';
 import { BarList, ChartCard, TrendChart } from '../ui/charts';
-import { Badge, Card, DataTable, ErrorNotice, PageHeader, type Column } from '../ui/kit';
-import { MetricCard, MetricGrid, percentChange } from '../ui/metrics';
+import { Badge, Card, DataTable, ErrorNotice, PageHeader, sumBy, type Column } from '../ui/kit';
+import { MetricCard, MetricGrid, percentChange, StockValueCards } from '../ui/metrics';
 import { ChartCardSkeleton, TableSectionSkeleton } from '../ui/skeleton';
 import { PeriodFilter, type PeriodValue } from '../ui/PeriodFilter';
 import { useDashboard } from './BusinessApp';
@@ -16,7 +16,7 @@ import { ExportMenu } from '../ui/ExportMenu';
 export type OverviewData = {
   kpis: {
     sales_total: number; sales_count: number; previous_sales_total: number; cogs: number; gross_profit: number; expenses: number;
-    net_profit: number; payments_received: number; outstanding: number; low_stock_count: number; stock_value: number;
+    net_profit: number; payments_received: number; outstanding: number; low_stock_count: number; stock_value: number; stock_sale_value: number;
   };
   trend: { day: string; total: number }[];
   categories: { category: string; total: number }[];
@@ -44,12 +44,12 @@ function OverviewKpis({ kpis, trend, money }: { kpis?: Kpis; trend?: OverviewDat
         <MetricCard loading={loading} icon={Wallet} tone="violet" label="Payments received" value={money(k.payments_received)} hint="Sale and customer payments in this period" />
         <MetricCard loading={loading} icon={HandCoins} tone="amber" label="Outstanding balance" value={money(k.outstanding)} hint="All unpaid sales, any date" />
       </MetricGrid>
-      <MetricGrid>
+      <MetricGrid columns={3}>
         <MetricCard loading={loading} icon={ReceiptText} tone="red" label="Expenses" value={money(k.expenses)} hint="Recorded in this period" />
         <MetricCard loading={loading} icon={PackageOpen} tone="slate" label="Cost of goods sold" value={money(k.cogs)} hint="At average cost when sold" />
-        <MetricCard loading={loading} icon={Warehouse} tone="blue" label="Stock value" value={money(k.stock_value)} hint="Current stock at average cost" />
         <MetricCard loading={loading} icon={AlertTriangle} tone={k.low_stock_count > 0 ? 'amber' : 'green'} label="Low-stock items" value={formatNumber(k.low_stock_count)} hint="At or below reorder level" />
       </MetricGrid>
+      <StockValueCards loading={loading} cost={k.stock_value} sale={k.stock_sale_value} money={money} />
     </div>
   );
 }
@@ -125,7 +125,7 @@ function SalesCharts({ data, money }: { data?: OverviewData; money: Money }) {
           <DataTable pageSize={0} empty="No sales in this period." rows={data.trend} rowKey={(row) => row.day} defaultSort={{ column: 'Day', direction: 'desc' }}
             columns={[
               { header: 'Day', sortValue: (row) => row.day, cell: (row) => formatDay(row.day) },
-              { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total) },
+              { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total), total: (rows) => money(sumBy(rows, (row) => row.total)) },
             ]} />
         )}
       />
@@ -137,8 +137,8 @@ function SalesCharts({ data, money }: { data?: OverviewData; money: Money }) {
           <DataTable pageSize={0} empty="No sales in this period." rows={data.categories} rowKey={(row) => row.category}
             columns={[
               { header: 'Category', sortValue: (row) => row.category, cell: (row) => <span className="font-medium text-slate-900">{row.category}</span> },
-              { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total) },
-              { header: 'Share', align: 'right', cell: (row) => `${categoryTotal > 0 ? Math.round((row.total / categoryTotal) * 100) : 0}%` },
+              { header: 'Sales', align: 'right', sortValue: (row) => row.total, cell: (row) => money(row.total), total: (rows) => money(sumBy(rows, (row) => row.total)) },
+              { header: 'Share', align: 'right', cell: (row) => `${categoryTotal > 0 ? Math.round((row.total / categoryTotal) * 100) : 0}%`, total: () => (categoryTotal > 0 ? '100%' : '0%') },
             ]} />
         )}
       />
@@ -178,7 +178,9 @@ function overviewReportInput(data: OverviewData, businessName: string, currency:
       { label: 'Outstanding balance', value: kpis.outstanding },
       { label: 'Expenses', value: kpis.expenses },
       { label: 'Cost of goods sold', value: kpis.cogs },
-      { label: 'Stock value', value: kpis.stock_value },
+      { label: 'Stock value at cost', value: kpis.stock_value },
+      { label: 'Stock value at selling price', value: kpis.stock_sale_value },
+      { label: 'Expected profit on stock', value: kpis.stock_sale_value - kpis.stock_value },
       { label: 'Sales count', value: kpis.sales_count, kind: 'count' },
       { label: 'Low-stock items', value: kpis.low_stock_count, kind: 'count' },
     ],

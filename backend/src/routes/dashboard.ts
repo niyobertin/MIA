@@ -130,6 +130,7 @@ dashboardRouter.get('/sales', can('sales'), async (req: DashboardRequest, res) =
       outstanding: num(count.outstanding),
       unpaid_count: num(count.unpaid_count),
     },
+    totals: { total_amount: num(count.sales_total), balance: num(count.outstanding) },
   });
 });
 
@@ -193,6 +194,7 @@ dashboardRouter.get('/payments', can('payments'), async (req: DashboardRequest, 
     ),
     q(
       `SELECT COUNT(*) AS total,
+              COALESCE(SUM(p.amount), 0) AS amount,
               COALESCE(SUM(p.amount) FILTER (WHERE p.type IN ('sale_payment', 'customer_payment', 'other_income')), 0) AS money_in,
               COALESCE(SUM(p.amount) FILTER (WHERE p.type IN ('supplier_payment', 'purchase_payment', 'expense_payment', 'withdrawal')), 0) AS money_out
        FROM payments p WHERE ${where}`,
@@ -203,6 +205,7 @@ dashboardRouter.get('/payments', can('payments'), async (req: DashboardRequest, 
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, amount: num(row.amount) })),
     summary: { count: num(count.total), money_in: num(count.money_in), money_out: num(count.money_out) },
+    totals: { amount: num(count.amount) },
   });
 });
 
@@ -224,7 +227,14 @@ dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest
        FROM customers c WHERE ${where} ORDER BY ${win.orderBy}, c.name LIMIT $5 OFFSET $6`,
       [...params, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM customers c WHERE ${where}`, params),
+    q(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM((SELECT SUM(s.total_amount - s.paid_amount) FROM sales s
+                            WHERE s.customer_id = c.id AND s.business_id = c.business_id
+                              AND s.voided = false AND s.total_amount > s.paid_amount)), 0) AS balance
+       FROM customers c WHERE ${where}`,
+      params,
+    ),
     q(
       `SELECT COUNT(*) FILTER (WHERE c.active) AS active_count,
               COALESCE(SUM(d.owed), 0) AS owed, COUNT(*) FILTER (WHERE d.owed > 0) AS debtors
@@ -238,6 +248,7 @@ dashboardRouter.get('/customers', can('customers'), async (req: DashboardRequest
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, credit_limit: num(row.credit_limit), balance: num(row.balance) })),
+    totals: { balance: num(count.balance) },
     summary: { active: num(summary.active_count), owed: num(summary.owed), debtors: num(summary.debtors) },
   });
 });
@@ -253,6 +264,7 @@ dashboardRouter.get('/products', can('products'), async (req: DashboardRequest, 
       active: rows.filter((row) => row.active).length,
       low_stock: tracked.filter((row) => row.stock <= row.reorder_level).length,
       out_of_stock: tracked.filter((row) => row.stock <= 0).length,
+      stock_sale_value: tracked.reduce((sum, row) => sum + Math.max(row.stock, 0) * row.selling_price, 0),
       ...(showCosts ? { stock_value: tracked.reduce((sum, row) => sum + Math.max(row.stock, 0) * row.average_cost, 0) } : {}),
     },
   });
@@ -305,11 +317,13 @@ dashboardRouter.get('/stock-report', can('stockReport'), async (req: DashboardRe
     qty_in: moved.get(row.id)?.qty_in ?? 0,
     qty_out: moved.get(row.id)?.qty_out ?? 0,
     stock_value: row.average_cost * Math.max(row.stock, 0),
+    sale_value: row.selling_price * Math.max(row.stock, 0),
     low: row.active && row.stock <= row.reorder_level,
   }));
   res.json({
     period: window ? { from: window.from, to: window.to } : null,
     total_value: items.reduce((sum, row) => sum + row.stock_value, 0),
+    total_sale_value: items.reduce((sum, row) => sum + row.sale_value, 0),
     low_count: items.filter((row) => row.low).length,
     qty_in: items.reduce((sum, row) => sum + row.qty_in, 0),
     qty_out: items.reduce((sum, row) => sum + row.qty_out, 0),
@@ -347,6 +361,7 @@ dashboardRouter.get('/purchases', can('purchases'), async (req: DashboardRequest
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, total_amount: num(row.total_amount), paid_amount: num(row.paid_amount) })),
     summary: { count: num(count.total), total: num(count.purchases_total), paid: num(count.paid), owed: num(count.owed) },
+    totals: { total_amount: num(count.purchases_total), paid_amount: num(count.paid) },
   });
 });
 
@@ -443,7 +458,7 @@ dashboardRouter.get('/expenses', can('expenses'), async (req: DashboardRequest, 
        WHERE ${where} ORDER BY ${win.orderBy}, e.created_at DESC LIMIT $5 OFFSET $6`,
       [...listParams, page.limit, page.offset],
     ),
-    q(`SELECT COUNT(*) AS total FROM expenses e WHERE ${where}`, listParams),
+    q(`SELECT COUNT(*) AS total, COALESCE(SUM(e.amount), 0) AS amount FROM expenses e WHERE ${where}`, listParams),
     q(
       `SELECT COALESCE(SUM(amount) FILTER (WHERE session_id = (SELECT id FROM daily_closings WHERE business_id = $1 AND status = 'open' LIMIT 1)), 0) AS today,
               COALESCE(SUM(amount) FILTER (WHERE expense_date >= date_trunc('month', now())), 0) AS month,
@@ -455,6 +470,7 @@ dashboardRouter.get('/expenses', can('expenses'), async (req: DashboardRequest, 
   res.json({
     total: num(count.total),
     rows: rows.map((row) => ({ ...row, amount: num(row.amount) })),
+    totals: { amount: num(count.amount) },
     summary: { today: num(summary.today), month: num(summary.month), all_time: num(summary.all_time) },
   });
 });

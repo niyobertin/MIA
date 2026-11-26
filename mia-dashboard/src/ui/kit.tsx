@@ -145,7 +145,12 @@ export function QueryBoundary<T>({ query, children, skeleton }: { query: UseQuer
   return <>{query.data !== undefined ? children(query.data) : null}</>;
 }
 
-export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right'; sortValue?: (row: T) => unknown; primary?: boolean };
+export type ServerTotals = Record<string, number>;
+export type Column<T> = { header: string; cell: (row: T) => ReactNode; align?: 'right'; sortValue?: (row: T) => unknown; primary?: boolean; total?: (rows: T[], server?: ServerTotals) => ReactNode };
+
+export function sumBy<T>(rows: T[], value: (row: T) => number) {
+  return rows.reduce((sum, row) => sum + (Number(value(row)) || 0), 0);
+}
 export type TableSort = { column: string; direction: SortDirection };
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
@@ -227,7 +232,7 @@ function SortHeader({ label, direction, onClick, align }: { label: string; direc
   );
 }
 
-export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.', pageSize: initialPageSize = 10, defaultSort, onSortChange }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string; pageSize?: number; defaultSort?: TableSort; onSortChange?: (sort: TableSort | null) => void }) {
+export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.', pageSize: initialPageSize = 10, defaultSort, onSortChange, serverTotals, totalCount }: { columns: Column<T>[]; rows: T[]; rowKey: (row: T) => string; empty?: string; pageSize?: number; defaultSort?: TableSort; onSortChange?: (sort: TableSort | null) => void; serverTotals?: ServerTotals; totalCount?: number }) {
   const [page, setPage] = useState(0);
   const [chosenSize, setChosenSize] = useState<number | null>(null);
   const [sort, setSort] = useState<TableSort | null>(defaultSort ?? null);
@@ -249,6 +254,19 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
     <ul className="divide-y divide-slate-100 md:hidden" aria-label="Items">
       {visible.map((row) => <MobileRowCard key={rowKey(row)} row={row} columns={columns} />)}
     </ul>
+    {columns.some((column) => column.total) ? (
+      <div className="border-t-2 border-slate-200 bg-slate-50/80 px-4 py-3 text-sm md:hidden">
+        <div className="mb-1.5 font-semibold text-slate-900">Total <span className="text-xs font-medium text-slate-500">({(totalCount ?? rows.length).toLocaleString()} {(totalCount ?? rows.length) === 1 ? 'row' : 'rows'})</span></div>
+        <dl className="space-y-1">
+          {columns.filter((column) => column.total).map((column) => (
+            <div key={column.header} className="flex items-center justify-between gap-3">
+              <dt className="text-xs text-slate-500">{column.header}</dt>
+              <dd className="font-semibold tabular-nums text-slate-900">{column.total?.(ordered, serverTotals)}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    ) : null}
     <div className="hidden overflow-x-auto md:block">
       <table className="w-full text-[13px] sm:text-sm">
         <thead>
@@ -277,6 +295,19 @@ export function DataTable<T>({ columns, rows, rowKey, empty = 'Nothing here yet.
             </tr>
           ))}
         </tbody>
+        {columns.some((column) => column.total) ? (
+          <tfoot>
+            <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-semibold text-slate-900">
+              {columns.map((column, index) => (
+                <td key={column.header} className={`px-3 py-2.5 align-middle sm:px-5 sm:py-3 ${column.align === 'right' ? 'text-right tabular-nums whitespace-nowrap' : ''}`}>
+                  {column.total ? column.total(ordered, serverTotals) : index === 0 ? (
+                    <span className="whitespace-nowrap">Total <span className="text-xs font-medium text-slate-500">({(totalCount ?? rows.length).toLocaleString()} {(totalCount ?? rows.length) === 1 ? 'row' : 'rows'})</span></span>
+                  ) : null}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        ) : null}
       </table>
     </div>
     {pageSize > 0 && rows.length > PAGE_SIZE_OPTIONS[0] ? <Pager page={current} pageSize={pageSize} total={rows.length} onPage={setPage} onPageSize={(size) => { setChosenSize(size); setPage(0); }} /> : null}
@@ -339,7 +370,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   searchPlaceholder?: string;
   params?: Record<string, string>;
   empty?: string;
-  rowsFrom?: (data: { rows: T[]; total?: number }) => T[];
+  rowsFrom?: (data: { rows: T[]; total?: number; totals?: ServerTotals }) => T[];
   toolbar?: ReactNode;
   stats?: (summary: any) => ReactNode;
   exportTitle?: string;
@@ -354,7 +385,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
   const [pageSize, setPageSize] = useState(25);
   const query = useQuery({
     queryKey: [queryKey, path, page, pageSize, search, params],
-    queryFn: async () => (await client.get<{ rows: T[]; total?: number }>(path, {
+    queryFn: async () => (await client.get<{ rows: T[]; total?: number; totals?: ServerTotals }>(path, {
       params: { limit: pageSize, offset: page * pageSize, ...(search ? { q: search } : {}), ...params },
     })).data,
     placeholderData: keepPreviousData,
@@ -400,7 +431,7 @@ export function PagedTable<T>({ client, path, queryKey, columns, rowKey, searchP
       ) : null}
       <div className={query.isError ? 'p-4' : ''}>
         <QueryBoundary query={query} skeleton={<TableSkeleton columns={columns} rows={8} />}>
-          {(data) => <DataTable columns={columns} rows={rowsFrom ? rowsFrom(data) : data.rows} rowKey={rowKey} empty={empty} pageSize={0} />}
+          {(data) => <DataTable columns={columns} rows={rowsFrom ? rowsFrom(data) : data.rows} rowKey={rowKey} empty={empty} pageSize={0} serverTotals={data.totals} totalCount={data.total} />}
         </QueryBoundary>
       </div>
       <Pager page={page} pageSize={pageSize} total={total} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(0); }} />
