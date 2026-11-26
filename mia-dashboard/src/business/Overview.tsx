@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowLeftRight, ArrowRight, Boxes, ClipboardList, HandCoins, LayoutDashboard, PackageOpen, PieChart, ReceiptText, ShoppingCart, TrendingUp, Wallet, Warehouse, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, ArrowRight, Boxes, ClipboardList, HandCoins, LayoutDashboard, PackageOpen, PieChart, ReceiptText, ShoppingCart, TrendingUp, Wallet, type LucideIcon } from 'lucide-react';
 import { api } from '../lib/auth';
 import { formatDateTime, formatDay, formatMoney, formatNumber, humanize } from '../lib/format';
 import { BarList, ChartCard, TrendChart } from '../ui/charts';
